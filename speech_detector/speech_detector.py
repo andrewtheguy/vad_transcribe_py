@@ -159,7 +159,7 @@ class MicRecorder:
         # print("indata length",len(indata))
 
         # Fancy indexing with mapping creates a (necessary!) copy:
-        self.audio_input_queue.put((data_flattened, time.time(),))
+        self.audio_input_queue.put(AudioSegment(start=time.time(), audio=data_flattened))
 
     def record(self):
         with sd.InputStream(dtype='float32', callback=self.audio_callback) as stream:
@@ -168,9 +168,16 @@ class MicRecorder:
                 raise ValueError(f"only support single channel for now")
             SpeechDetector(self.audio_input_queue).process_input(input_sample_rate)
 
+class AudioSegment:
+    def __init__(self, start: float, audio: npt.NDArray[np.float32]):
+        self.start = start
+        self.audio = audio
+
+    def __repr__(self):
+        return f"AudioSegment(start={self.start}, audio={self.audio})"
 
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.Queue[(npt.NDArray[np.float32], float)]):
+    def __init__(self, audio_input_queue: queue.Queue[AudioSegment]):
         from faster_whisper import WhisperModel
 
         self.model = load_silero_vad()
@@ -180,8 +187,8 @@ class SpeechDetector:
 
         self.whisper_model = WhisperModel(model_size)
 
-    def process_silero_streaming(self,audio):
-        return True
+    def process_silero(self, audio):
+        #return True
         model = self.model
         window_size_samples = get_window_size_samples()
 
@@ -209,7 +216,7 @@ class SpeechDetector:
                 break
             else:
                 sf.write("./tmp/tmp.wav", audio, TARGET_SAMPLE_RATE)
-            continue
+            #continue
             # new_sample_rate = 16000
             #
             # original_sample_rate = TARGET_SAMPLE_RATE
@@ -263,20 +270,20 @@ class SpeechDetector:
         buffer = []
 
         while True:
-            data_orig,new_ts = self.audio_input_queue.get(block=True)
-            if data_orig is None:
+            segment = self.audio_input_queue.get(block=True)
+            if segment is None:
                 print("end of audio",ts,file=sys.stderr)
                 break
             if ts is None:
-                ts = new_ts
+                ts = segment.start
             elif len(buffer) == 0:
-                logging.debug(f"queue is empty, reset ts {ts},to new_ts {new_ts}")
-                ts = new_ts
+                logging.debug(f"queue is empty, reset ts {ts},to new_ts {segment.start}")
+                ts = segment.start
             if input_sample_rate != TARGET_SAMPLE_RATE:
                 #print("resampling audio")
-                data_q = scipy.signal.resample(data_orig, int(len(data_orig) * TARGET_SAMPLE_RATE / input_sample_rate))
+                data_q = scipy.signal.resample(segment.audio, int(len(segment.audio) * TARGET_SAMPLE_RATE / input_sample_rate))
             else:
-                data_q = data_orig
+                data_q = segment.audio
             buffer.extend(data_q)
             while len(buffer) >= window_size_samples:
                 arr = buffer[:window_size_samples]
@@ -285,7 +292,7 @@ class SpeechDetector:
                 ts += window_size_samples / TARGET_SAMPLE_RATE
                 #if len(data_slice) != window_size_samples:
                 #    raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
-                has_speech = self.process_silero_streaming(data_slice)
+                has_speech = self.process_silero(data_slice)
                 if has_speech:
                     #first_speech_ts = ts if first_speech_ts is None else first_speech_ts
                     last_has_speech_ts = ts

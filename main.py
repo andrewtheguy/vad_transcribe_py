@@ -14,7 +14,8 @@ from silero_vad import (load_silero_vad,
 
 
 from speech_detector.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
-    SpeechDetector, MicRecorder
+    SpeechDetector, MicRecorder, AudioSegment
+
 
 def file_function(q):
 
@@ -44,18 +45,20 @@ if __name__ == '__main__':
         # Start the thread
         thread.start()
 
+        ts = 0
         with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
             while True:
                 chunk = stdout.read(4096)
                 if not chunk:
                     break
                 audio = pcm_s16le_to_float32(chunk)
-                ts = time.time()
+                #ts = time.time()
                 #time.sleep(5)
                 # put audio into queue one by one
-                audio_input_queue.put((audio,ts,))
+                audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                ts += len(audio) / TARGET_SAMPLE_RATE
 
-        audio_input_queue.put((None,None,))
+        audio_input_queue.put(None)
         thread.join()
 
         #SpeechDetector().process_silero(audio)
