@@ -195,6 +195,7 @@ def process_recording():
     cur_has_speech = False
     last_has_speech_ts = None
     speech_section = []
+    no_speech_seconds_threshold = 2
     with sd.InputStream(blocksize=window_size_samples,samplerate=TARGET_SAMPLE_RATE, channels=1, dtype='float32', callback=audio_callback):
         while True:
             data,ts = q.get(block=True)
@@ -205,11 +206,11 @@ def process_recording():
             if has_speech:
                 last_has_speech_ts = ts
                 if not cur_has_speech:
-                    logging.info("speech detected")
+                    print("speech detected",ts,file=sys.stderr)
                     cur_has_speech = True
 
-            if cur_has_speech and ts - last_has_speech_ts > 1:
-                logging.info("no speech detected for 1 second, stop adding speech and save file")
+            if cur_has_speech and ts - last_has_speech_ts > no_speech_seconds_threshold:
+                print(f"no speech detected for {no_speech_seconds_threshold} seconds, stop adding speech and save file",ts,file=sys.stderr)
                 directory = "./tmp/speech"
                 os.makedirs(directory,exist_ok=True)
                 sf.write(os.path.join(directory,f"{last_has_speech_ts}.wav"), np.asarray(speech_section), TARGET_SAMPLE_RATE)
