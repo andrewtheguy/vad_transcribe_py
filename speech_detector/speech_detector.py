@@ -193,7 +193,7 @@ class SpeechDetector:
         #    print("Speech detected")
 
 
-    def transcribe(self):
+    def _transcribe(self):
         from faster_whisper import WhisperModel
         model_size = "turbo"
 
@@ -238,7 +238,7 @@ class SpeechDetector:
 
         window_size_samples = get_window_size_samples()
 
-        transcribing_thread = threading.Thread(target=self.transcribe)
+        transcribing_thread = threading.Thread(target=self._transcribe)
         transcribing_thread.start()
 
         cur_has_speech = False
