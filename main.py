@@ -51,9 +51,11 @@ if __name__ == '__main__':
                     break
                 audio = pcm_s16le_to_float32(chunk)
                 ts = time.time()
+                #time.sleep(5)
                 # put audio into queue one by one
                 audio_input_queue.put((audio,ts,))
 
+        audio_input_queue.put((None,None,))
         thread.join()
 
         #SpeechDetector().process_silero(audio)

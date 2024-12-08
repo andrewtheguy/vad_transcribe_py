@@ -171,11 +171,17 @@ class MicRecorder:
 
 class SpeechDetector:
     def __init__(self, audio_input_queue: queue.Queue[(npt.NDArray[np.float32], float)]):
+        from faster_whisper import WhisperModel
+
         self.model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
+        model_size = "turbo"
+
+        self.whisper_model = WhisperModel(model_size)
 
     def process_silero_streaming(self,audio):
+        return True
         model = self.model
         window_size_samples = get_window_size_samples()
 
@@ -194,14 +200,16 @@ class SpeechDetector:
 
 
     def _transcribe(self):
-        from faster_whisper import WhisperModel
-        model_size = "turbo"
 
-        model = WhisperModel(model_size)
 
         while True:
             audio = self.transcribe_queue.get(block=True)
-
+            if audio is None:
+                print("finished transcribing audio",file=sys.stderr)
+                break
+            else:
+                sf.write("./tmp/tmp.wav", audio, TARGET_SAMPLE_RATE)
+            continue
             # new_sample_rate = 16000
             #
             # original_sample_rate = TARGET_SAMPLE_RATE
@@ -212,7 +220,7 @@ class SpeechDetector:
             # resampled_audio = scipy.signal.resample(audio, num_samples)
 
             print("transcribing audio")
-            segments, info = model.transcribe(audio, beam_size=5)
+            segments, info = self.whisper_model.transcribe(audio, beam_size=5)
 
             print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
@@ -250,13 +258,18 @@ class SpeechDetector:
 
         ts = None
 
-        buffer = queue.Queue()
+        prev_slice = None
+
+        buffer = []
 
         while True:
             data_orig,new_ts = self.audio_input_queue.get(block=True)
+            if data_orig is None:
+                print("end of audio",ts,file=sys.stderr)
+                break
             if ts is None:
                 ts = new_ts
-            elif buffer.qsize() == 0:
+            elif len(buffer) == 0:
                 logging.debug(f"queue is empty, reset ts {ts},to new_ts {new_ts}")
                 ts = new_ts
             if input_sample_rate != TARGET_SAMPLE_RATE:
@@ -264,13 +277,14 @@ class SpeechDetector:
                 data_q = scipy.signal.resample(data_orig, int(len(data_orig) * TARGET_SAMPLE_RATE / input_sample_rate))
             else:
                 data_q = data_orig
-            for item in data_q:
-                buffer.put(item)
-            while buffer.qsize() >= window_size_samples:
-                data_slice = np.asarray([buffer.get() for _ in range(window_size_samples)])
+            buffer.extend(data_q)
+            while len(buffer) >= window_size_samples:
+                arr = buffer[:window_size_samples]
+                buffer = buffer[window_size_samples:]
+                data_slice = np.asarray(arr)
                 ts += window_size_samples / TARGET_SAMPLE_RATE
-                if len(data_slice) != window_size_samples:
-                    raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
+                #if len(data_slice) != window_size_samples:
+                #    raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
                 has_speech = self.process_silero_streaming(data_slice)
                 if has_speech:
                     #first_speech_ts = ts if first_speech_ts is None else first_speech_ts
@@ -278,11 +292,17 @@ class SpeechDetector:
                     if not cur_has_speech:
                         print("speech detected",ts,file=sys.stderr)
                         cur_has_speech = True
+                        if prev_slice is not None:
+                            speech_section.extend(prev_slice)
+                            speech_duration += len(prev_slice) / TARGET_SAMPLE_RATE
 
                 if cur_has_speech:
                     logging.debug("adding speech",ts)
                     speech_section.extend(data_slice)
-                    speech_duration += window_size_samples / TARGET_SAMPLE_RATE
+                    speech_duration += len(data_slice) / TARGET_SAMPLE_RATE
+                    prev_slice = None
+                else:
+                    prev_slice = data_slice
 
                 if cur_has_speech and speech_duration > max_speech_seconds:
                     print(
@@ -306,3 +326,7 @@ class SpeechDetector:
                     last_has_speech_ts = None
                     cur_has_speech = False
 
+        print("finished processing audio",ts,file=sys.stderr)
+        if len(speech_section) > 0:
+            self._process_end_of_speech(speech_section, last_has_speech_ts)
+        self.transcribe_queue.put(None)
