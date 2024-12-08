@@ -170,8 +170,7 @@ def transcribe():
     from faster_whisper import WhisperModel
     model_size = "turbo"
 
-    # or run on CPU with INT8
-    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    model = WhisperModel(model_size)
 
     while True:
         audio = transcribe_queue.get(block=True)
