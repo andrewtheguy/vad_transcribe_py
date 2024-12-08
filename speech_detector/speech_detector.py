@@ -214,8 +214,8 @@ class SpeechDetector:
             if audio is None:
                 print("finished transcribing audio",file=sys.stderr)
                 break
-            else:
-                sf.write("./tmp/tmp.wav", audio, TARGET_SAMPLE_RATE)
+            # else:
+            #     sf.write("./tmp/tmp.wav", audio, TARGET_SAMPLE_RATE)
             #continue
             # new_sample_rate = 16000
             #
