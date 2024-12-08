@@ -11,7 +11,7 @@ from silero_vad import (load_silero_vad,
 
 
 from speech_detector.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
-    process_silero, record
+    process_silero, record, process_recording
 
 if __name__ == '__main__':
     argparse = argparse.ArgumentParser()
@@ -34,6 +34,5 @@ if __name__ == '__main__':
             audio = pcm_s16le_to_float32(data)
         process_silero(model, audio)
     elif args.action == 'mic':
-        audio = record()
-        process_silero(model, audio)
+        process_recording()
         #sf.write('output.wav', audio, TARGET_SAMPLE_RATE)

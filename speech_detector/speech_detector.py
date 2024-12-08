@@ -1,5 +1,12 @@
+import logging
+import os
+import queue
 import subprocess
+import sys
+import time
 from contextlib import contextmanager
+from enum import Enum
+from time import sleep
 
 import numpy.typing as npt
 import torch
@@ -9,6 +16,8 @@ TARGET_SAMPLE_RATE = 8000
 
 
 import sounddevice as sd
+
+import soundfile as sf
 
 # convert audio to 16 bit pcm with streaming output
 @contextmanager
@@ -105,8 +114,12 @@ def record():
     sd.wait()  # Wait until recording is finished
     return myrecording.squeeze()
 
+def get_window_size_samples():
+    return 512 if TARGET_SAMPLE_RATE == 16000 else 256
+
 def process_silero(model,audio):
-    window_size_samples = 512 if TARGET_SAMPLE_RATE == 16000 else 256
+    #print(audio)
+    window_size_samples = get_window_size_samples()
 
     # print(audio)
 
@@ -130,5 +143,83 @@ def process_silero(model,audio):
     seconds = [i / TARGET_SAMPLE_RATE for i, prob in speech_probs if prob > 0.5]
     print(seconds)
 
-class SpeechDetector:
-    pass
+def process_silero_streaming(model,audio):
+    #print(audio)
+    window_size_samples = get_window_size_samples()
+
+    if len(audio) != window_size_samples:
+        raise ValueError(f"Audio length {len(audio)} does not match window size {window_size_samples}")
+
+    # print(audio)
+
+    # Convert to PyTorch tensor and reshape to (1, num_samples)
+    # Silero typically expects a single-channel tensor with shape (1, samples)
+    audio_tensor = torch.from_numpy(audio)
+    speech_prob = model(audio_tensor, TARGET_SAMPLE_RATE).item()
+    #print(speech_prob)
+    return speech_prob > 0.5
+    #    print("Speech detected")
+
+
+q = queue.Queue()
+
+def audio_callback(indata, frames, t, status):
+    """This is called (from a separate thread) for each audio block."""
+    if status:
+        print(status, file=sys.stderr)
+    data_flattened = indata.squeeze()
+    #print("frames",frames)
+    #print("indata length",len(indata))
+
+    # Fancy indexing with mapping creates a (necessary!) copy:
+    q.put((data_flattened,time.time()))
+
+def process_recording():
+    model = load_silero_vad()
+
+    window_size_samples = get_window_size_samples()
+
+    # buf = []
+    # with sd.InputStream(blocksize=window_size_samples,samplerate=TARGET_SAMPLE_RATE, channels=1, dtype='float32', callback=audio_callback):
+    #     while True:
+    #         data,ts = q.get(block=True)
+    #         buf.extend(data)
+    #         #print(buf)
+    #         if len(buf) >= window_size_samples:
+    #             #print("len buf",len(buf))
+    #             if len(buf) % window_size_samples != 0:
+    #                 raise ValueError("Buffer size is not a multiple of window size")
+    #             process_silero_streaming(model,np.asarray(buf))
+    #             buf = []
+
+    cur_has_speech = False
+    last_has_speech_ts = None
+    speech_section = []
+    with sd.InputStream(blocksize=window_size_samples,samplerate=TARGET_SAMPLE_RATE, channels=1, dtype='float32', callback=audio_callback):
+        while True:
+            data,ts = q.get(block=True)
+            #print(buf)
+            if len(data) != window_size_samples:
+                raise ValueError(f"Audio length {len(data)} does not match window size {window_size_samples}")
+            has_speech = process_silero_streaming(model,data)
+            if has_speech:
+                last_has_speech_ts = ts
+                if not cur_has_speech:
+                    logging.info("speech detected")
+                    cur_has_speech = True
+
+            if cur_has_speech and ts - last_has_speech_ts > 1:
+                logging.info("no speech detected for 1 second, stop adding speech and save file")
+                directory = "./tmp/speech"
+                os.makedirs(directory,exist_ok=True)
+                sf.write(os.path.join(directory,f"{last_has_speech_ts}.wav"), np.asarray(speech_section), TARGET_SAMPLE_RATE)
+                last_has_speech_ts = None
+                cur_has_speech = False
+                speech_section = []
+
+            if cur_has_speech:
+                logging.debug("adding speech",ts)
+                cur_has_speech = True
+                speech_section.extend(data)
+
+
