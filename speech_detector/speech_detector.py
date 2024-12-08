@@ -221,6 +221,8 @@ def process_recording():
     speech_section = []
     no_speech_seconds_threshold = 2
 
+    ts = None
+
     buffer = queue.Queue()
 
     with sd.InputStream(dtype='float32', callback=audio_callback) as stream:
@@ -228,7 +230,12 @@ def process_recording():
         if stream.channels != 1:
             raise ValueError(f"only support single channel for now")
         while True:
-            data_orig,ts = q.get(block=True)
+            data_orig,new_ts = q.get(block=True)
+            if ts is None:
+                ts = new_ts
+            elif buffer.qsize() == 0:
+                print(f"queue is empty, reset ts {ts},to new_ts {new_ts}",file=sys.stderr)
+                ts = new_ts
             if input_sample_rate != TARGET_SAMPLE_RATE:
                 data_q = scipy.signal.resample(data_orig, int(len(data_orig) * TARGET_SAMPLE_RATE / input_sample_rate))
             else:
@@ -237,6 +244,7 @@ def process_recording():
                 buffer.put(item)
             while buffer.qsize() >= window_size_samples:
                 data_slice = np.asarray([buffer.get() for _ in range(window_size_samples)])
+                ts += window_size_samples / TARGET_SAMPLE_RATE
                 if len(data_slice) != window_size_samples:
                     raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
                 has_speech = process_silero_streaming(model,data_slice)
