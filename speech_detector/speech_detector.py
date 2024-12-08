@@ -1,3 +1,4 @@
+import collections
 import logging
 import os
 import queue
@@ -14,7 +15,7 @@ import scipy
 import torch
 from silero_vad import load_silero_vad
 
-TARGET_SAMPLE_RATE = 8000
+TARGET_SAMPLE_RATE = 16000
 
 
 import sounddevice as sd
@@ -175,17 +176,17 @@ def transcribe():
     while True:
         audio = transcribe_queue.get(block=True)
 
-        new_sample_rate = 16000
-
-        original_sample_rate = TARGET_SAMPLE_RATE
-
-        # Resample
-        num_samples = int(len(audio) * new_sample_rate / original_sample_rate)
-
-        resampled_audio = scipy.signal.resample(audio, num_samples)
+        # new_sample_rate = 16000
+        #
+        # original_sample_rate = TARGET_SAMPLE_RATE
+        #
+        # # Resample
+        # num_samples = int(len(audio) * new_sample_rate / original_sample_rate)
+        #
+        # resampled_audio = scipy.signal.resample(audio, num_samples)
 
         print("transcribing audio")
-        segments, info = model.transcribe(resampled_audio, beam_size=5)
+        segments, info = model.transcribe(audio, beam_size=5)
 
         print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
@@ -212,19 +213,6 @@ def process_recording():
 
     window_size_samples = get_window_size_samples()
 
-    # buf = []
-    # with sd.InputStream(blocksize=window_size_samples,samplerate=TARGET_SAMPLE_RATE, channels=1, dtype='float32', callback=audio_callback):
-    #     while True:
-    #         data,ts = q.get(block=True)
-    #         buf.extend(data)
-    #         #print(buf)
-    #         if len(buf) >= window_size_samples:
-    #             #print("len buf",len(buf))
-    #             if len(buf) % window_size_samples != 0:
-    #                 raise ValueError("Buffer size is not a multiple of window size")
-    #             process_silero_streaming(model,np.asarray(buf))
-    #             buf = []
-
     transcribing_thread = threading.Thread(target=transcribe)
     transcribing_thread.start()
 
@@ -233,37 +221,49 @@ def process_recording():
     speech_section = []
     no_speech_seconds_threshold = 2
 
-    with sd.InputStream(blocksize=window_size_samples,samplerate=TARGET_SAMPLE_RATE, channels=1, dtype='float32', callback=audio_callback):
+    buffer = queue.Queue()
+
+    with sd.InputStream(dtype='float32', callback=audio_callback) as stream:
+        input_sample_rate = stream.samplerate
+        if stream.channels != 1:
+            raise ValueError(f"only support single channel for now")
         while True:
-            data,ts = q.get(block=True)
-            #print(buf)
-            if len(data) != window_size_samples:
-                raise ValueError(f"Audio length {len(data)} does not match window size {window_size_samples}")
-            has_speech = process_silero_streaming(model,data)
-            if has_speech:
-                last_has_speech_ts = ts
-                if not cur_has_speech:
-                    print("speech detected",ts,file=sys.stderr)
+            data_orig,ts = q.get(block=True)
+            if input_sample_rate != TARGET_SAMPLE_RATE:
+                data_q = scipy.signal.resample(data_orig, int(len(data_orig) * TARGET_SAMPLE_RATE / input_sample_rate))
+            else:
+                data_q = data_orig
+            for item in data_q:
+                buffer.put(item)
+            while buffer.qsize() >= window_size_samples:
+                data_slice = np.asarray([buffer.get() for _ in range(window_size_samples)])
+                if len(data_slice) != window_size_samples:
+                    raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
+                has_speech = process_silero_streaming(model,data_slice)
+                if has_speech:
+                    last_has_speech_ts = ts
+                    if not cur_has_speech:
+                        print("speech detected",ts,file=sys.stderr)
+                        cur_has_speech = True
+
+                if cur_has_speech and ts - last_has_speech_ts > no_speech_seconds_threshold:
+                    print(f"no speech detected for {no_speech_seconds_threshold} seconds, stop adding speech and save file",ts,file=sys.stderr)
+                    directory = "./tmp/speech"
+                    os.makedirs(directory,exist_ok=True)
+
+                    s = np.asarray(speech_section)
+                    speech_section = []
+
+                    sf.write(os.path.join(directory,f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
+                    transcribe_queue.put(s)
+
+                    last_has_speech_ts = None
+                    cur_has_speech = False
+
+
+                if cur_has_speech:
+                    logging.debug("adding speech",ts)
                     cur_has_speech = True
-
-            if cur_has_speech and ts - last_has_speech_ts > no_speech_seconds_threshold:
-                print(f"no speech detected for {no_speech_seconds_threshold} seconds, stop adding speech and save file",ts,file=sys.stderr)
-                directory = "./tmp/speech"
-                os.makedirs(directory,exist_ok=True)
-
-                s = np.asarray(speech_section)
-                speech_section = []
-
-                sf.write(os.path.join(directory,f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
-                transcribe_queue.put(s)
-
-                last_has_speech_ts = None
-                cur_has_speech = False
-
-
-            if cur_has_speech:
-                logging.debug("adding speech",ts)
-                cur_has_speech = True
-                speech_section.extend(data)
+                    speech_section.extend(data_slice)
 
 
