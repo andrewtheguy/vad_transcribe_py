@@ -165,7 +165,7 @@ def process_silero_streaming(model,audio):
 
 transcribe_queue = queue.Queue()
 
-q = queue.Queue()
+audio_input_queue = queue.Queue()
 
 def transcribe():
     from faster_whisper import WhisperModel
@@ -206,7 +206,7 @@ def audio_callback(indata, frames, t, status):
     #print("indata length",len(indata))
 
     # Fancy indexing with mapping creates a (necessary!) copy:
-    q.put((data_flattened,time.time()))
+    audio_input_queue.put((data_flattened, time.time()))
 
 def _process_end_of_speech(speech_section, last_has_speech_ts):
     directory = "./tmp/speech"
@@ -242,7 +242,7 @@ def process_recording():
         if stream.channels != 1:
             raise ValueError(f"only support single channel for now")
         while True:
-            data_orig,new_ts = q.get(block=True)
+            data_orig,new_ts = audio_input_queue.get(block=True)
             if ts is None:
                 ts = new_ts
             elif buffer.qsize() == 0:
