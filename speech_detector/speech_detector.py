@@ -208,6 +208,16 @@ def audio_callback(indata, frames, t, status):
     # Fancy indexing with mapping creates a (necessary!) copy:
     q.put((data_flattened,time.time()))
 
+def _process_end_of_speech(speech_section, last_has_speech_ts):
+    directory = "./tmp/speech"
+    os.makedirs(directory, exist_ok=True)
+
+    s = np.asarray(speech_section)
+
+    sf.write(os.path.join(directory, f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
+    transcribe_queue.put(s)
+
+
 def process_recording():
     model = load_silero_vad()
 
@@ -217,9 +227,11 @@ def process_recording():
     transcribing_thread.start()
 
     cur_has_speech = False
+    speech_duration = 0.0
     last_has_speech_ts = None
     speech_section = []
     no_speech_seconds_threshold = 2
+    max_speech_seconds = 10
 
     ts = None
 
@@ -249,29 +261,39 @@ def process_recording():
                     raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
                 has_speech = process_silero_streaming(model,data_slice)
                 if has_speech:
+                    #first_speech_ts = ts if first_speech_ts is None else first_speech_ts
                     last_has_speech_ts = ts
                     if not cur_has_speech:
                         print("speech detected",ts,file=sys.stderr)
                         cur_has_speech = True
 
-                if cur_has_speech and ts - last_has_speech_ts > no_speech_seconds_threshold:
-                    print(f"no speech detected for {no_speech_seconds_threshold} seconds, stop adding speech and save file",ts,file=sys.stderr)
-                    directory = "./tmp/speech"
-                    os.makedirs(directory,exist_ok=True)
+                if cur_has_speech:
+                    logging.debug("adding speech",ts)
+                    speech_section.extend(data_slice)
+                    speech_duration += window_size_samples / TARGET_SAMPLE_RATE
 
-                    s = np.asarray(speech_section)
+                if cur_has_speech and speech_duration > max_speech_seconds:
+                    print(
+                        f"max speech detected for {max_speech_seconds} seconds, stop adding speech and save file",
+                        ts, file=sys.stderr)
+
+                    _process_end_of_speech(speech_section, last_has_speech_ts)
+
                     speech_section = []
+                    speech_duration = 0.0
+                    last_has_speech_ts = None
+                    cur_has_speech = False
 
-                    sf.write(os.path.join(directory,f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
-                    transcribe_queue.put(s)
+                elif cur_has_speech and ts - last_has_speech_ts > no_speech_seconds_threshold:
+                    print(f"no speech detected for {no_speech_seconds_threshold} seconds, stop adding speech and save file",ts,file=sys.stderr)
 
+                    _process_end_of_speech(speech_section, last_has_speech_ts)
+
+                    speech_section = []
+                    speech_duration = 0.0
                     last_has_speech_ts = None
                     cur_has_speech = False
 
 
-                if cur_has_speech:
-                    logging.debug("adding speech",ts)
-                    cur_has_speech = True
-                    speech_section.extend(data_slice)
 
 
