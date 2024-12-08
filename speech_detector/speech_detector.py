@@ -249,6 +249,7 @@ def process_recording():
                 logging.debug(f"queue is empty, reset ts {ts},to new_ts {new_ts}")
                 ts = new_ts
             if input_sample_rate != TARGET_SAMPLE_RATE:
+                print("resampling audio")
                 data_q = scipy.signal.resample(data_orig, int(len(data_orig) * TARGET_SAMPLE_RATE / input_sample_rate))
             else:
                 data_q = data_orig
