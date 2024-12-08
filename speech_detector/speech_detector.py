@@ -146,8 +146,8 @@ def get_window_size_samples():
 #     print(seconds)
 
 class MicRecorder:
-    def __init__(self):
-        self.audio_input_queue = queue.Queue()
+    def __init__(self,audio_input_queue):
+        self.audio_input_queue = audio_input_queue
         self.stream = sd.InputStream(callback=self.audio_callback)
 
     def audio_callback(self, indata, frames, t, status):

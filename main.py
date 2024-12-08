@@ -1,6 +1,7 @@
 import argparse
 import os
 import queue
+import sys
 import threading
 import time
 
@@ -17,9 +18,11 @@ from speech_detector.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit
     SpeechDetector, MicRecorder, AudioSegment
 
 
-def file_function(q):
-
+def process_file(q):
     SpeechDetector(q).process_input(TARGET_SAMPLE_RATE)
+
+def process_mic(q):
+    MicRecorder(q).record()
 
 if __name__ == '__main__':
     argparse = argparse.ArgumentParser()
@@ -40,7 +43,7 @@ if __name__ == '__main__':
         audio_input_queue = queue.Queue()
 
         # Create a new thread
-        thread = threading.Thread(target=file_function, args=(audio_input_queue,))
+        thread = threading.Thread(target=process_file, args=(audio_input_queue,))
 
         # Start the thread
         thread.start()
@@ -63,5 +66,18 @@ if __name__ == '__main__':
 
         #SpeechDetector().process_silero(audio)
     elif args.action == 'mic':
-        MicRecorder().record()
-        #sf.write('output.wav', audio, TARGET_SAMPLE_RATE)
+        audio_input_queue = queue.Queue()
+        thread = threading.Thread(target=process_mic, args=(audio_input_queue,))
+
+        # Start the thread
+        thread.start()
+
+        # press q and enter to quit
+        while True:
+            print("Press q and enter to quit")
+            input2 = sys.stdin.read(1)
+            if input2 == 'q':
+                audio_input_queue.put(None)
+                break
+
+        thread.join()
