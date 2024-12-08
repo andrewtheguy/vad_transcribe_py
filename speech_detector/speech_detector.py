@@ -231,7 +231,7 @@ def process_recording():
     last_has_speech_ts = None
     speech_section = []
     no_speech_seconds_threshold = 2
-    max_speech_seconds = 10
+    max_speech_seconds = 60
 
     ts = None
 
@@ -274,7 +274,7 @@ def process_recording():
 
                 if cur_has_speech and speech_duration > max_speech_seconds:
                     print(
-                        f"max speech detected for {max_speech_seconds} seconds, stop adding speech and save file",
+                        f"max speech duration of {max_speech_seconds} seconds reached, stop adding speech and save file",
                         ts, file=sys.stderr)
 
                     _process_end_of_speech(speech_section, last_has_speech_ts)
