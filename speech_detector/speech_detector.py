@@ -234,7 +234,7 @@ def process_recording():
             if ts is None:
                 ts = new_ts
             elif buffer.qsize() == 0:
-                print(f"queue is empty, reset ts {ts},to new_ts {new_ts}",file=sys.stderr)
+                logging.debug(f"queue is empty, reset ts {ts},to new_ts {new_ts}",file=sys.stderr)
                 ts = new_ts
             if input_sample_rate != TARGET_SAMPLE_RATE:
                 data_q = scipy.signal.resample(data_orig, int(len(data_orig) * TARGET_SAMPLE_RATE / input_sample_rate))
