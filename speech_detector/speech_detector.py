@@ -3,12 +3,14 @@ import os
 import queue
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from enum import Enum
 from time import sleep
 
 import numpy.typing as npt
+import scipy
 import torch
 from silero_vad import load_silero_vad
 
@@ -160,8 +162,40 @@ def process_silero_streaming(model,audio):
     return speech_prob > 0.5
     #    print("Speech detected")
 
+transcribe_queue = queue.Queue()
 
 q = queue.Queue()
+
+def transcribe():
+    from faster_whisper import WhisperModel
+    model_size = "turbo"
+
+    # or run on CPU with INT8
+    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+
+    while True:
+        audio = transcribe_queue.get(block=True)
+
+        new_sample_rate = 16000
+
+        original_sample_rate = TARGET_SAMPLE_RATE
+
+        # Resample
+        num_samples = int(len(audio) * new_sample_rate / original_sample_rate)
+
+        resampled_audio = scipy.signal.resample(audio, num_samples)
+
+        print("transcribing audio")
+        segments, info = model.transcribe(resampled_audio, beam_size=5)
+
+        print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
+
+        for segment in segments:
+            print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+        # or run on GPU with INT8
+        # model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
+        # or run on CPU with INT8
+        # model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
 def audio_callback(indata, frames, t, status):
     """This is called (from a separate thread) for each audio block."""
@@ -192,10 +226,14 @@ def process_recording():
     #             process_silero_streaming(model,np.asarray(buf))
     #             buf = []
 
+    transcribing_thread = threading.Thread(target=transcribe)
+    transcribing_thread.start()
+
     cur_has_speech = False
     last_has_speech_ts = None
     speech_section = []
     no_speech_seconds_threshold = 2
+
     with sd.InputStream(blocksize=window_size_samples,samplerate=TARGET_SAMPLE_RATE, channels=1, dtype='float32', callback=audio_callback):
         while True:
             data,ts = q.get(block=True)
@@ -213,10 +251,16 @@ def process_recording():
                 print(f"no speech detected for {no_speech_seconds_threshold} seconds, stop adding speech and save file",ts,file=sys.stderr)
                 directory = "./tmp/speech"
                 os.makedirs(directory,exist_ok=True)
-                sf.write(os.path.join(directory,f"{last_has_speech_ts}.wav"), np.asarray(speech_section), TARGET_SAMPLE_RATE)
+
+                s = np.asarray(speech_section)
+                speech_section = []
+
+                sf.write(os.path.join(directory,f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
+                transcribe_queue.put(s)
+
                 last_has_speech_ts = None
                 cur_has_speech = False
-                speech_section = []
+
 
             if cur_has_speech:
                 logging.debug("adding speech",ts)
