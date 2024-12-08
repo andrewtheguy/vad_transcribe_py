@@ -1,4 +1,4 @@
-import collections
+
 import logging
 import os
 import queue
@@ -7,20 +7,19 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from enum import Enum
-from time import sleep
+
 
 import numpy.typing as npt
 import scipy
 import torch
 from silero_vad import load_silero_vad
 
-TARGET_SAMPLE_RATE = 16000
-
-
 import sounddevice as sd
 
 import soundfile as sf
+
+TARGET_SAMPLE_RATE = 16000
+
 
 # convert audio to 16 bit pcm with streaming output
 @contextmanager
@@ -110,146 +109,158 @@ def pcm_s16le_to_float32(pcm_bytes: bytes) -> npt.NDArray[np.float32]:
 
     return audio_float32
 
-def record():
-    fs = TARGET_SAMPLE_RATE
-    duration = 10  # seconds
-    myrecording = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='float32')
-    sd.wait()  # Wait until recording is finished
-    return myrecording.squeeze()
+# def record():
+#     fs = TARGET_SAMPLE_RATE
+#     duration = 10  # seconds
+#     myrecording = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='float32')
+#     sd.wait()  # Wait until recording is finished
+#     return myrecording.squeeze()
 
 def get_window_size_samples():
     return 512 if TARGET_SAMPLE_RATE == 16000 else 256
 
-def process_silero(model,audio):
-    #print(audio)
-    window_size_samples = get_window_size_samples()
+# def process_silero(model,audio):
+#     #print(audio)
+#     window_size_samples = get_window_size_samples()
+#
+#     # print(audio)
+#
+#     # Convert to PyTorch tensor and reshape to (1, num_samples)
+#     # Silero typically expects a single-channel tensor with shape (1, samples)
+#     audio_tensor = torch.from_numpy(audio)
+#
+#     speech_probs = []
+#
+#     wav = audio_tensor
+#
+#     for i in range(0, len(wav), window_size_samples):
+#         chunk = wav[i: i + window_size_samples]
+#         if len(chunk) < window_size_samples:
+#             break
+#         speech_prob = model(chunk, TARGET_SAMPLE_RATE).item()
+#         speech_probs.append((i, speech_prob), )
+#     model.reset_states()  # reset model states after each audio
+#
+#     # print indexes of speech_probs where probability is greater than 0.5
+#     seconds = [i / TARGET_SAMPLE_RATE for i, prob in speech_probs if prob > 0.5]
+#     print(seconds)
 
-    # print(audio)
+class MicRecorder:
+    def __init__(self):
+        self.audio_input_queue = queue.Queue()
+        self.stream = sd.InputStream(callback=self.audio_callback)
 
-    # Convert to PyTorch tensor and reshape to (1, num_samples)
-    # Silero typically expects a single-channel tensor with shape (1, samples)
-    audio_tensor = torch.from_numpy(audio)
+    def audio_callback(self, indata, frames, t, status):
+        """This is called (from a separate thread) for each audio block."""
+        if status:
+            print(status, file=sys.stderr)
+        data_flattened = indata.squeeze()
+        # print("frames",frames)
+        # print("indata length",len(indata))
 
-    speech_probs = []
+        # Fancy indexing with mapping creates a (necessary!) copy:
+        self.audio_input_queue.put((data_flattened, time.time(),))
 
-    wav = audio_tensor
-
-    for i in range(0, len(wav), window_size_samples):
-        chunk = wav[i: i + window_size_samples]
-        if len(chunk) < window_size_samples:
-            break
-        speech_prob = model(chunk, TARGET_SAMPLE_RATE).item()
-        speech_probs.append((i, speech_prob), )
-    model.reset_states()  # reset model states after each audio
-
-    # print indexes of speech_probs where probability is greater than 0.5
-    seconds = [i / TARGET_SAMPLE_RATE for i, prob in speech_probs if prob > 0.5]
-    print(seconds)
-
-def process_silero_streaming(model,audio):
-    #print(audio)
-    window_size_samples = get_window_size_samples()
-
-    if len(audio) != window_size_samples:
-        raise ValueError(f"Audio length {len(audio)} does not match window size {window_size_samples}")
-
-    # print(audio)
-
-    # Convert to PyTorch tensor and reshape to (1, num_samples)
-    # Silero typically expects a single-channel tensor with shape (1, samples)
-    audio_tensor = torch.from_numpy(audio)
-    speech_prob = model(audio_tensor, TARGET_SAMPLE_RATE).item()
-    #print(speech_prob)
-    return speech_prob > 0.5
-    #    print("Speech detected")
-
-transcribe_queue = queue.Queue()
-
-audio_input_queue = queue.Queue()
-
-def transcribe():
-    from faster_whisper import WhisperModel
-    model_size = "turbo"
-
-    model = WhisperModel(model_size)
-
-    while True:
-        audio = transcribe_queue.get(block=True)
-
-        # new_sample_rate = 16000
-        #
-        # original_sample_rate = TARGET_SAMPLE_RATE
-        #
-        # # Resample
-        # num_samples = int(len(audio) * new_sample_rate / original_sample_rate)
-        #
-        # resampled_audio = scipy.signal.resample(audio, num_samples)
-
-        print("transcribing audio")
-        segments, info = model.transcribe(audio, beam_size=5)
-
-        print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
-
-        for segment in segments:
-            print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
-        # or run on GPU with INT8
-        # model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
-        # or run on CPU with INT8
-        # model = WhisperModel(model_size, device="cpu", compute_type="int8")
-
-def audio_callback(indata, frames, t, status):
-    """This is called (from a separate thread) for each audio block."""
-    if status:
-        print(status, file=sys.stderr)
-    data_flattened = indata.squeeze()
-    #print("frames",frames)
-    #print("indata length",len(indata))
-
-    # Fancy indexing with mapping creates a (necessary!) copy:
-    audio_input_queue.put((data_flattened, time.time()))
-
-def _process_end_of_speech(speech_section, last_has_speech_ts):
-    directory = "./tmp/speech"
-    os.makedirs(directory, exist_ok=True)
-
-    s = np.asarray(speech_section)
-
-    sf.write(os.path.join(directory, f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
-    transcribe_queue.put(s)
+    def record(self):
+        with sd.InputStream(dtype='float32', callback=self.audio_callback) as stream:
+            input_sample_rate = stream.samplerate
+            if stream.channels != 1:
+                raise ValueError(f"only support single channel for now")
+            SpeechDetector(self.audio_input_queue).process_input(input_sample_rate)
 
 
-def process_recording():
-    model = load_silero_vad()
+class SpeechDetector:
+    def __init__(self, audio_input_queue: queue.Queue[(npt.NDArray[np.float32], float)]):
+        self.model = load_silero_vad()
+        self.transcribe_queue = queue.Queue()
+        self.audio_input_queue = audio_input_queue
 
-    window_size_samples = get_window_size_samples()
+    def process_silero_streaming(self,audio):
+        model = self.model
+        window_size_samples = get_window_size_samples()
 
-    transcribing_thread = threading.Thread(target=transcribe)
-    transcribing_thread.start()
+        if len(audio) != window_size_samples:
+            raise ValueError(f"Audio length {len(audio)} does not match window size {window_size_samples}")
 
-    cur_has_speech = False
-    speech_duration = 0.0
-    last_has_speech_ts = None
-    speech_section = []
-    no_speech_seconds_threshold = 2
-    max_speech_seconds = 60
+        # print(audio)
 
-    ts = None
+        # Convert to PyTorch tensor and reshape to (1, num_samples)
+        # Silero typically expects a single-channel tensor with shape (1, samples)
+        audio_tensor = torch.from_numpy(audio)
+        speech_prob = model(audio_tensor, TARGET_SAMPLE_RATE).item()
+        #print(speech_prob)
+        return speech_prob > 0.5
+        #    print("Speech detected")
 
-    buffer = queue.Queue()
 
-    with sd.InputStream(dtype='float32', callback=audio_callback) as stream:
-        input_sample_rate = stream.samplerate
-        if stream.channels != 1:
-            raise ValueError(f"only support single channel for now")
+    def transcribe(self):
+        from faster_whisper import WhisperModel
+        model_size = "turbo"
+
+        model = WhisperModel(model_size)
+
         while True:
-            data_orig,new_ts = audio_input_queue.get(block=True)
+            audio = self.transcribe_queue.get(block=True)
+
+            # new_sample_rate = 16000
+            #
+            # original_sample_rate = TARGET_SAMPLE_RATE
+            #
+            # # Resample
+            # num_samples = int(len(audio) * new_sample_rate / original_sample_rate)
+            #
+            # resampled_audio = scipy.signal.resample(audio, num_samples)
+
+            print("transcribing audio")
+            segments, info = model.transcribe(audio, beam_size=5)
+
+            print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
+
+            for segment in segments:
+                print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+            # or run on GPU with INT8
+            # model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
+            # or run on CPU with INT8
+            # model = WhisperModel(model_size, device="cpu", compute_type="int8")
+
+
+    def _process_end_of_speech(self, speech_section, last_has_speech_ts):
+        directory = "./tmp/speech"
+        os.makedirs(directory, exist_ok=True)
+
+        s = np.asarray(speech_section)
+
+        sf.write(os.path.join(directory, f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
+        self.transcribe_queue.put(s)
+
+
+    def process_input(self,input_sample_rate):
+
+        window_size_samples = get_window_size_samples()
+
+        transcribing_thread = threading.Thread(target=self.transcribe)
+        transcribing_thread.start()
+
+        cur_has_speech = False
+        speech_duration = 0.0
+        last_has_speech_ts = None
+        speech_section = []
+        no_speech_seconds_threshold = 2
+        max_speech_seconds = 60
+
+        ts = None
+
+        buffer = queue.Queue()
+
+        while True:
+            data_orig,new_ts = self.audio_input_queue.get(block=True)
             if ts is None:
                 ts = new_ts
             elif buffer.qsize() == 0:
                 logging.debug(f"queue is empty, reset ts {ts},to new_ts {new_ts}")
                 ts = new_ts
             if input_sample_rate != TARGET_SAMPLE_RATE:
-                print("resampling audio")
+                #print("resampling audio")
                 data_q = scipy.signal.resample(data_orig, int(len(data_orig) * TARGET_SAMPLE_RATE / input_sample_rate))
             else:
                 data_q = data_orig
@@ -260,7 +271,7 @@ def process_recording():
                 ts += window_size_samples / TARGET_SAMPLE_RATE
                 if len(data_slice) != window_size_samples:
                     raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
-                has_speech = process_silero_streaming(model,data_slice)
+                has_speech = self.process_silero_streaming(data_slice)
                 if has_speech:
                     #first_speech_ts = ts if first_speech_ts is None else first_speech_ts
                     last_has_speech_ts = ts
@@ -278,7 +289,7 @@ def process_recording():
                         f"max speech duration of {max_speech_seconds} seconds reached, stop adding speech and save file",
                         ts, file=sys.stderr)
 
-                    _process_end_of_speech(speech_section, last_has_speech_ts)
+                    self._process_end_of_speech(speech_section, last_has_speech_ts)
 
                     speech_section = []
                     speech_duration = 0.0
@@ -288,13 +299,10 @@ def process_recording():
                 elif cur_has_speech and ts - last_has_speech_ts > no_speech_seconds_threshold:
                     print(f"no speech detected for {no_speech_seconds_threshold} seconds, stop adding speech and save file",ts,file=sys.stderr)
 
-                    _process_end_of_speech(speech_section, last_has_speech_ts)
+                    self._process_end_of_speech(speech_section, last_has_speech_ts)
 
                     speech_section = []
                     speech_duration = 0.0
                     last_has_speech_ts = None
                     cur_has_speech = False
-
-
-
 
