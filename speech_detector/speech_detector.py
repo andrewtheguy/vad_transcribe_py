@@ -177,15 +177,36 @@ class AudioSegment:
         return f"AudioSegment(start={self.start}, audio={self.audio})"
 
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.Queue[AudioSegment]):
-        from faster_whisper import WhisperModel
-
+    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],transcribe_backend="whispercpp"):
         self.model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
-        model_size = "turbo"
+        if transcribe_backend == "faster-whisper":
+            self._load_faster_whisper()
+        elif transcribe_backend == "whispercpp":
+            self._load_whisper_cpp()
+        else:
+            raise ValueError(f"Unsupported transcribe backend {transcribe_backend}")
+        self.transcribe_backend = transcribe_backend
 
-        self.whisper_model = WhisperModel(model_size)
+    def _load_faster_whisper(self):
+        from faster_whisper import WhisperModel
+        model_size = "turbo"
+        self.faster_whisper_model = WhisperModel(model_size)
+
+
+    def _load_whisper_cpp(self):
+        from pywhispercpp.model import Model
+
+        self.whisper_cpp_model = Model('large-v3-turbo',
+
+                                       print_realtime=False,
+                                       print_progress=False,
+                                       print_timestamps=False,
+
+                                       language="zh",
+
+                                       )
 
     def process_silero(self, audio):
         #return True
@@ -205,9 +226,28 @@ class SpeechDetector:
         return speech_prob > 0.5
         #    print("Speech detected")
 
-
     def _transcribe(self):
+        if self.transcribe_backend == "faster-whisper":
+            self._transcribe_faster_whisper()
+        elif self.transcribe_backend == "whispercpp":
+            self._transcribe_whisper_cpp()
+        else:
+            raise ValueError(f"Unsupported transcribe backend {self.transcribe_backend}")
 
+    def _new_segment_callback(self, segment):
+        print("[%.2fs -> %.2fs] %s" % (segment.t0, segment.t1, segment.text))
+
+    def _transcribe_whisper_cpp(self):
+        while True:
+            audio = self.transcribe_queue.get(block=True)
+            if audio is None:
+                print("finished transcribing audio",file=sys.stderr)
+                break
+            print("transcribing audio")
+            self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback)
+
+
+    def _transcribe_faster_whisper(self):
 
         while True:
             audio = self.transcribe_queue.get(block=True)
@@ -227,7 +267,7 @@ class SpeechDetector:
             # resampled_audio = scipy.signal.resample(audio, num_samples)
 
             print("transcribing audio")
-            segments, info = self.whisper_model.transcribe(audio, beam_size=5)
+            segments, info = self.faster_whisper_model.transcribe(audio, beam_size=5)
 
             print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
