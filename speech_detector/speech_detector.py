@@ -5,8 +5,9 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from contextlib import contextmanager
-
+from datetime import datetime, tzinfo, timezone
 
 import numpy.typing as npt
 import scipy
@@ -260,7 +261,11 @@ class SpeechDetector:
             raise ValueError(f"Unsupported transcribe backend {self.transcribe_backend}")
 
     def _new_segment_callback(self, segment):
-        print("[%.2fs -> %.2fs] %s" % (segment.t0, segment.t1, segment.text))
+        #print("[%.2fs -> %.2fs] %s" % (segment.t0, segment.t1, segment.text))
+        print("[%s -> %s] %s" % (datetime.fromtimestamp(self.ts_transcribe_start+segment.t0,timezone.utc),
+                                 datetime.fromtimestamp(self.ts_transcribe_start+segment.t1,timezone.utc)
+                                 , segment.text))
+
 
     def _transcribe_whisper_cpp(self):
         while True:
@@ -269,6 +274,7 @@ class SpeechDetector:
                 #print("finished transcribing audio",file=sys.stderr)
                 break
             #print("transcribing audio")
+            self.ts_transcribe_start = time.time()
             self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
 
 
