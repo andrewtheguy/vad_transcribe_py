@@ -41,7 +41,7 @@ def stream_url_thread(url,audio_input_queue):
     while True:
         with stream_url(url) as stdout:
             while True:
-                chunk = stdout.read(4096)
+                chunk = stdout.read(TARGET_SAMPLE_RATE*2) # 1 second
                 if not chunk:
                     break
                 audio = pcm_s16le_to_float32(chunk)
@@ -49,6 +49,7 @@ def stream_url_thread(url,audio_input_queue):
                 # time.sleep(5)
                 # put audio into queue one by one
                 audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                print("audio_input_queue size", audio_input_queue.qsize())
                 ts += len(audio) / TARGET_SAMPLE_RATE
         print("stream_stopped, restarting", file=sys.stderr)
         sleep(0.5)
@@ -72,7 +73,7 @@ if __name__ == '__main__':
             print(f"File {args.file} does not exist")
             exit(1)
 
-        audio_input_queue = queue.Queue()
+        audio_input_queue = queue.SimpleQueue()
 
         # Create a new thread
         thread_transcribe = threading.Thread(target=process_queue, args=(audio_input_queue, args.lang))
@@ -98,7 +99,7 @@ if __name__ == '__main__':
 
         #SpeechDetector().process_silero(audio)
     elif args.action == 'mic':
-        audio_input_queue = queue.Queue()
+        audio_input_queue = queue.SimpleQueue()
         thread_transcribe = threading.Thread(target=process_mic, args=(audio_input_queue, args.lang,))
 
         # Start the thread
@@ -135,7 +136,7 @@ if __name__ == '__main__':
                 create index if not exists transcript_show_name_idx ON transcripts (show_name);
                 """)
 
-            audio_input_queue = queue.Queue()
+            audio_input_queue = queue.SimpleQueue()
 
             # Create a new thread
             thread_transcribe = threading.Thread(target=process_queue,  kwargs={

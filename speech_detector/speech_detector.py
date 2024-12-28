@@ -203,9 +203,9 @@ class AudioSegment:
         return f"AudioSegment(start={self.start}, audio={self.audio})"
 
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,show_name="unknown",transcribe_backend="whispercpp",save_file=True,database_connection=None):
+    def __init__(self, audio_input_queue: queue.SimpleQueue[AudioSegment],language: str,show_name="unknown",transcribe_backend="whispercpp",save_file=True,database_connection=None):
         self.model = load_silero_vad()
-        self.transcribe_queue = queue.Queue()
+        self.transcribe_queue = queue.SimpleQueue()
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.save_file = save_file
@@ -282,6 +282,7 @@ class SpeechDetector:
 
     def _transcribe_whisper_cpp(self):
         while True:
+            print("transcribing queue size",self.transcribe_queue.qsize())
             audio = self.transcribe_queue.get(block=True)
             if audio is None:
                 #print("finished transcribing audio",file=sys.stderr)
