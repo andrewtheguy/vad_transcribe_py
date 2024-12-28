@@ -413,3 +413,4 @@ class SpeechDetector:
         if len(speech_section) > 0:
             self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
         self.transcribe_queue.put(None)
+        transcribing_thread.join()
