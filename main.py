@@ -4,6 +4,7 @@ import queue
 import sys
 import threading
 import time
+import tomllib
 from os import environ
 from time import sleep
 
@@ -27,7 +28,6 @@ from speech_detector.mic_recorder import MicRecorder
 
 def process_queue(q,language,save_file=True,show_name=None,database_connection=None):
     print("process_queue")
-    print(args.lang)
     SpeechDetector(audio_input_queue=q,language=language,save_file=save_file,
                    show_name=show_name,
                    database_connection=database_connection,
@@ -57,11 +57,9 @@ def stream_url_thread(url,audio_input_queue):
 if __name__ == '__main__':
     load_dotenv()
     argparse = argparse.ArgumentParser()
-    argparse.add_argument('action', type=str, choices=['file','mic','url'])
+    argparse.add_argument('action', type=str, choices=['file','mic','config'])
     argparse.add_argument('--file', type=str, required=False)
-    argparse.add_argument('--url', type=str, required=False)
-    argparse.add_argument('--show-name', type=str, required=False)
-    argparse.add_argument('--lang', type=str, required=False, default='yue')
+    argparse.add_argument('--config', type=str, required=False) # for url live streaming
     args = argparse.parse_args()
 
     vad_model = load_silero_vad()
@@ -115,14 +113,9 @@ if __name__ == '__main__':
                 break
 
         thread_transcribe.join()
-    elif args.action == 'url':
-        if not args.url:
-            print("Please provide a url")
-            exit(1)
-
-        if not args.show_name:
-            print("Please provide a show name")
-            exit(1)
+    elif args.action == 'config':
+        with open(args.config, "rb") as f:
+            data = tomllib.load(f)
 
         # Connect to an existing database
         with psycopg.connect(os.environ['DATABASE_URL'],autocommit=True) as conn:
@@ -147,18 +140,18 @@ if __name__ == '__main__':
             # Create a new thread
             thread_transcribe = threading.Thread(target=process_queue,  kwargs={
                 'q': audio_input_queue,
-                'language': args.lang,
+                'language': data['language'],
                 'save_file': False,
-                'show_name': args.show_name,
+                'show_name': data['show_name'],
                 'database_connection': conn
             })
 
             # Start the thread
             thread_transcribe.start()
 
-            #stream_url_thread(args.url,audio_input_queue)
+            url = data['url']
 
-            thread_streaming = threading.Thread(target=stream_url_thread, args=(args.url,audio_input_queue,))
+            thread_streaming = threading.Thread(target=stream_url_thread, args=(url,audio_input_queue,))
 
             thread_streaming.daemon = True
 
