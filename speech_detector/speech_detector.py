@@ -320,12 +320,14 @@ class SpeechDetector:
         transcribing_thread = threading.Thread(target=self._transcribe)
         transcribing_thread.start()
 
-        cur_has_speech = False
-        speech_duration = 0.0
-        last_has_speech_ts = None
+        prev_has_speech = False
+
+        #has_speech_begin_timestamp = None
         speech_section = []
-        no_speech_seconds_threshold = 2
+
+        min_speech_seconds = 3
         max_speech_seconds = 60
+        has_speech_begin_timestamp = None
 
         ts = None
 
@@ -353,51 +355,43 @@ class SpeechDetector:
                 arr = buffer[:window_size_samples]
                 buffer = buffer[window_size_samples:]
                 data_slice = np.asarray(arr)
-                ts += window_size_samples / TARGET_SAMPLE_RATE
+                #ts += window_size_samples / TARGET_SAMPLE_RATE
                 #if len(data_slice) != window_size_samples:
                 #    raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
+                seconds = len(speech_section) / TARGET_SAMPLE_RATE
                 has_speech = self.process_silero(data_slice)
-                if has_speech:
-                    #first_speech_ts = ts if first_speech_ts is None else first_speech_ts
-                    last_has_speech_ts = ts
-                    if not cur_has_speech:
-                        print("speech detected",ts,file=sys.stderr)
-                        cur_has_speech = True
+                if not prev_has_speech:
+                    if has_speech:
+                        print("Transitioning from no speech to speech",file=sys.stderr)
+                        has_speech_begin_timestamp = ts
                         if prev_slice is not None:
                             speech_section.extend(prev_slice)
-                            speech_duration += len(prev_slice) / TARGET_SAMPLE_RATE
-
-                if cur_has_speech:
-                    logging.debug("adding speech",ts)
-                    speech_section.extend(data_slice)
-                    speech_duration += len(data_slice) / TARGET_SAMPLE_RATE
-                    prev_slice = None
+                            prev_slice = None
+                        speech_section.extend(data_slice)
+                    else:
+                        #print("still no speech",ts,file=sys.stderr)
+                        prev_slice = data_slice
                 else:
-                    prev_slice = data_slice
+                    if seconds > max_speech_seconds:
+                        print("override to no speech because seconds > max_seconds",seconds,file=sys.stderr)
+                        has_speech = False
+                    elif seconds < min_speech_seconds and not has_speech:
+                        print("override to speech because seconds < min_seconds",seconds,file=sys.stderr)
+                        has_speech = True
+                    if has_speech:
+                        #print("still in speech",ts,file=sys.stderr)
+                        speech_section.extend(data_slice)
+                    else:
+                        print("Transitioning from speech to no speech",file=sys.stderr)
+                        speech_section.extend(data_slice)
+                        self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
+                        speech_section = []
+                        has_speech_begin_timestamp = None
+                        prev_slice = None
 
-                if cur_has_speech and speech_duration > max_speech_seconds:
-                    print(
-                        f"max speech duration of {max_speech_seconds} seconds reached, stop adding speech and save file",
-                        ts, file=sys.stderr)
-
-                    self._process_end_of_speech(speech_section, last_has_speech_ts)
-
-                    speech_section = []
-                    speech_duration = 0.0
-                    last_has_speech_ts = None
-                    cur_has_speech = False
-
-                elif cur_has_speech and ts - last_has_speech_ts > no_speech_seconds_threshold:
-                    print(f"no speech detected for {no_speech_seconds_threshold} seconds, stop adding speech and save file",ts,file=sys.stderr)
-
-                    self._process_end_of_speech(speech_section, last_has_speech_ts)
-
-                    speech_section = []
-                    speech_duration = 0.0
-                    last_has_speech_ts = None
-                    cur_has_speech = False
+                prev_has_speech = has_speech
 
         print("finished processing audio",ts,file=sys.stderr)
         if len(speech_section) > 0:
-            self._process_end_of_speech(speech_section, last_has_speech_ts)
+            self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
         self.transcribe_queue.put(None)
