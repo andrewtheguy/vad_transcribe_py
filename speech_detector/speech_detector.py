@@ -8,6 +8,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, tzinfo, timezone
+from time import sleep
 
 import numpy.typing as npt
 import scipy
@@ -203,9 +204,9 @@ class AudioSegment:
         return f"AudioSegment(start={self.start}, audio={self.audio})"
 
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.SimpleQueue[AudioSegment],language: str,show_name="unknown",transcribe_backend="whispercpp",save_file=True,database_connection=None):
+    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,show_name="unknown",transcribe_backend="whispercpp",save_file=True,database_connection=None):
         self.model = load_silero_vad()
-        self.transcribe_queue = queue.SimpleQueue()
+        self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.save_file = save_file
@@ -418,3 +419,22 @@ class SpeechDetector:
             self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
         self.transcribe_queue.put(None)
         transcribing_thread.join()
+
+
+def stream_url_thread(url,audio_input_queue):
+    ts = 0
+    while True:
+        with stream_url(url) as stdout:
+            while True:
+                chunk = stdout.read(TARGET_SAMPLE_RATE*2) # 1 second
+                if not chunk:
+                    break
+                audio = pcm_s16le_to_float32(chunk)
+                # ts = time.time()
+                # time.sleep(5)
+                # put audio into queue one by one
+                audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                print("audio_input_queue size", audio_input_queue.qsize())
+                ts += len(audio) / TARGET_SAMPLE_RATE
+        print("stream_stopped, restarting", file=sys.stderr)
+        sleep(0.5)
