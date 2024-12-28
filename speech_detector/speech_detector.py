@@ -5,7 +5,6 @@ import queue
 import subprocess
 import sys
 import threading
-import time
 from contextlib import contextmanager
 
 
@@ -14,11 +13,60 @@ import scipy
 import torch
 from silero_vad import load_silero_vad
 
-import sounddevice as sd
-
 import soundfile as sf
 
 TARGET_SAMPLE_RATE = 16000
+
+@contextmanager
+def stream_url(url):
+    '''
+
+    // Run ffmpeg to get raw PCM (s16le) data at 16kHz
+    let mut ffmpeg_process = Command::new("ffmpeg")
+        .args(&[
+            //-drop_pkts_on_overflow 1
+            "-i", input_url,      // Input url
+            "-attempt_recovery", "1",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-recovery_wait_time", "1",
+            "-f", "s16le",         // Output format: raw PCM, signed 16-bit little-endian
+            "-acodec", "pcm_s16le",// Audio codec: PCM 16-bit signed little-endian
+            "-ac", "1",            // Number of audio channels (1 = mono)
+            "-ar", &format!("{}",target_sample_rate),        // Sample rate: 16 kHz
+            "-"                    // Output to stdout
+        ])
+        .stdout(Stdio::piped())
+        //.stderr(Stdio::null()) // Optional: Ignore stderr output
+        .spawn()?;
+    '''
+
+    command = [
+        "ffmpeg",
+        "-i", url,
+        "-attempt_recovery", "1",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-recovery_wait_time", "1",
+        "-f", "s16le",  # Output format
+        "-acodec", "pcm_s16le",  # Audio codec
+        "-ac", "1",  # Number of audio channels (1 = mono)
+        "-ar", str(TARGET_SAMPLE_RATE),  # Sample rate: 16 kHz
+        "pipe:"  # Output to stdout
+    ]
+    process = None
+    try:
+        # Run the command, capturing only stdout
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE  # Pipe stdout
+        )
+        yield process.stdout
+        if process.wait() != 0:
+            raise ValueError(f"ffmpeg command failed with return code {process.returncode}")
+    finally:
+        if process is not None:
+            process.stdout.close()
 
 
 # convert audio to 16 bit pcm with streaming output
@@ -145,29 +193,6 @@ def get_window_size_samples():
 #     seconds = [i / TARGET_SAMPLE_RATE for i, prob in speech_probs if prob > 0.5]
 #     print(seconds)
 
-class MicRecorder:
-    def __init__(self,audio_input_queue):
-        self.audio_input_queue = audio_input_queue
-        self.stream = sd.InputStream(callback=self.audio_callback)
-
-    def audio_callback(self, indata, frames, t, status):
-        """This is called (from a separate thread) for each audio block."""
-        if status:
-            print(status, file=sys.stderr)
-        data_flattened = indata.squeeze()
-        # print("frames",frames)
-        # print("indata length",len(indata))
-
-        # Fancy indexing with mapping creates a (necessary!) copy:
-        self.audio_input_queue.put(AudioSegment(start=time.time(), audio=data_flattened))
-
-    def record(self):
-        with sd.InputStream(dtype='float32', callback=self.audio_callback) as stream:
-            input_sample_rate = stream.samplerate
-            if stream.channels != 1:
-                raise ValueError(f"only support single channel for now")
-            SpeechDetector(self.audio_input_queue).process_input(input_sample_rate)
-
 class AudioSegment:
     def __init__(self, start: float, audio: npt.NDArray[np.float32]):
         self.start = start
@@ -177,10 +202,11 @@ class AudioSegment:
         return f"AudioSegment(start={self.start}, audio={self.audio})"
 
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],transcribe_backend="whispercpp"):
+    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,transcribe_backend="whispercpp"):
         self.model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
+        self.language = language
         if transcribe_backend == "faster-whisper":
             self._load_faster_whisper()
         elif transcribe_backend == "whispercpp":
@@ -204,7 +230,8 @@ class SpeechDetector:
                                        print_progress=False,
                                        print_timestamps=False,
 
-                                       language="zh",
+                                       language=self.language,
+                                       translate=False,
 
                                        )
 
@@ -267,9 +294,9 @@ class SpeechDetector:
             # resampled_audio = scipy.signal.resample(audio, num_samples)
 
             print("transcribing audio")
-            segments, info = self.faster_whisper_model.transcribe(audio, beam_size=5)
+            segments, info = self.faster_whisper_model.transcribe(audio, beam_size=5, language=self.language)
 
-            print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
+            #print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
             for segment in segments:
                 print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
