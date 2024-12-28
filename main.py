@@ -4,7 +4,9 @@ import queue
 import sys
 import threading
 import time
+from time import sleep
 
+import readchar
 import torch
 from silero_vad import (load_silero_vad,
                         read_audio,
@@ -27,6 +29,24 @@ def process_queue(q,language,save_file=True):
 def process_mic(q,language):
     MicRecorder(q).record(language=language)
 
+def stream_url_thread(url,audio_input_queue):
+    ts = 0
+    while True:
+        with stream_url(url) as stdout:
+            while True:
+                chunk = stdout.read(4096)
+                if not chunk:
+                    break
+                audio = pcm_s16le_to_float32(chunk)
+                # ts = time.time()
+                # time.sleep(5)
+                # put audio into queue one by one
+                audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                ts += len(audio) / TARGET_SAMPLE_RATE
+        print("stream_stopped, restarting", file=sys.stderr)
+        sleep(0.5)
+
+
 if __name__ == '__main__':
     argparse = argparse.ArgumentParser()
     argparse.add_argument('action', type=str, choices=['file','mic','url'])
@@ -48,10 +68,10 @@ if __name__ == '__main__':
         audio_input_queue = queue.Queue()
 
         # Create a new thread
-        thread = threading.Thread(target=process_queue, args=(audio_input_queue,args.lang))
+        thread_transcribe = threading.Thread(target=process_queue, args=(audio_input_queue, args.lang))
 
         # Start the thread
-        thread.start()
+        thread_transcribe.start()
 
         ts = 0
         with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
@@ -67,15 +87,15 @@ if __name__ == '__main__':
                 ts += len(audio) / TARGET_SAMPLE_RATE
 
         audio_input_queue.put(None)
-        thread.join()
+        thread_transcribe.join()
 
         #SpeechDetector().process_silero(audio)
     elif args.action == 'mic':
         audio_input_queue = queue.Queue()
-        thread = threading.Thread(target=process_mic, args=(audio_input_queue,args.lang,))
+        thread_transcribe = threading.Thread(target=process_mic, args=(audio_input_queue, args.lang,))
 
         # Start the thread
-        thread.start()
+        thread_transcribe.start()
 
         # press q and enter to quit
         while True:
@@ -85,7 +105,7 @@ if __name__ == '__main__':
                 audio_input_queue.put(None)
                 break
 
-        thread.join()
+        thread_transcribe.join()
     elif args.action == 'url':
         if not args.url:
             print("Please provide a url")
@@ -94,25 +114,28 @@ if __name__ == '__main__':
         audio_input_queue = queue.Queue()
 
         # Create a new thread
-        thread = threading.Thread(target=process_queue, args=(audio_input_queue,args.lang,False,))
+        thread_transcribe = threading.Thread(target=process_queue, args=(audio_input_queue, args.lang, False,))
 
         # Start the thread
-        thread.start()
+        thread_transcribe.start()
 
-        ts = 0
-        with stream_url(args.url) as stdout:
-            while True:
-                chunk = stdout.read(4096)
-                if not chunk:
-                    break
-                audio = pcm_s16le_to_float32(chunk)
-                #ts = time.time()
-                #time.sleep(5)
-                # put audio into queue one by one
-                audio_input_queue.put(AudioSegment(audio=audio, start=ts))
-                ts += len(audio) / TARGET_SAMPLE_RATE
+        #stream_url_thread(args.url,audio_input_queue)
+
+        thread_streaming = threading.Thread(target=stream_url_thread, args=(args.url,audio_input_queue,))
+
+        thread_streaming.daemon = True
+
+        thread_streaming.start()
+
+        while True:
+            print('press q to quit:')
+            char = readchar.readchar()
+            if char == 'q':
+                break
 
         audio_input_queue.put(None)
-        thread.join()
+        thread_transcribe.join()
+        print("thread_transcribe joined")
+        #thread_streaming.join()
     else:
         raise ValueError("Invalid action {}".format(args.action))

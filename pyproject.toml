@@ -17,6 +17,7 @@ faster-whisper = "^1.1.0"
 scipy = "^1.14.1"
 #pywhispercpp = "^1.3.0"
 pywhispercpp = {git = "https://github.com/andrewtheguy/pywhispercpp", rev = "unicode-handling"}
+readchar = "^4.2.1"
 
 
 [build-system]
