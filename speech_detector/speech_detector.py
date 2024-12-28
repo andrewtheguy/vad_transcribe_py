@@ -265,10 +265,13 @@ class SpeechDetector:
             raise ValueError(f"Unsupported transcribe backend {self.transcribe_backend}")
 
     def _new_segment_callback(self, segment):
-        #print("[%.2fs -> %.2fs] %s" % (segment.t0, segment.t1, segment.text))
-        ts_start = datetime.fromtimestamp(self.ts_transcribe_start+segment.t0,timezone.utc)
+        #print("[%.2fs -> %.2fs] %s" % (segment.t0/1000, segment.t1/1000, segment.text))
+
+        #print("[%.2fs]" % (segment.t0,))
+        ts_start = datetime.fromtimestamp(self.ts_transcribe_start+segment.t0/1000,timezone.utc)
+        ts_end = datetime.fromtimestamp(self.ts_transcribe_start+segment.t1/1000,timezone.utc)
         print("[%s -> %s] %s" % (ts_start,
-                                 datetime.fromtimestamp(self.ts_transcribe_start+segment.t1,timezone.utc)
+                                 ts_end
                                  , segment.text))
 
         if self.database_connection is not None:
