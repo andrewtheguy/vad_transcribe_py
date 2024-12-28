@@ -230,9 +230,6 @@ class SpeechDetector:
                                        print_progress=False,
                                        print_timestamps=False,
 
-                                       language=self.language,
-                                       translate=False,
-
                                        )
 
     def process_silero(self, audio):
@@ -271,7 +268,7 @@ class SpeechDetector:
                 print("finished transcribing audio",file=sys.stderr)
                 break
             print("transcribing audio")
-            self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback)
+            self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
 
 
     def _transcribe_faster_whisper(self):

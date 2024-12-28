@@ -20,6 +20,8 @@ from speech_detector.mic_recorder import MicRecorder
 
 
 def process_queue(q,language):
+    print("process_queue")
+    print(args.lang)
     SpeechDetector(audio_input_queue=q,language=language).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(q,language):
@@ -70,7 +72,7 @@ if __name__ == '__main__':
         #SpeechDetector().process_silero(audio)
     elif args.action == 'mic':
         audio_input_queue = queue.Queue()
-        thread = threading.Thread(target=process_mic, args=(audio_input_queue,))
+        thread = threading.Thread(target=process_mic, args=(audio_input_queue,args.lang,))
 
         # Start the thread
         thread.start()
