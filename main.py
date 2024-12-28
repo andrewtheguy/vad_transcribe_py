@@ -4,8 +4,12 @@ import queue
 import sys
 import threading
 import time
+from os import environ
 from time import sleep
 
+from dotenv import load_dotenv
+
+import psycopg
 import readchar
 import torch
 from silero_vad import (load_silero_vad,
@@ -21,10 +25,13 @@ from speech_detector.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit
 from speech_detector.mic_recorder import MicRecorder
 
 
-def process_queue(q,language,save_file=True):
+def process_queue(q,language,save_file=True,show_name=None,database_connection=None):
     print("process_queue")
     print(args.lang)
-    SpeechDetector(audio_input_queue=q,language=language,save_file=save_file).process_input(TARGET_SAMPLE_RATE)
+    SpeechDetector(audio_input_queue=q,language=language,save_file=save_file,
+                   show_name=show_name,
+                   database_connection=database_connection,
+                   ).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(q,language):
     MicRecorder(q).record(language=language)
@@ -48,10 +55,12 @@ def stream_url_thread(url,audio_input_queue):
 
 
 if __name__ == '__main__':
+    load_dotenv()
     argparse = argparse.ArgumentParser()
     argparse.add_argument('action', type=str, choices=['file','mic','url'])
     argparse.add_argument('--file', type=str, required=False)
     argparse.add_argument('--url', type=str, required=False)
+    argparse.add_argument('--show-name', type=str, required=False)
     argparse.add_argument('--lang', type=str, required=False, default='yue')
     args = argparse.parse_args()
 
@@ -111,30 +120,58 @@ if __name__ == '__main__':
             print("Please provide a url")
             exit(1)
 
-        audio_input_queue = queue.Queue()
+        if not args.show_name:
+            print("Please provide a show name")
+            exit(1)
 
-        # Create a new thread
-        thread_transcribe = threading.Thread(target=process_queue, args=(audio_input_queue, args.lang, False,))
+        # Connect to an existing database
+        with psycopg.connect(os.environ['DATABASE_URL'],autocommit=True) as conn:
 
-        # Start the thread
-        thread_transcribe.start()
+            # Open a cursor to perform database operations
+            with conn.cursor() as cur:
+                # Execute a command: this creates a new table
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS transcripts (
+                id bigserial PRIMARY KEY,
+                show_name varchar(255) NOT NULL,
+                "timestamp" TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                content TEXT NOT NULL
+                );
+                    """)
+                cur.execute("""
+                create index if not exists transcript_show_name_idx ON transcripts (show_name);
+                """)
 
-        #stream_url_thread(args.url,audio_input_queue)
+            audio_input_queue = queue.Queue()
 
-        thread_streaming = threading.Thread(target=stream_url_thread, args=(args.url,audio_input_queue,))
+            # Create a new thread
+            thread_transcribe = threading.Thread(target=process_queue,  kwargs={
+                'q': audio_input_queue,
+                'language': args.lang,
+                'save_file': False,
+                'show_name': args.show_name,
+                'database_connection': conn
+            })
 
-        thread_streaming.daemon = True
+            # Start the thread
+            thread_transcribe.start()
 
-        thread_streaming.start()
+            #stream_url_thread(args.url,audio_input_queue)
 
-        while True:
-            print('press q to quit:')
-            char = readchar.readchar()
-            if char == 'q':
-                break
+            thread_streaming = threading.Thread(target=stream_url_thread, args=(args.url,audio_input_queue,))
 
-        audio_input_queue.put(None)
-        thread_transcribe.join()
+            thread_streaming.daemon = True
+
+            thread_streaming.start()
+
+            while True:
+                print('press q to quit:')
+                char = readchar.readchar()
+                if char == 'q':
+                    break
+
+            audio_input_queue.put(None)
+            thread_transcribe.join()
         print("thread_transcribe joined")
         #thread_streaming.join()
     else:

@@ -203,12 +203,15 @@ class AudioSegment:
         return f"AudioSegment(start={self.start}, audio={self.audio})"
 
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,transcribe_backend="whispercpp",save_file=True):
+    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,show_name="unknown",transcribe_backend="whispercpp",save_file=True,database_connection=None):
         self.model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.save_file = save_file
+        self.database_connection = database_connection
+        self.ts_transcribe_start = None
+        self.show_name = show_name
         if transcribe_backend == "faster-whisper":
             self._load_faster_whisper()
         elif transcribe_backend == "whispercpp":
@@ -263,10 +266,16 @@ class SpeechDetector:
 
     def _new_segment_callback(self, segment):
         #print("[%.2fs -> %.2fs] %s" % (segment.t0, segment.t1, segment.text))
-        print("[%s -> %s] %s" % (datetime.fromtimestamp(self.ts_transcribe_start+segment.t0,timezone.utc),
+        ts_start = datetime.fromtimestamp(self.ts_transcribe_start+segment.t0,timezone.utc)
+        print("[%s -> %s] %s" % (ts_start,
                                  datetime.fromtimestamp(self.ts_transcribe_start+segment.t1,timezone.utc)
                                  , segment.text))
 
+        if self.database_connection is not None:
+            with self.database_connection.cursor() as cur:
+                cur.execute(
+                    '''INSERT INTO transcripts (show_name,"timestamp", content) VALUES (%s, %s, %s)''',
+                    (self.show_name,ts_start.strftime('%Y-%m-%d %H:%M:%S'), segment.text,))
 
     def _transcribe_whisper_cpp(self):
         while True:
