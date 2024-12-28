@@ -231,6 +231,7 @@ class SpeechDetector:
                                        print_realtime=False,
                                        print_progress=False,
                                        print_timestamps=False,
+                                       n_threads=1,
 
                                        )
 
