@@ -278,7 +278,7 @@ class SpeechDetector:
             with self.database_connection.cursor() as cur:
                 cur.execute(
                     '''INSERT INTO transcripts (show_name,"timestamp", content) VALUES (%s, %s, %s)''',
-                    (self.show_name,ts_start.strftime('%Y-%m-%d %H:%M:%S'), segment.text,))
+                    (self.show_name,ts_start.strftime('%Y-%m-%d %H:%M:%S.%f'), segment.text,))
 
     def _transcribe_whisper_cpp(self):
         while True:
