@@ -19,10 +19,10 @@ from speech_detector.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit
 from speech_detector.mic_recorder import MicRecorder
 
 
-def process_queue(q,language):
+def process_queue(q,language,save_file=True):
     print("process_queue")
     print(args.lang)
-    SpeechDetector(audio_input_queue=q,language=language).process_input(TARGET_SAMPLE_RATE)
+    SpeechDetector(audio_input_queue=q,language=language,save_file=save_file).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(q,language):
     MicRecorder(q).record(language=language)
@@ -94,7 +94,7 @@ if __name__ == '__main__':
         audio_input_queue = queue.Queue()
 
         # Create a new thread
-        thread = threading.Thread(target=process_queue, args=(audio_input_queue,args.lang,))
+        thread = threading.Thread(target=process_queue, args=(audio_input_queue,args.lang,False,))
 
         # Start the thread
         thread.start()

@@ -202,11 +202,12 @@ class AudioSegment:
         return f"AudioSegment(start={self.start}, audio={self.audio})"
 
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,transcribe_backend="whispercpp"):
+    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,transcribe_backend="whispercpp",save_file=True):
         self.model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
         self.language = language
+        self.save_file = save_file
         if transcribe_backend == "faster-whisper":
             self._load_faster_whisper()
         elif transcribe_backend == "whispercpp":
@@ -265,9 +266,9 @@ class SpeechDetector:
         while True:
             audio = self.transcribe_queue.get(block=True)
             if audio is None:
-                print("finished transcribing audio",file=sys.stderr)
+                #print("finished transcribing audio",file=sys.stderr)
                 break
-            print("transcribing audio")
+            #print("transcribing audio")
             self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
 
 
@@ -309,7 +310,8 @@ class SpeechDetector:
 
         s = np.asarray(speech_section)
 
-        sf.write(os.path.join(directory, f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
+        if self.save_file:
+            sf.write(os.path.join(directory, f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
         self.transcribe_queue.put(s)
 
 
@@ -362,7 +364,7 @@ class SpeechDetector:
                 has_speech = self.process_silero(data_slice)
                 if not prev_has_speech:
                     if has_speech:
-                        print("Transitioning from no speech to speech",file=sys.stderr)
+                        #print("Transitioning from no speech to speech",file=sys.stderr)
                         has_speech_begin_timestamp = ts
                         if prev_slice is not None:
                             speech_section.extend(prev_slice)
@@ -373,16 +375,16 @@ class SpeechDetector:
                         prev_slice = data_slice
                 else:
                     if seconds > max_speech_seconds:
-                        print("override to no speech because seconds > max_seconds",seconds,file=sys.stderr)
+                        #print("override to no speech because seconds > max_seconds",seconds,file=sys.stderr)
                         has_speech = False
                     elif seconds < min_speech_seconds and not has_speech:
-                        print("override to speech because seconds < min_seconds",seconds,file=sys.stderr)
+                        #print("override to speech because seconds < min_seconds",seconds,file=sys.stderr)
                         has_speech = True
                     if has_speech:
                         #print("still in speech",ts,file=sys.stderr)
                         speech_section.extend(data_slice)
                     else:
-                        print("Transitioning from speech to no speech",file=sys.stderr)
+                        #print("Transitioning from speech to no speech",file=sys.stderr)
                         speech_section.extend(data_slice)
                         self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
                         speech_section = []
