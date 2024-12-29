@@ -20,6 +20,7 @@ psycopg = "^3.2.3"
 python-dotenv = "^1.0.1"
 torch = "^2.5.1"
 numpy = "^2.2.1"
+zhconv-rs = "^0.3.2.post2"
 
 
 [build-system]

@@ -17,7 +17,11 @@ from silero_vad import load_silero_vad
 
 import soundfile as sf
 
+from zhconv_rs import zhconv
+
 TARGET_SAMPLE_RATE = 16000
+
+DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
 @contextmanager
 def stream_url(url):
@@ -277,9 +281,15 @@ class SpeechDetector:
 
         if self.database_connection is not None:
             with self.database_connection.cursor() as cur:
+                if self.language in ['yue','zh']:
+                    # make sure it is always chinese traditional to make search easier
+                    text = zhconv(segment.text, DEFAULT_CHINESE_LOCALE)
+                else:
+                    text = segment.text
+
                 cur.execute(
                     '''INSERT INTO transcripts (show_name,"timestamp", content) VALUES (%s, %s, %s)''',
-                    (self.show_name,ts_start.strftime('%Y-%m-%d %H:%M:%S.%f'), segment.text,))
+                    (self.show_name,ts_start.strftime('%Y-%m-%d %H:%M:%S.%f'), text, ))
 
     def _transcribe_whisper_cpp(self):
         while True:
