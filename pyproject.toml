@@ -9,7 +9,6 @@ readme = "README.md"
 python = "^3.12"
 silero-vad = "^5.1.2"
 argparse = "^1.4.0"
-numpy = "^1.26.4"
 soundfile = "^0.12.1"
 sounddevice = "^0.5.1"
 faster-whisper = "^1.1.0"
@@ -20,6 +19,7 @@ readchar = "^4.2.1"
 psycopg = "^3.2.3"
 python-dotenv = "^1.0.1"
 torch = "^2.5.1"
+numpy = "^2.2.1"
 
 
 [build-system]
