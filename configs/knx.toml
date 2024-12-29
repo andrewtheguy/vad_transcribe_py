@@ -1,3 +1,4 @@
 url='https://live.amperwave.net/manifest/audacy-knxamaac-imc'
 show_name='knx_news'
 language='en'
+transcribe_model_size='base.en'

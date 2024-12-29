@@ -16,11 +16,12 @@ from speech_detector.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit
 from speech_detector.mic_recorder import MicRecorder
 
 
-def process_queue(q,language,save_file=True,show_name=None,database_connection=None):
+def process_queue(q,language,save_file=True,show_name=None,database_connection=None,transcribe_model_size='large-v3-turbo'):
     print("process_queue")
     SpeechDetector(audio_input_queue=q,language=language,save_file=save_file,
                    show_name=show_name,
                    database_connection=database_connection,
+                   transcribe_model_size=transcribe_model_size
                    ).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(q,language):
@@ -116,7 +117,8 @@ if __name__ == '__main__':
                 'language': data['language'],
                 'save_file': False,
                 'show_name': data['show_name'],
-                'database_connection': conn
+                'database_connection': conn,
+                'transcribe_model_size': data.get('transcribe_model_size', 'large-v3-turbo')
             })
 
             # Start the thread

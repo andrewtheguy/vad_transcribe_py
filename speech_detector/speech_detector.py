@@ -208,7 +208,7 @@ class AudioSegment:
         return f"AudioSegment(start={self.start}, audio={self.audio})"
 
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,show_name="unknown",transcribe_backend="whispercpp",save_file=True,database_connection=None):
+    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,show_name="unknown",transcribe_model_size="large-v3-turbo",save_file=True,database_connection=None):
         self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
@@ -217,13 +217,15 @@ class SpeechDetector:
         self.database_connection = database_connection
         self.ts_transcribe_start = None
         self.show_name = show_name
-        if transcribe_backend == "faster-whisper":
-            self._load_faster_whisper()
-        elif transcribe_backend == "whispercpp":
-            self._load_whisper_cpp()
-        else:
-            raise ValueError(f"Unsupported transcribe backend {transcribe_backend}")
-        self.transcribe_backend = transcribe_backend
+        self.transcribe_model_size = transcribe_model_size
+        #if transcribe_backend == "faster-whisper":
+        #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
+        #    #self._load_faster_whisper()
+        #elif transcribe_backend == "whispercpp":
+        self._load_whisper_cpp()
+        #else:
+        #    raise ValueError(f"Unsupported transcribe backend {transcribe_backend}")
+        #self.transcribe_backend = transcribe_backend
 
     def _load_faster_whisper(self):
         from faster_whisper import WhisperModel
@@ -234,7 +236,7 @@ class SpeechDetector:
     def _load_whisper_cpp(self):
         from pywhispercpp.model import Model
 
-        self.whisper_cpp_model = Model('large-v3-turbo',
+        self.whisper_cpp_model = Model(self.transcribe_model_size,
 
                                        print_realtime=False,
                                        print_progress=False,
@@ -262,12 +264,13 @@ class SpeechDetector:
         #    print("Speech detected")
 
     def _transcribe(self):
-        if self.transcribe_backend == "faster-whisper":
-            self._transcribe_faster_whisper()
-        elif self.transcribe_backend == "whispercpp":
+        #if self.transcribe_backend == "faster-whisper":
+        #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
+        #    #self._transcribe_faster_whisper()
+        #elif self.transcribe_backend == "whispercpp":
             self._transcribe_whisper_cpp()
-        else:
-            raise ValueError(f"Unsupported transcribe backend {self.transcribe_backend}")
+        #else:
+        #    raise ValueError(f"Unsupported transcribe backend {self.transcribe_backend}")
 
     def _new_segment_callback(self, segment):
         #print("[%.2fs -> %.2fs] %s" % (segment.t0/1000, segment.t1/1000, segment.text))
