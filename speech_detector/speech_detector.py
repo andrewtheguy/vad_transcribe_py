@@ -205,7 +205,7 @@ class AudioSegment:
 
 class SpeechDetector:
     def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,show_name="unknown",transcribe_backend="whispercpp",save_file=True,database_connection=None):
-        self.model = load_silero_vad()
+        self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
         self.language = language
@@ -241,7 +241,7 @@ class SpeechDetector:
 
     def process_silero(self, audio):
         #return True
-        model = self.model
+        vad_model = self.vad_model
         window_size_samples = get_window_size_samples()
 
         if len(audio) != window_size_samples:
@@ -252,7 +252,7 @@ class SpeechDetector:
         # Convert to PyTorch tensor and reshape to (1, num_samples)
         # Silero typically expects a single-channel tensor with shape (1, samples)
         audio_tensor = torch.from_numpy(audio)
-        speech_prob = model(audio_tensor, TARGET_SAMPLE_RATE).item()
+        speech_prob = vad_model(audio_tensor, TARGET_SAMPLE_RATE).item()
         #print(speech_prob)
         return speech_prob > 0.5
         #    print("Speech detected")
@@ -334,6 +334,7 @@ class SpeechDetector:
         if self.save_file:
             sf.write(os.path.join(directory, f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
         self.transcribe_queue.put(s)
+        self.vad_model.reset_states()
 
 
     def process_input(self,input_sample_rate):
@@ -374,6 +375,10 @@ class SpeechDetector:
             else:
                 data_q = segment.audio
             buffer.extend(data_q)
+            #print("buffer size",len(buffer))
+            #print("speech_section size",len(speech_section))
+            #print("prev_slice size",len(prev_slice) if prev_slice is not None else 0)
+            #gc.collect()
             while len(buffer) >= window_size_samples:
                 arr = buffer[:window_size_samples]
                 buffer = buffer[window_size_samples:]
