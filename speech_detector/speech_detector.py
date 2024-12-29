@@ -283,7 +283,7 @@ class SpeechDetector:
 
     def _transcribe_whisper_cpp(self):
         while True:
-            print("transcribing queue size",self.transcribe_queue.qsize())
+            #print("transcribing queue size",self.transcribe_queue.qsize())
             audio = self.transcribe_queue.get(block=True)
             if audio is None:
                 #print("finished transcribing audio",file=sys.stderr)
@@ -434,7 +434,7 @@ def stream_url_thread(url,audio_input_queue):
                 # time.sleep(5)
                 # put audio into queue one by one
                 audio_input_queue.put(AudioSegment(audio=audio, start=ts))
-                print("audio_input_queue size", audio_input_queue.qsize())
+                #print("audio_input_queue size", audio_input_queue.qsize())
                 ts += len(audio) / TARGET_SAMPLE_RATE
         print("stream_stopped, restarting", file=sys.stderr)
         sleep(0.5)
