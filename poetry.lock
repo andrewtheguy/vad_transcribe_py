@@ -976,8 +976,8 @@ examples = ["sounddevice", "webrtcvad"]
 [package.source]
 type = "git"
 url = "https://github.com/andrewtheguy/pywhispercpp"
-reference = "unicode-handling"
-resolved_reference = "02642bd6fa0deefc1f9555e2ba644fef7d88b0b4"
+reference = "main"
+resolved_reference = "9441061d0e2856d5c052fc9eb7993ce3d74d1d41"
 
 [[package]]
 name = "pyyaml"
@@ -1440,4 +1440,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "329c8b5d72e8c883556f54a6fd132c103a116eaf06f0a3c344684c6ddc2480a2"
+content-hash = "f12f3c2ff2ee626716399f1a009e0d9f51361e0c7d44b424d5700ba42bb57303"
