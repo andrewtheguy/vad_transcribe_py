@@ -33,6 +33,7 @@ if __name__ == '__main__':
     argparse = argparse.ArgumentParser()
     argparse.add_argument('action', type=str, choices=['file','mic','config'])
     argparse.add_argument('--file', type=str, required=False)
+    argparse.add_argument('--lang', type=str, required=False)
     argparse.add_argument('--config', type=str, required=False) # for url live streaming
     args = argparse.parse_args()
 
@@ -88,6 +89,8 @@ if __name__ == '__main__':
 
         thread_transcribe.join()
     elif args.action == 'config':
+        if args.lang:
+            raise ValueError("Language should be provided in the config file rather than as a command line argument")
         with open(args.config, "rb") as f:
             data = tomllib.load(f)
 
