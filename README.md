@@ -2,11 +2,11 @@ voice activity detection on an audio stream using silero-vad and transcribing th
 
 ## transcribe from file (not tested)
 ```commandline
-python main.py file --file /path/to/file
+python main.py file --file /path/to/file --lang en
 ```
 ## transcribe from microphone
 ```commandline
-python main.py mic
+python main.py mic --lang en
 ```
 
 ## transcribe from audio stream
