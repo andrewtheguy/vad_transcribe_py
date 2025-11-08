@@ -365,7 +365,12 @@ class QueueBacklogLimiter:
         with self._lock:
             if self._initial_timestamp is None:
                 return None
-            return self._initial_timestamp + self._dropped_seconds + self._timestamp_consumed_seconds
+            processing_estimate = (
+                self._initial_timestamp + self._dropped_seconds + self._timestamp_consumed_seconds
+            )
+            live_estimate = time.time() - self.current_seconds
+            estimate = max(processing_estimate, live_estimate)
+            return min(estimate, time.time())
 
     @property
     def dropped_seconds(self) -> float:
