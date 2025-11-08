@@ -40,12 +40,14 @@ class MicRecorder:
         if self.queue_limiter and not self.queue_limiter.try_add(duration_seconds):
             return
 
+        start_ts = time.time()
         # Fancy indexing with mapping creates a (necessary!) copy:
         self.audio_input_queue.put(
             AudioSegment(
-                start=time.time(),
+                start=start_ts,
                 audio=data_flattened,
                 duration_seconds=duration_seconds if duration_seconds > 0 else None,
+                wall_clock_start=start_ts,
             )
         )
 

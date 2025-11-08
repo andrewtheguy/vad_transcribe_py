@@ -71,7 +71,7 @@ class StreamingSession:
         elif approx_wall_clock is not None and self.detector is None:
             self.wall_clock_reference = approx_wall_clock
 
-        self.queue.put(AudioSegment(audio=audio, start=start_ts))
+        self.queue.put(AudioSegment(audio=audio, start=start_ts, wall_clock_start=approx_wall_clock))
 
     def close(self) -> None:
         if self.stop_event.is_set():

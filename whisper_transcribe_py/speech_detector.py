@@ -207,13 +207,18 @@ class AudioSegment:
             start: float,
             audio: npt.NDArray[np.float32],
             duration_seconds: Optional[float] = None,
+            wall_clock_start: Optional[float] = None,
     ):
         self.start = start
         self.audio = audio
         self.duration_seconds = duration_seconds
+        self.wall_clock_start = wall_clock_start
 
     def __repr__(self):
-        return f"AudioSegment(start={self.start}, audio={self.audio}, duration={self.duration_seconds})"
+        return (
+            f"AudioSegment(start={self.start}, duration={self.duration_seconds}, "
+            f"wall_clock_start={self.wall_clock_start})"
+        )
 
 
 @dataclass
@@ -256,18 +261,29 @@ class QueueBacklogLimiter:
             self,
             max_seconds: Optional[float],
             source_label: str = "audio input",
+            initial_timestamp: Optional[float] = None,
     ):
         self.max_seconds = max_seconds
         self.source_label = source_label
         self.current_seconds = 0.0
+        self._initial_timestamp = initial_timestamp
+        self._total_accounted_seconds = 0.0
+        self._dropped_seconds = 0.0
         self._lock = threading.Lock()
 
     def try_add(self, duration_seconds: float) -> bool:
         """Return True and account for the chunk if it fits under the cap."""
-        if self.max_seconds is None or self.max_seconds <= 0 or duration_seconds <= 0:
+        if duration_seconds <= 0:
             return True
         with self._lock:
+            if self._initial_timestamp is None:
+                self._initial_timestamp = time.time()
+            if self.max_seconds is None or self.max_seconds <= 0:
+                self.current_seconds += duration_seconds
+                self._total_accounted_seconds += duration_seconds
+                return True
             if self.current_seconds + duration_seconds > self.max_seconds:
+                self._dropped_seconds += duration_seconds
                 print(
                     f"Warning: dropping newest audio chunk from {self.source_label} queue "
                     f"to keep backlog under {int(self.max_seconds)} seconds.",
@@ -275,14 +291,38 @@ class QueueBacklogLimiter:
                 )
                 return False
             self.current_seconds += duration_seconds
+            self._total_accounted_seconds += duration_seconds
             return True
 
     def consume(self, duration_seconds: float) -> None:
         """Reduce the tracked backlog after a chunk has been processed."""
-        if self.max_seconds is None or self.max_seconds <= 0 or duration_seconds <= 0:
+        if duration_seconds <= 0:
             return
         with self._lock:
             self.current_seconds = max(0.0, self.current_seconds - duration_seconds)
+
+    def pending_chunk_start_timestamp(self) -> Optional[float]:
+        """
+        Return the estimated wall-clock start time for the next chunk that will be
+        consumed. Includes previously dropped audio so timestamps stay aligned
+        with the live source even when backlog forces shedding.
+        """
+
+        with self._lock:
+            if self._initial_timestamp is None:
+                return None
+            processed_seconds = self._total_accounted_seconds - self.current_seconds
+            return self._initial_timestamp + self._dropped_seconds + processed_seconds
+
+    @property
+    def dropped_seconds(self) -> float:
+        with self._lock:
+            return self._dropped_seconds
+
+    @property
+    def initial_timestamp(self) -> Optional[float]:
+        with self._lock:
+            return self._initial_timestamp
 
 class SpeechDetector:
     def __init__(
@@ -414,8 +454,11 @@ class SpeechDetector:
 
             self.current_audio_offset = segment_offset
 
+            wall_clock_start = getattr(queued_item, "wall_clock_start", None)
             if self.timestamp_strategy == "wall_clock":
-                if self.wall_clock_reference is not None:
+                if wall_clock_start is not None:
+                    self.ts_transcribe_start = wall_clock_start
+                elif self.wall_clock_reference is not None:
                     self.ts_transcribe_start = self.wall_clock_reference + segment_offset
                 else:
                     self.ts_transcribe_start = time.time()
@@ -442,8 +485,11 @@ class SpeechDetector:
 
             self.current_audio_offset = segment_offset
 
+            wall_clock_start = getattr(queued_item, "wall_clock_start", None)
             if self.timestamp_strategy == "wall_clock":
-                if self.wall_clock_reference is not None:
+                if wall_clock_start is not None:
+                    self.ts_transcribe_start = wall_clock_start
+                elif self.wall_clock_reference is not None:
                     self.ts_transcribe_start = self.wall_clock_reference + segment_offset
                 else:
                     self.ts_transcribe_start = time.time()
@@ -475,20 +521,21 @@ class SpeechDetector:
             # model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
 
-    def _process_end_of_speech(self, speech_section, last_has_speech_ts):
+    def _process_end_of_speech(self, speech_section, last_has_speech_ts, wall_clock_start):
         s = np.asarray(speech_section)
         start_ts = last_has_speech_ts if last_has_speech_ts is not None else 0.0
 
         if self.audio_segment_callback is not None:
             self.audio_segment_callback(s, start_ts)
 
-        self.transcribe_queue.put(AudioSegment(audio=s, start=start_ts))
+        self.transcribe_queue.put(AudioSegment(audio=s, start=start_ts, wall_clock_start=wall_clock_start))
         self.vad_model.reset_states()
 
 
     def process_input(self,input_sample_rate):
 
         window_size_samples = get_window_size_samples()
+        window_seconds = window_size_samples / TARGET_SAMPLE_RATE
 
         transcribing_thread = threading.Thread(target=self._transcribe)
         transcribing_thread.start()
@@ -501,12 +548,14 @@ class SpeechDetector:
         min_speech_seconds = 3
         max_speech_seconds = 60
         has_speech_begin_timestamp = None
+        has_speech_begin_wall_clock = None
 
         ts = None
 
         prev_slice = None
 
         buffer = []
+        ts_wall_clock = None
         stop_requested = False
 
         while True:
@@ -523,13 +572,24 @@ class SpeechDetector:
             segment_duration = segment.duration_seconds
             if segment_duration is None and segment.audio is not None:
                 segment_duration = len(segment.audio) / input_sample_rate
+            segment_wall_clock_start = getattr(segment, "wall_clock_start", None)
+            backlog_wall_clock_start = None
+            if self.queue_backlog_limiter and segment_duration is not None:
+                backlog_wall_clock_start = self.queue_backlog_limiter.pending_chunk_start_timestamp()
+            if backlog_wall_clock_start is not None:
+                segment_wall_clock_start = backlog_wall_clock_start
+            if segment_wall_clock_start is None:
+                segment_wall_clock_start = None
+            segment.wall_clock_start = segment_wall_clock_start
             if self.queue_backlog_limiter and segment_duration is not None:
                 self.queue_backlog_limiter.consume(segment_duration)
             if ts is None:
                 ts = segment.start
+                ts_wall_clock = segment.wall_clock_start
             elif len(buffer) == 0:
                 logging.debug(f"queue is empty, reset ts {ts},to new_ts {segment.start}")
                 ts = segment.start
+                ts_wall_clock = segment.wall_clock_start
             if input_sample_rate != TARGET_SAMPLE_RATE:
                 #print("resampling audio")
                 data_q = scipy.signal.resample(segment.audio, int(len(segment.audio) * TARGET_SAMPLE_RATE / input_sample_rate))
@@ -553,6 +613,7 @@ class SpeechDetector:
                     if has_speech:
                         #print("Transitioning from no speech to speech",file=sys.stderr)
                         has_speech_begin_timestamp = ts
+                        has_speech_begin_wall_clock = ts_wall_clock
                         if prev_slice is not None:
                             speech_section.extend(prev_slice)
                             prev_slice = None
@@ -573,17 +634,27 @@ class SpeechDetector:
                     else:
                         #print("Transitioning from speech to no speech",file=sys.stderr)
                         speech_section.extend(data_slice)
-                        self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
+                        self._process_end_of_speech(
+                            speech_section,
+                            has_speech_begin_timestamp,
+                            has_speech_begin_wall_clock,
+                        )
                         speech_section = []
                         has_speech_begin_timestamp = None
+                        has_speech_begin_wall_clock = None
                         prev_slice = None
 
                 prev_has_speech = has_speech
 
+                if ts is not None:
+                    ts += window_seconds
+                if ts_wall_clock is not None:
+                    ts_wall_clock += window_seconds
+
         print("finished processing audio",ts,file=sys.stderr)
 
         if len(speech_section) > 0 and not stop_requested:
-            self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
+            self._process_end_of_speech(speech_section, has_speech_begin_timestamp, has_speech_begin_wall_clock)
 
         if stop_requested:
             # Drop any queued-but-unprocessed transcribe work so shutdown is fast
@@ -626,12 +697,13 @@ def stream_url_thread(
                         break
                     duration_seconds = len(audio) / TARGET_SAMPLE_RATE
                     if queue_limiter and not queue_limiter.try_add(duration_seconds):
+                        ts += duration_seconds
                         continue
                     audio_input_queue.put(
                         AudioSegment(audio=audio, start=ts, duration_seconds=duration_seconds)
                     )
                     #print("audio_input_queue size", audio_input_queue.qsize())
-                    ts += len(audio) / TARGET_SAMPLE_RATE
+                    ts += duration_seconds
         except ValueError as exc:
             if stop_event is not None and stop_event.is_set():
                 break
