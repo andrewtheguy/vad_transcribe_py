@@ -50,7 +50,7 @@ def build_database_writer(conn, show_name: str):
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
                   transcript_persistence_callback=None,transcribe_model_size='large-v3-turbo',segment_callback=None,
-                  timestamp_strategy='wall_clock',n_threads=1):
+                  timestamp_strategy='wall_clock',n_threads=1, stop_event=None):
     print("process_queue")
     if save_audio and audio_segment_callback is None:
         audio_segment_callback = create_audio_file_saver()
@@ -64,10 +64,11 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                    segment_callback=segment_callback,
                    timestamp_strategy=timestamp_strategy,
                    n_threads=n_threads,
+                   stop_event=stop_event,
                    ).process_input(TARGET_SAMPLE_RATE)
 
-def process_mic(q,language):
-    MicRecorder(q).record(language=language)
+def process_mic(q,language, stop_event=None):
+    MicRecorder(q, stop_event=stop_event).record(language=language)
 
 
 def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
@@ -119,7 +120,8 @@ if __name__ == '__main__':
             'segment_callback': transcript_writer.add_segment,
             'timestamp_strategy': 'relative',
             'transcribe_model_size': args.model,
-            'n_threads': args.n_threads
+            'n_threads': args.n_threads,
+            'stop_event': stop_event,
         })
 
         # Start the thread
@@ -155,7 +157,7 @@ if __name__ == '__main__':
     elif args.action == 'mic':
         audio_input_queue = queue.Queue()
         stop_event = threading.Event()
-        thread_transcribe = threading.Thread(target=process_mic, args=(audio_input_queue, args.lang,))
+        thread_transcribe = threading.Thread(target=process_mic, args=(audio_input_queue, args.lang, stop_event,))
 
         # Start the thread
         thread_transcribe.start()
@@ -214,7 +216,8 @@ if __name__ == '__main__':
                 'show_name': data['show_name'],
                 'transcript_persistence_callback': db_writer,
                 'transcribe_model_size': data.get('transcribe_model_size', 'large-v3-turbo'),
-                'n_threads': data.get('n_threads', 1)
+                'n_threads': data.get('n_threads', 1),
+                'stop_event': stop_event,
             })
 
             # Start the thread

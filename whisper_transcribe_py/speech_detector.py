@@ -245,6 +245,7 @@ class SpeechDetector:
             segment_callback: Optional[Callable[..., None]] = None,
             timestamp_strategy: str = "wall_clock",
             n_threads: int = 1,
+            stop_event: Optional[threading.Event] = None,
     ):
         self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
@@ -259,6 +260,7 @@ class SpeechDetector:
         self.timestamp_strategy = timestamp_strategy
         self.current_audio_offset = 0.0
         self.n_threads = n_threads
+        self.stop_event = stop_event
         #if transcribe_backend == "faster-whisper":
         #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
         #    #self._load_faster_whisper()
@@ -452,7 +454,12 @@ class SpeechDetector:
         buffer = []
 
         while True:
-            segment = self.audio_input_queue.get(block=True)
+            if self.stop_event is not None and self.stop_event.is_set():
+                break
+            try:
+                segment = self.audio_input_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
             if segment is None:
                 print("end of audio",ts,file=sys.stderr)
                 break
@@ -512,7 +519,7 @@ class SpeechDetector:
                 prev_has_speech = has_speech
 
         print("finished processing audio",ts,file=sys.stderr)
-        if len(speech_section) > 0:
+        if len(speech_section) > 0 and not (self.stop_event is not None and self.stop_event.is_set()):
             self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
         self.transcribe_queue.put(None)
         transcribing_thread.join()
