@@ -40,7 +40,7 @@ uv run python main.py mic --lang en
 Stream audio from URL and save transcripts to database.
 
 ```commandline
-uv run python main.py config --config configs/rthk2.toml
+uv run python main.py stream --config configs/rthk2.toml
 ```
 
 **Behavior:**

@@ -78,7 +78,7 @@ def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
 if __name__ == '__main__':
     load_dotenv()
     argparse = argparse.ArgumentParser()
-    argparse.add_argument('action', type=str, choices=['file','mic','config','web'])
+    argparse.add_argument('action', type=str, choices=['file','mic','stream','web'])
     argparse.add_argument('--file', type=str, required=False)
     argparse.add_argument('--lang', type=str, required=False)
     argparse.add_argument('--config', type=str, required=False) # for url live streaming
@@ -183,7 +183,7 @@ if __name__ == '__main__':
             stop_mic()
 
         thread_transcribe.join()
-    elif args.action == 'config':
+    elif args.action == 'stream':
         if args.lang:
             raise ValueError("Language should be provided in the config file rather than as a command line argument")
         with open(args.config, "rb") as f:
