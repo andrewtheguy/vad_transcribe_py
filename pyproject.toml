@@ -14,7 +14,7 @@ dependencies = [
     "scipy>=1.14.1,<2",
     "pywhispercpp",
     "readchar>=4.2.1,<5",
-    "psycopg>=3.2.3,<4",
+    "psycopg[binary]>=3.2.3,<4",
     "python-dotenv>=1.0.1,<2",
     "torch>=2.5.1,<3",
     "numpy>=2.2.1,<3",
