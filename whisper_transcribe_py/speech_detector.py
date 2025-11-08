@@ -7,8 +7,10 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime, tzinfo, timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from time import sleep
+from typing import Callable, Optional
 
 import numpy.typing as npt
 import scipy
@@ -207,17 +209,54 @@ class AudioSegment:
     def __repr__(self):
         return f"AudioSegment(start={self.start}, audio={self.audio})"
 
+
+@dataclass
+class TranscribedSegment:
+    show_name: str
+    language: str
+    text: str
+    relative_start: float
+    relative_end: float
+    start_timestamp: Optional[datetime]
+    end_timestamp: Optional[datetime]
+
+
+AudioSegmentCallback = Callable[[npt.NDArray[np.float32], float], None]
+TranscriptPersistenceCallback = Callable[[TranscribedSegment], None]
+
+
+def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCallback:
+    os.makedirs(directory, exist_ok=True)
+
+    def _save(audio: npt.NDArray[np.float32], start_timestamp: float):
+        sf.write(os.path.join(directory, f"{start_timestamp}.wav"), audio, TARGET_SAMPLE_RATE)
+
+    return _save
+
 class SpeechDetector:
-    def __init__(self, audio_input_queue: queue.Queue[AudioSegment],language: str,show_name="unknown",transcribe_model_size="large-v3-turbo",save_file=True,database_connection=None):
+    def __init__(
+            self,
+            audio_input_queue: queue.Queue[AudioSegment],
+            language: str,
+            show_name="unknown",
+            transcribe_model_size="large-v3-turbo",
+            audio_segment_callback: Optional[AudioSegmentCallback] = None,
+            transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
+            segment_callback: Optional[Callable[..., None]] = None,
+            timestamp_strategy: str = "wall_clock",
+    ):
         self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
         self.language = language
-        self.save_file = save_file
-        self.database_connection = database_connection
+        self.audio_segment_callback = audio_segment_callback
+        self.transcript_persistence_callback = transcript_persistence_callback
         self.ts_transcribe_start = None
         self.show_name = show_name
         self.transcribe_model_size = transcribe_model_size
+        self.segment_callback = segment_callback
+        self.timestamp_strategy = timestamp_strategy
+        self.current_audio_offset = 0.0
         #if transcribe_backend == "faster-whisper":
         #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
         #    #self._load_faster_whisper()
@@ -273,46 +312,85 @@ class SpeechDetector:
         #    raise ValueError(f"Unsupported transcribe backend {self.transcribe_backend}")
 
     def _new_segment_callback(self, segment):
-        #print("[%.2fs -> %.2fs] %s" % (segment.t0/1000, segment.t1/1000, segment.text))
+        relative_start = self.current_audio_offset + segment.t0 / 1000
+        relative_end = self.current_audio_offset + segment.t1 / 1000
 
-        #print("[%.2fs]" % (segment.t0,))
-        ts_start = datetime.fromtimestamp(self.ts_transcribe_start+segment.t0/1000,timezone.utc)
-        ts_end = datetime.fromtimestamp(self.ts_transcribe_start+segment.t1/1000,timezone.utc)
-        print("[%s -> %s] %s" % (ts_start,
-                                 ts_end
-                                 , segment.text))
+        ts_start_dt = None
+        ts_end_dt = None
 
-        if self.database_connection is not None:
-            with self.database_connection.cursor() as cur:
-                if self.language in ['yue','zh']:
-                    # make sure it is always chinese traditional to make search easier
-                    text = zhconv(segment.text, DEFAULT_CHINESE_LOCALE)
-                else:
-                    text = segment.text
+        if self.timestamp_strategy == "wall_clock":
+            ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
+            ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
+            print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
+        else:
+            print("[%.2fs -> %.2fs] %s" % (relative_start, relative_end, segment.text))
 
-                cur.execute(
-                    '''INSERT INTO transcripts (show_name,"timestamp", content) VALUES (%s, %s, %s)''',
-                    (self.show_name,ts_start.strftime('%Y-%m-%d %H:%M:%S.%f'), text, ))
+        text_for_storage = zhconv(segment.text, DEFAULT_CHINESE_LOCALE) if self.language in ['yue', 'zh'] else segment.text
+
+        if self.transcript_persistence_callback is not None and ts_start_dt is None:
+            raise ValueError("Transcript persistence callback requires wall clock timestamps.")
+
+        if self.transcript_persistence_callback is not None:
+            segment_payload = TranscribedSegment(
+                show_name=self.show_name,
+                language=self.language,
+                text=text_for_storage,
+                relative_start=relative_start,
+                relative_end=relative_end,
+                start_timestamp=ts_start_dt,
+                end_timestamp=ts_end_dt,
+            )
+            self.transcript_persistence_callback(segment_payload)
+
+        if self.segment_callback is not None:
+            self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
 
     def _transcribe_whisper_cpp(self):
         while True:
-            #print("transcribing queue size",self.transcribe_queue.qsize())
-            audio = self.transcribe_queue.get(block=True)
-            if audio is None:
+            queued_item = self.transcribe_queue.get(block=True)
+            if queued_item is None:
                 #print("finished transcribing audio",file=sys.stderr)
                 break
-            #print("transcribing audio")
-            self.ts_transcribe_start = time.time()
+
+            if isinstance(queued_item, AudioSegment):
+                audio = queued_item.audio
+                segment_offset = queued_item.start
+            else:
+                audio = queued_item
+                segment_offset = 0.0
+
+            self.current_audio_offset = segment_offset
+
+            if self.timestamp_strategy == "wall_clock":
+                self.ts_transcribe_start = time.time()
+            else:
+                self.ts_transcribe_start = segment_offset
+
             self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
 
 
     def _transcribe_faster_whisper(self):
 
         while True:
-            audio = self.transcribe_queue.get(block=True)
-            if audio is None:
+            queued_item = self.transcribe_queue.get(block=True)
+            if queued_item is None:
                 print("finished transcribing audio",file=sys.stderr)
                 break
+
+            if isinstance(queued_item, AudioSegment):
+                audio = queued_item.audio
+                segment_offset = queued_item.start
+            else:
+                audio = queued_item
+                segment_offset = 0.0
+
+            self.current_audio_offset = segment_offset
+
+            if self.timestamp_strategy == "wall_clock":
+                self.ts_transcribe_start = time.time()
+            else:
+                self.ts_transcribe_start = segment_offset
+
             # else:
             #     sf.write("./tmp/tmp.wav", audio, TARGET_SAMPLE_RATE)
             #continue
@@ -339,14 +417,13 @@ class SpeechDetector:
 
 
     def _process_end_of_speech(self, speech_section, last_has_speech_ts):
-        directory = "./tmp/speech"
-        os.makedirs(directory, exist_ok=True)
-
         s = np.asarray(speech_section)
+        start_ts = last_has_speech_ts if last_has_speech_ts is not None else 0.0
 
-        if self.save_file:
-            sf.write(os.path.join(directory, f"{last_has_speech_ts}.wav"), s, TARGET_SAMPLE_RATE)
-        self.transcribe_queue.put(s)
+        if self.audio_segment_callback is not None:
+            self.audio_segment_callback(s, start_ts)
+
+        self.transcribe_queue.put(AudioSegment(audio=s, start=start_ts))
         self.vad_model.reset_states()
 
 
