@@ -10,7 +10,6 @@ dependencies = [
     "argparse>=1.4.0,<2",
     "soundfile>=0.12.1,<0.13",
     "sounddevice>=0.5.1,<0.6",
-    "faster-whisper>=1.1.0,<2",
     "scipy>=1.14.1,<2",
     "pywhispercpp",
     "readchar>=4.2.1,<5",
