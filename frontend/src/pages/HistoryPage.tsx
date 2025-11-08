@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { History, Loader2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
+const FOLLOW_POLL_INTERVAL_MS = 2000
+const FOLLOW_MAX_TRANSCRIPTS = 1000
+
 const API_BASE =
   (
     (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -55,10 +58,13 @@ export default function HistoryPage() {
   const [error, setError] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(true)
   const [total, setTotal] = useState(0)
+  const [isFollowing, setIsFollowing] = useState(false)
 
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null)
   const offsetRef = useRef(0)
   const shouldScrollToBottomRef = useRef(false)
+  const followPollerRef = useRef<number | null>(null)
+  const latestIdRef = useRef<number | null>(null)
 
   // Fetch shows on mount
   useEffect(() => {
@@ -117,7 +123,12 @@ export default function HistoryPage() {
           const container = transcriptContainerRef.current
           const prevScrollHeight = container?.scrollHeight ?? 0
 
-          setTranscripts((prev) => [...newTranscripts, ...prev])
+          setTranscripts((prev) => {
+            // Deduplicate by ID to avoid duplicate keys
+            const existingIds = new Set(prev.map(t => t.id))
+            const uniqueNew = newTranscripts.filter(t => !existingIds.has(t.id))
+            return [...uniqueNew, ...prev]
+          })
 
           // Restore scroll position after prepending
           setTimeout(() => {
@@ -148,7 +159,64 @@ export default function HistoryPage() {
     [],
   )
 
-  // Scroll to bottom after initial load
+  // Fetch latest transcripts for following mode
+  const fetchLatestTranscripts = useCallback(
+    async (showName: string) => {
+      try {
+        const params = new URLSearchParams({
+          offset: '0',
+          limit: FOLLOW_MAX_TRANSCRIPTS.toString(),
+        })
+        const response = await fetch(
+          apiUrl(`/api/shows/${encodeURIComponent(showName)}/transcripts?${params.toString()}`),
+        )
+        if (!response.ok) {
+          throw new Error(`Failed to fetch transcripts: ${response.statusText}`)
+        }
+        const data = await response.json()
+
+        // Backend returns DESC order (latest first), reverse to get ASC (oldest first)
+        const newTranscripts = [...(data.transcripts ?? [])].reverse()
+
+        // Track latest ID
+        if (newTranscripts.length > 0) {
+          latestIdRef.current = newTranscripts[newTranscripts.length - 1].id
+        }
+
+        setTranscripts(newTranscripts)
+        setTotal(data.total ?? 0)
+        shouldScrollToBottomRef.current = true
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to load transcripts'
+        setError(message)
+        console.error('[History] Failed to fetch latest transcripts:', err)
+      }
+    },
+    [],
+  )
+
+  // Clear follow polling
+  const clearFollowPolling = useCallback(() => {
+    if (followPollerRef.current !== null) {
+      window.clearInterval(followPollerRef.current)
+      followPollerRef.current = null
+    }
+  }, [])
+
+  // Start follow polling
+  const startFollowPolling = useCallback(() => {
+    if (!selectedShow) return
+
+    clearFollowPolling()
+    void fetchLatestTranscripts(selectedShow)
+    followPollerRef.current = window.setInterval(() => {
+      if (selectedShow) {
+        void fetchLatestTranscripts(selectedShow)
+      }
+    }, FOLLOW_POLL_INTERVAL_MS)
+  }, [selectedShow, fetchLatestTranscripts, clearFollowPolling])
+
+  // Scroll to bottom after initial load or when following
   useEffect(() => {
     if (shouldScrollToBottomRef.current && transcriptContainerRef.current) {
       transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight
@@ -156,21 +224,50 @@ export default function HistoryPage() {
     }
   }, [transcripts])
 
+  // Handle following toggle
+  const handleToggleFollow = useCallback(
+    (checked: boolean) => {
+      setIsFollowing(checked)
+
+      if (checked) {
+        // Switching to following mode
+        if (selectedShow) {
+          shouldScrollToBottomRef.current = true
+          startFollowPolling()
+        }
+      } else {
+        // Switching to non-following mode
+        clearFollowPolling()
+      }
+    },
+    [selectedShow, startFollowPolling, clearFollowPolling],
+  )
+
   // Handle show selection
   const handleSelectShow = useCallback(
     (showName: string) => {
       setSelectedShow(showName)
+      setIsFollowing(false)
+      clearFollowPolling()
       offsetRef.current = 0
       setHasMore(true)
+      latestIdRef.current = null
       void fetchTranscripts(showName, 0, false)
     },
-    [fetchTranscripts],
+    [fetchTranscripts, clearFollowPolling],
   )
 
-  // Handle scroll for infinite loading
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      clearFollowPolling()
+    }
+  }, [clearFollowPolling])
+
+  // Handle scroll for infinite loading (only when not following)
   const handleScroll = useCallback(() => {
     const container = transcriptContainerRef.current
-    if (!container || !selectedShow || loadingMore || !hasMore) {
+    if (!container || !selectedShow || loadingMore || !hasMore || isFollowing) {
       return
     }
 
@@ -178,7 +275,7 @@ export default function HistoryPage() {
     if (container.scrollTop < 100) {
       void fetchTranscripts(selectedShow, offsetRef.current, true)
     }
-  }, [selectedShow, loadingMore, hasMore, fetchTranscripts])
+  }, [selectedShow, loadingMore, hasMore, isFollowing, fetchTranscripts])
 
   return (
     <div className="grid grid-cols-12 gap-6">
@@ -242,14 +339,37 @@ export default function HistoryPage() {
       <div className="col-span-8">
         <Card>
           <CardHeader>
-            <CardTitle>
-              {selectedShow ? `Transcripts: ${selectedShow}` : 'Transcripts'}
-            </CardTitle>
-            <CardDescription>
-              {selectedShow
-                ? `Showing ${transcripts.length.toLocaleString()} of ${total.toLocaleString()} transcripts (latest at bottom, scroll up to load older)`
-                : 'Select a show from the list to view its transcripts'}
-            </CardDescription>
+            <div className="flex items-start justify-between">
+              <div>
+                <CardTitle>
+                  {selectedShow ? `Transcripts: ${selectedShow}` : 'Transcripts'}
+                </CardTitle>
+                <CardDescription>
+                  {selectedShow
+                    ? isFollowing
+                      ? `Following latest transcripts (max ${FOLLOW_MAX_TRANSCRIPTS.toLocaleString()}, auto-updates every ${FOLLOW_POLL_INTERVAL_MS / 1000}s)`
+                      : `Showing ${transcripts.length.toLocaleString()} of ${total.toLocaleString()} transcripts (latest at bottom, scroll up to load older)`
+                    : 'Select a show from the list to view its transcripts'}
+                </CardDescription>
+              </div>
+              {selectedShow && (
+                <div className="flex items-center gap-2">
+                  <label
+                    htmlFor="follow-checkbox"
+                    className="text-sm font-medium text-slate-700 dark:text-slate-300 cursor-pointer"
+                  >
+                    Follow
+                  </label>
+                  <input
+                    id="follow-checkbox"
+                    type="checkbox"
+                    checked={isFollowing}
+                    onChange={(e) => handleToggleFollow(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500 dark:border-slate-600 dark:bg-slate-700 cursor-pointer"
+                  />
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             {!selectedShow ? (

@@ -222,7 +222,7 @@ def create_app(dev_mode: bool = False) -> FastAPI:
     async def fetch_show_transcripts(
         show_name: str,
         offset: int = Query(0, ge=0, description="Number of transcripts to skip"),
-        limit: int = Query(50, ge=1, le=200, description="Max number of transcripts to return"),
+        limit: int = Query(50, ge=1, le=1000, description="Max number of transcripts to return"),
     ):
         """Fetch transcripts for a specific show in reverse chronological order."""
         if not os.environ.get("DATABASE_URL"):
