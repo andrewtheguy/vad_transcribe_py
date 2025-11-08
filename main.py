@@ -5,6 +5,7 @@ import queue
 import sys
 import threading
 import tomllib
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -36,6 +37,9 @@ class JsonTranscriptWriter:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
 
 
+CLI_QUEUE_TIME_LIMIT_SECONDS = 60.0
+
+
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
                   transcript_persistence_callback=None,transcribe_model_size='large-v3-turbo',segment_callback=None,
                   timestamp_strategy='wall_clock',n_threads=1, stop_event=None):
@@ -55,8 +59,8 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                    stop_event=stop_event,
                    ).process_input(TARGET_SAMPLE_RATE)
 
-def process_mic(q,language, stop_event=None):
-    MicRecorder(q, stop_event=stop_event).record(language=language)
+def process_mic(q,language, stop_event=None, max_queue_seconds: Optional[float] = None):
+    MicRecorder(q, stop_event=stop_event, queue_time_limit_seconds=max_queue_seconds).record(language=language)
 
 
 def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
@@ -151,7 +155,15 @@ if __name__ == '__main__':
     elif args.action == 'mic':
         audio_input_queue = queue.Queue()
         stop_event = threading.Event()
-        thread_transcribe = threading.Thread(target=process_mic, args=(audio_input_queue, args.lang, stop_event,))
+        thread_transcribe = threading.Thread(
+            target=process_mic,
+            kwargs={
+                'q': audio_input_queue,
+                'language': args.lang,
+                'stop_event': stop_event,
+                'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
+            },
+        )
 
         # Start the thread
         thread_transcribe.start()
@@ -216,7 +228,13 @@ if __name__ == '__main__':
 
             thread_streaming = threading.Thread(
                 target=stream_url_thread,
-                args=(url, audio_input_queue, stop_event,),
+                kwargs={
+                    'url': url,
+                    'audio_input_queue': audio_input_queue,
+                    'stop_event': stop_event,
+                    'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
+                    'queue_label': data.get('show_name', 'stream'),
+                },
                 daemon=True
             )
 

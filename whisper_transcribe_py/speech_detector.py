@@ -233,6 +233,41 @@ def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCall
 
     return _save
 
+
+def trim_audio_queue_backlog(
+        audio_queue: queue.Queue,
+        max_seconds: float,
+        approx_sample_rate: float,
+        source_label: str = "audio input",
+) -> None:
+    """Ensure the queue never buffers more than ``max_seconds`` of audio."""
+    if max_seconds is None or max_seconds <= 0:
+        return
+    approx_sr = approx_sample_rate or TARGET_SAMPLE_RATE
+    dropped = 0
+    total_seconds = 0.0
+
+    with audio_queue.mutex:
+        for item in audio_queue.queue:
+            if isinstance(item, AudioSegment) and item.audio is not None:
+                total_seconds += len(item.audio) / approx_sr
+
+        while total_seconds > max_seconds and audio_queue.queue:
+            oldest = audio_queue.queue[0]
+            if oldest is None:
+                break
+            oldest = audio_queue.queue.popleft()
+            if isinstance(oldest, AudioSegment) and oldest.audio is not None:
+                total_seconds -= len(oldest.audio) / approx_sr
+            dropped += 1
+
+    if dropped:
+        print(
+            f"Warning: dropped {dropped} buffered audio segment(s) from {source_label} queue "
+            f"to keep backlog under {int(max_seconds)} seconds.",
+            file=sys.stderr,
+        )
+
 class SpeechDetector:
     def __init__(
             self,
@@ -533,7 +568,13 @@ class SpeechDetector:
         transcribing_thread.join()
 
 
-def stream_url_thread(url, audio_input_queue, stop_event=None):
+def stream_url_thread(
+        url,
+        audio_input_queue,
+        stop_event=None,
+        max_queue_seconds: Optional[float] = None,
+        queue_label: str = "stream",
+):
     ts = 0
     while True:
         if stop_event is not None and stop_event.is_set():
@@ -552,6 +593,13 @@ def stream_url_thread(url, audio_input_queue, stop_event=None):
                 if stop_event is not None and stop_event.is_set():
                     break
                 audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                if max_queue_seconds is not None:
+                    trim_audio_queue_backlog(
+                        audio_input_queue,
+                        max_queue_seconds=max_queue_seconds,
+                        approx_sample_rate=TARGET_SAMPLE_RATE,
+                        source_label=queue_label,
+                    )
                 #print("audio_input_queue size", audio_input_queue.qsize())
                 ts += len(audio) / TARGET_SAMPLE_RATE
         if stop_event is not None and stop_event.is_set():
