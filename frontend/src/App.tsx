@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 const TARGET_SAMPLE_RATE = 16_000
 const TRANSCRIPT_FETCH_LIMIT = 1000
 const TRANSCRIPT_POLL_INTERVAL_MS = 2000
+const LANGUAGE_STORAGE_KEY = 'whisper-transcribe-language'
 const API_BASE =
   (
     (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -31,6 +32,18 @@ const SUPPORTED_LANGUAGES = [
   { code: 'zh', label: 'Mandarin (zh)' },
   { code: 'yue', label: 'Cantonese (yue)' },
 ]
+const DEFAULT_LANGUAGE = SUPPORTED_LANGUAGES[0]?.code ?? 'en'
+
+const isSupportedLanguage = (code: string | null | undefined) =>
+  Boolean(code && SUPPORTED_LANGUAGES.some((lang) => lang.code === code))
+
+const getStoredLanguage = () => {
+  if (typeof window === 'undefined') {
+    return DEFAULT_LANGUAGE
+  }
+  const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY)
+  return isSupportedLanguage(stored) ? (stored as string) : DEFAULT_LANGUAGE
+}
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
@@ -105,7 +118,7 @@ function App() {
   const [isRecording, setIsRecording] = useState(false)
   const [status, setStatus] = useState('Idle')
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  const [language, setLanguage] = useState('en')
+  const [language, setLanguage] = useState<string>(() => getStoredLanguage())
   const [transcripts, setTranscripts] = useState<TranscriptRow[]>([])
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
 
@@ -120,6 +133,16 @@ function App() {
   const destroyedRef = useRef(false)
   const stopRecordingRef = useRef<() => Promise<void>>(async () => {})
   const transcriptPollerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!isSupportedLanguage(language)) {
+      setLanguage(DEFAULT_LANGUAGE)
+      return
+    }
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language)
+    }
+  }, [language])
 
   const logEvent = useCallback((message: string) => {
     const timestamp = new Date().toLocaleTimeString()
