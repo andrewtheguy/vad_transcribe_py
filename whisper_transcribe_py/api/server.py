@@ -180,6 +180,100 @@ def create_app(dev_mode: bool = False) -> FastAPI:
             status_code=200
         )
 
+    @app.get("/api/shows")
+    async def list_shows():
+        """List all distinct show names with metadata."""
+        if not os.environ.get("DATABASE_URL"):
+            raise HTTPException(status_code=503, detail="Database not configured")
+
+        try:
+            with connect_to_database() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        '''
+                        SELECT
+                            show_name,
+                            COUNT(*) as transcript_count,
+                            MAX("timestamp") as latest_timestamp,
+                            MIN("timestamp") as earliest_timestamp
+                        FROM transcripts
+                        GROUP BY show_name
+                        ORDER BY MAX("timestamp") DESC
+                        '''
+                    )
+                    rows = cur.fetchall()
+        except Exception as exc:
+            logger.error("Failed to fetch shows: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to fetch shows") from exc
+
+        return {
+            "shows": [
+                {
+                    "name": row[0],
+                    "transcript_count": row[1],
+                    "latest_timestamp": row[2].isoformat() if row[2] else None,
+                    "earliest_timestamp": row[3].isoformat() if row[3] else None,
+                }
+                for row in rows
+            ]
+        }
+
+    @app.get("/api/shows/{show_name}/transcripts")
+    async def fetch_show_transcripts(
+        show_name: str,
+        offset: int = Query(0, ge=0, description="Number of transcripts to skip"),
+        limit: int = Query(50, ge=1, le=200, description="Max number of transcripts to return"),
+    ):
+        """Fetch transcripts for a specific show in reverse chronological order."""
+        if not os.environ.get("DATABASE_URL"):
+            raise HTTPException(status_code=503, detail="Database not configured")
+
+        try:
+            with connect_to_database() as conn:
+                with conn.cursor() as cur:
+                    # Get total count
+                    cur.execute(
+                        'SELECT COUNT(*) FROM transcripts WHERE show_name = %s',
+                        (show_name,)
+                    )
+                    total_count = cur.fetchone()[0]
+
+                    if total_count == 0:
+                        return {
+                            "show_name": show_name,
+                            "total": 0,
+                            "offset": offset,
+                            "limit": limit,
+                            "transcripts": []
+                        }
+
+                    # Fetch transcripts in reverse chronological order
+                    cur.execute(
+                        '''
+                        SELECT id, "timestamp", content
+                        FROM transcripts
+                        WHERE show_name = %s
+                        ORDER BY "timestamp" DESC, id DESC
+                        LIMIT %s OFFSET %s
+                        ''',
+                        (show_name, limit, offset)
+                    )
+                    rows = cur.fetchall()
+        except Exception as exc:
+            logger.error("Failed to fetch transcripts for show %s: %s", show_name, exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to fetch transcripts") from exc
+
+        return {
+            "show_name": show_name,
+            "total": total_count,
+            "offset": offset,
+            "limit": limit,
+            "transcripts": [
+                {"id": row[0], "timestamp": row[1].isoformat(), "content": row[2]}
+                for row in rows
+            ],
+        }
+
     # Serve static files in production mode
     if not dev_mode:
         # Get the frontend build directory
