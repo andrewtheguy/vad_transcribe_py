@@ -5,9 +5,9 @@ from typing import Optional
 
 import sounddevice as sd
 
-from whisper_transcribe_py.speech_detector import (
+from whisper_transcribe_py.audio_transcriber import (
     AudioSegment,
-    SpeechDetector,
+    AudioTranscriber,
     TARGET_SAMPLE_RATE,
     QueueBacklogLimiter,
 )
@@ -60,7 +60,7 @@ class MicRecorder:
                 raise ValueError(f"only support single channel for now")
             if input_sample_rate:
                 self.approx_input_sample_rate = input_sample_rate
-            SpeechDetector(
+            AudioTranscriber(
                 self.audio_input_queue,
                 language=language,
                 stop_event=self.stop_event,

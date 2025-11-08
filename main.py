@@ -11,8 +11,8 @@ from dotenv import load_dotenv
 
 from silero_vad import (load_silero_vad)
 
-from whisper_transcribe_py.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
-    SpeechDetector, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter
+from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
+    AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter
 from whisper_transcribe_py.mic_recorder import MicRecorder
 from whisper_transcribe_py.db import build_database_writer, connect_to_database
 
@@ -48,18 +48,18 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
     if save_audio and audio_segment_callback is None:
         audio_segment_callback = create_audio_file_saver()
 
-    SpeechDetector(audio_input_queue=q,
-                   language=language,
-                   show_name=show_name,
-                   transcribe_model_size=transcribe_model_size,
-                   audio_segment_callback=audio_segment_callback,
-                   transcript_persistence_callback=transcript_persistence_callback,
-                   segment_callback=segment_callback,
-                   timestamp_strategy=timestamp_strategy,
-                   n_threads=n_threads,
-                   stop_event=stop_event,
-                   queue_backlog_limiter=queue_backlog_limiter,
-                   ).process_input(TARGET_SAMPLE_RATE)
+    AudioTranscriber(audio_input_queue=q,
+                     language=language,
+                     show_name=show_name,
+                     transcribe_model_size=transcribe_model_size,
+                     audio_segment_callback=audio_segment_callback,
+                     transcript_persistence_callback=transcript_persistence_callback,
+                     segment_callback=segment_callback,
+                     timestamp_strategy=timestamp_strategy,
+                     n_threads=n_threads,
+                     stop_event=stop_event,
+                     queue_backlog_limiter=queue_backlog_limiter,
+                     ).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(q,language, stop_event=None, max_queue_seconds: Optional[float] = None, n_threads: int = 1):
     limiter = QueueBacklogLimiter(max_queue_seconds, source_label="microphone") if max_queue_seconds else None
@@ -154,7 +154,7 @@ if __name__ == '__main__':
         else:
             print(f"Transcript written to {output_path}")
 
-        #SpeechDetector().process_silero(audio)
+        #AudioTranscriber().process_silero(audio)
     elif args.action == 'mic':
         audio_input_queue = queue.Queue()
         stop_event = threading.Event()

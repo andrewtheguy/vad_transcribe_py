@@ -11,9 +11,9 @@ from typing import Callable, Dict, Optional, Set, Tuple
 
 import numpy.typing as npt
 
-from whisper_transcribe_py.speech_detector import (
+from whisper_transcribe_py.audio_transcriber import (
     AudioSegment,
-    SpeechDetector,
+    AudioTranscriber,
     TranscriptPersistenceCallback,
 )
 
@@ -30,14 +30,14 @@ class SessionRevokedError(SessionError):
 
 @dataclass
 class StreamingSession:
-    """Holds the state required to stream audio into a SpeechDetector."""
+    """Holds the state required to stream audio into an AudioTranscriber."""
 
     session_id: str
     language: str
     input_sample_rate: int
     queue: queue.Queue = field(default_factory=queue.Queue)
     stop_event: threading.Event = field(default_factory=threading.Event)
-    detector: SpeechDetector | None = None
+    detector: AudioTranscriber | None = None
     thread: threading.Thread | None = None
     wall_clock_reference: Optional[float] = None
     created_at: float = field(default_factory=time.time)
@@ -50,7 +50,7 @@ class StreamingSession:
     def ensure_running(self) -> None:
         if self.detector is not None:
             return
-        self.detector = SpeechDetector(
+        self.detector = AudioTranscriber(
             audio_input_queue=self.queue,
             language=self.language,
             timestamp_strategy="wall_clock",

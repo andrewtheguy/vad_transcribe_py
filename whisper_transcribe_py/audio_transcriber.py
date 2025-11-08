@@ -252,7 +252,7 @@ class QueueBacklogLimiter:
 
     A limiter instance is typically shared between the code that places audio
     chunks on a queue (see `stream_url_thread` or `MicRecorder`) and the
-    consumer (`SpeechDetector`). Producers call `try_add` before enqueuing a
+    consumer (`AudioTranscriber`). Producers call `try_add` before enqueuing a
     chunk; if it returns `False` the chunk is dropped. Consumers call
     `consume` after audio is processed to release the accounted time.
     """
@@ -324,7 +324,7 @@ class QueueBacklogLimiter:
         with self._lock:
             return self._initial_timestamp
 
-class SpeechDetector:
+class AudioTranscriber:
     def __init__(
             self,
             audio_input_queue: queue.Queue[AudioSegment],
