@@ -9,7 +9,6 @@ import tomllib
 from dotenv import load_dotenv
 
 import psycopg
-import readchar
 from silero_vad import (load_silero_vad)
 
 from whisper_transcribe_py.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
@@ -164,14 +163,10 @@ if __name__ == '__main__':
         def stop_mic():
             _request_shutdown(stop_event, audio_input_queue)
 
-        # press q and enter to quit
+        print("Press Ctrl+C to stop microphone capture.")
         try:
-            while not stop_event.is_set():
-                print("Press q and enter to quit")
-                input2 = sys.stdin.read(1)
-                if input2 == 'q':
-                    stop_mic()
-                    break
+            while not stop_event.wait(timeout=1):
+                pass
         except KeyboardInterrupt:
             print("\nCtrl+C received, stopping microphone capture...", file=sys.stderr)
             stop_mic()
@@ -238,13 +233,10 @@ if __name__ == '__main__':
             def stop_stream():
                 _request_shutdown(stop_event, audio_input_queue)
 
+            print("Press Ctrl+C to stop streaming.")
             try:
-                while not stop_event.is_set():
-                    print('press q to quit:')
-                    char = readchar.readchar()
-                    if char == 'q':
-                        stop_stream()
-                        break
+                while not stop_event.wait(timeout=1):
+                    pass
             except KeyboardInterrupt:
                 print("\nCtrl+C received, stopping stream...", file=sys.stderr)
                 stop_stream()
