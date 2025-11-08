@@ -5,7 +5,8 @@
       "Bash(uv run python:*)",
       "Bash(npm run build:*)",
       "Bash(npm install:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []
