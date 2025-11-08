@@ -270,6 +270,29 @@ class QueueBacklogLimiter:
         self._total_accounted_seconds = 0.0
         self._dropped_seconds = 0.0
         self._lock = threading.Lock()
+        self._last_logged_backlog_bucket: Optional[int] = None
+        self._last_backlog_log_time = 0.0
+
+    def _log_backlog_state_locked(self) -> None:
+        if self.max_seconds is None or self.max_seconds <= 0:
+            return
+        backlog_seconds = self.current_seconds
+        now = time.time()
+        if backlog_seconds < 0:
+            backlog_seconds = 0.0
+        bucket = int(min(backlog_seconds / self.max_seconds * 10, 10))
+        if (
+                self._last_logged_backlog_bucket == bucket
+                and now - self._last_backlog_log_time < 5.0
+        ):
+            return
+        print(
+            f"[QueueBacklogLimiter:{self.source_label}] backlog {backlog_seconds:.1f}s / "
+            f"{self.max_seconds:.0f}s",
+            file=sys.stderr,
+        )
+        self._last_logged_backlog_bucket = bucket
+        self._last_backlog_log_time = now
 
     def try_add(self, duration_seconds: float) -> bool:
         """Return True and account for the chunk if it fits under the cap."""
@@ -281,6 +304,7 @@ class QueueBacklogLimiter:
             if self.max_seconds is None or self.max_seconds <= 0:
                 self.current_seconds += duration_seconds
                 self._total_accounted_seconds += duration_seconds
+                self._log_backlog_state_locked()
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
                 self._dropped_seconds += duration_seconds
@@ -294,6 +318,7 @@ class QueueBacklogLimiter:
                 return False
             self.current_seconds += duration_seconds
             self._total_accounted_seconds += duration_seconds
+            self._log_backlog_state_locked()
             return True
 
     def consume(self, duration_seconds: float) -> None:
@@ -302,6 +327,7 @@ class QueueBacklogLimiter:
             return
         with self._lock:
             self.current_seconds = max(0.0, self.current_seconds - duration_seconds)
+            self._log_backlog_state_locked()
 
     def pending_chunk_start_timestamp(self) -> Optional[float]:
         """
@@ -358,6 +384,7 @@ class AudioTranscriber:
         self.stop_event = stop_event
         self.wall_clock_reference = wall_clock_reference
         self.queue_backlog_limiter = queue_backlog_limiter
+        self._limiter_processed_offset = 0.0
         #if transcribe_backend == "faster-whisper":
         #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
         #    #self._load_faster_whisper()
@@ -472,6 +499,14 @@ class AudioTranscriber:
                 self.ts_transcribe_start = segment_offset
 
             self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
+            segment_duration_seconds = None
+            if isinstance(queued_item, AudioSegment):
+                segment_duration_seconds = queued_item.duration_seconds
+            if segment_duration_seconds is None and audio is not None:
+                segment_duration_seconds = len(audio) / TARGET_SAMPLE_RATE
+            if segment_duration_seconds is not None:
+                segment_end_offset = segment_offset + segment_duration_seconds
+                self._release_limiter_up_to(segment_end_offset)
 
 
     def _transcribe_faster_whisper(self):
@@ -526,6 +561,15 @@ class AudioTranscriber:
             # or run on CPU with INT8
             # model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
+            segment_duration_seconds = None
+            if isinstance(queued_item, AudioSegment):
+                segment_duration_seconds = queued_item.duration_seconds
+            if segment_duration_seconds is None and audio is not None:
+                segment_duration_seconds = len(audio) / TARGET_SAMPLE_RATE
+            if segment_duration_seconds is not None:
+                segment_end_offset = segment_offset + segment_duration_seconds
+                self._release_limiter_up_to(segment_end_offset)
+
 
     def _process_end_of_speech(self, speech_section, last_has_speech_ts, wall_clock_start):
         s = np.asarray(speech_section)
@@ -534,8 +578,26 @@ class AudioTranscriber:
         if self.audio_segment_callback is not None:
             self.audio_segment_callback(s, start_ts)
 
-        self.transcribe_queue.put(AudioSegment(audio=s, start=start_ts, wall_clock_start=wall_clock_start))
+        segment_duration_seconds = len(s) / TARGET_SAMPLE_RATE
+
+        self.transcribe_queue.put(
+            AudioSegment(
+                audio=s,
+                start=start_ts,
+                wall_clock_start=wall_clock_start,
+                duration_seconds=segment_duration_seconds,
+            )
+        )
         self.vad_model.reset_states()
+
+    def _release_limiter_up_to(self, target_offset: Optional[float]) -> None:
+        if self.queue_backlog_limiter is None or target_offset is None:
+            return
+        delta = target_offset - self._limiter_processed_offset
+        if delta <= 0:
+            return
+        self.queue_backlog_limiter.consume(delta)
+        self._limiter_processed_offset = target_offset
 
 
     def process_input(self,input_sample_rate):
@@ -587,8 +649,6 @@ class AudioTranscriber:
             if segment_wall_clock_start is None:
                 segment_wall_clock_start = None
             segment.wall_clock_start = segment_wall_clock_start
-            if self.queue_backlog_limiter and segment_duration is not None:
-                self.queue_backlog_limiter.consume(segment_duration)
             if ts is None:
                 ts = segment.start
                 ts_wall_clock = segment.wall_clock_start
@@ -610,6 +670,10 @@ class AudioTranscriber:
                 arr = buffer[:window_size_samples]
                 buffer = buffer[window_size_samples:]
                 data_slice = np.asarray(arr)
+                window_start = ts
+                window_end = None
+                if window_start is not None:
+                    window_end = window_start + window_seconds
                 #ts += window_size_samples / TARGET_SAMPLE_RATE
                 #if len(data_slice) != window_size_samples:
                 #    raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
@@ -649,6 +713,9 @@ class AudioTranscriber:
                         has_speech_begin_timestamp = None
                         has_speech_begin_wall_clock = None
                         prev_slice = None
+
+                if has_speech_begin_timestamp is None and not has_speech and window_end is not None:
+                    self._release_limiter_up_to(window_end)
 
                 prev_has_speech = has_speech
 
