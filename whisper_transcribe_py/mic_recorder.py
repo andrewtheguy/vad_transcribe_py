@@ -3,7 +3,7 @@ import time
 
 import sounddevice as sd
 
-from speech_detector.speech_detector import AudioSegment, SpeechDetector
+from whisper_transcribe_py.speech_detector import AudioSegment, SpeechDetector
 
 
 class MicRecorder:

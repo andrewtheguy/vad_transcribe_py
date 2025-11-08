@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "speech-detector"
+name = "whisper-transcribe-py"
 version = "0.1.0"
 description = ""
 authors = ["Andrew Chen <andrew@jaanuu.com>"]

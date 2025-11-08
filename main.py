@@ -11,9 +11,9 @@ import psycopg
 import readchar
 from silero_vad import (load_silero_vad)
 
-from speech_detector.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
+from whisper_transcribe_py.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     SpeechDetector, AudioSegment, stream_url_thread
-from speech_detector.mic_recorder import MicRecorder
+from whisper_transcribe_py.mic_recorder import MicRecorder
 
 
 def process_queue(q,language,save_file=True,show_name=None,database_connection=None,transcribe_model_size='large-v3-turbo'):
