@@ -6,6 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 const TARGET_SAMPLE_RATE = 16_000
 const TRANSCRIPT_FETCH_LIMIT = 1000
 const TRANSCRIPT_POLL_INTERVAL_MS = 2000
+const AUDIO_PROCESSOR_BUFFER_SIZE = 4096
+const TARGET_CHUNK_SAMPLES = AUDIO_PROCESSOR_BUFFER_SIZE * 4
 const LANGUAGE_STORAGE_KEY = 'whisper-transcribe-language'
 const API_BASE =
   (
@@ -129,6 +131,7 @@ export default function RecordPage() {
   const sessionIdRef = useRef<string | null>(null)
   const sentSamplesRef = useRef(0)
   const chunkQueueRef = useRef<PendingChunk[]>([])
+  const pendingSamplesRef = useRef<Float32Array | null>(null)
   const flushingRef = useRef(false)
   const destroyedRef = useRef(false)
   const stopRecordingRef = useRef<() => Promise<void>>(async () => {})
@@ -293,6 +296,58 @@ export default function RecordPage() {
     [flushQueue],
   )
 
+  const transmitChunkSamples = useCallback(
+    (samples: Float32Array) => {
+      if (!samples.length) {
+        return
+      }
+      const chunkStart = sentSamplesRef.current / TARGET_SAMPLE_RATE
+      sentSamplesRef.current += samples.length
+      const payload = floatTo16BitPCM(samples)
+      enqueueChunk({ start: chunkStart, payload })
+    },
+    [enqueueChunk],
+  )
+
+  const flushPendingSamples = useCallback(
+    (force = false) => {
+      let pending = pendingSamplesRef.current
+      if (!pending || pending.length === 0) {
+        pendingSamplesRef.current = pending
+        return
+      }
+      while (pending && pending.length >= TARGET_CHUNK_SAMPLES) {
+        const chunk = pending.slice(0, TARGET_CHUNK_SAMPLES)
+        transmitChunkSamples(chunk)
+        pending = pending.length > TARGET_CHUNK_SAMPLES ? pending.slice(TARGET_CHUNK_SAMPLES) : null
+      }
+      if (force && pending && pending.length) {
+        transmitChunkSamples(pending)
+        pending = null
+      }
+      pendingSamplesRef.current = pending
+    },
+    [transmitChunkSamples],
+  )
+
+  const queueSamplesForChunking = useCallback(
+    (samples: Float32Array) => {
+      if (!samples.length) {
+        return
+      }
+      if (!pendingSamplesRef.current || pendingSamplesRef.current.length === 0) {
+        pendingSamplesRef.current = samples
+      } else {
+        const merged = new Float32Array(pendingSamplesRef.current.length + samples.length)
+        merged.set(pendingSamplesRef.current)
+        merged.set(samples, pendingSamplesRef.current.length)
+        pendingSamplesRef.current = merged
+      }
+      flushPendingSamples()
+    },
+    [flushPendingSamples],
+  )
+
   const startRecording = useCallback(async () => {
     if (isRecording) {
       return
@@ -312,7 +367,7 @@ export default function RecordPage() {
       }
       const audioContext = new AudioContextCtor()
       const source = audioContext.createMediaStreamSource(stream)
-      const processor = audioContext.createScriptProcessor(4096, 1, 1)
+      const processor = audioContext.createScriptProcessor(AUDIO_PROCESSOR_BUFFER_SIZE, 1, 1)
 
       audioContextRef.current = audioContext
       sourceRef.current = source
@@ -320,6 +375,7 @@ export default function RecordPage() {
       mediaStreamRef.current = stream
       sentSamplesRef.current = 0
       chunkQueueRef.current = []
+      pendingSamplesRef.current = null
 
       const sessionId = crypto.randomUUID()
       sessionIdRef.current = sessionId
@@ -330,13 +386,7 @@ export default function RecordPage() {
         const copy = new Float32Array(raw.length)
         copy.set(raw)
         const downsampled = downsampleBuffer(copy, audioContext.sampleRate, TARGET_SAMPLE_RATE)
-        if (!downsampled.length) {
-          return
-        }
-        const chunkStart = sentSamplesRef.current / TARGET_SAMPLE_RATE
-        sentSamplesRef.current += downsampled.length
-        const payload = floatTo16BitPCM(downsampled)
-        enqueueChunk({ start: chunkStart, payload })
+        queueSamplesForChunking(downsampled)
       }
 
       source.connect(processor)
@@ -354,13 +404,14 @@ export default function RecordPage() {
         error instanceof Error ? `Failed to start recording: ${error.message}` : 'Failed to start recording',
       )
     }
-  }, [logEvent, enqueueChunk, handleFatalError, isRecording, language, startTranscriptPolling])
+  }, [logEvent, queueSamplesForChunking, handleFatalError, isRecording, language, startTranscriptPolling])
 
   const stopRecording = useCallback(async () => {
     if (!isRecording && !sessionIdRef.current) {
       return
     }
     setStatus('Stopping…')
+    flushPendingSamples(true)
     cleanupAudioGraph()
     chunkQueueRef.current = []
     sentSamplesRef.current = 0
@@ -368,7 +419,7 @@ export default function RecordPage() {
     setIsRecording(false)
     await finalizeSession()
     setStatus('Idle')
-  }, [cleanupAudioGraph, clearTranscriptPolling, finalizeSession, isRecording])
+  }, [cleanupAudioGraph, clearTranscriptPolling, finalizeSession, flushPendingSamples, isRecording])
 
   useEffect(() => {
     stopRecordingRef.current = stopRecording
