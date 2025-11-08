@@ -9,16 +9,20 @@ from whisper_transcribe_py.speech_detector import (
     AudioSegment,
     SpeechDetector,
     TARGET_SAMPLE_RATE,
-    trim_audio_queue_backlog,
+    QueueBacklogLimiter,
 )
 
 
 class MicRecorder:
-    def __init__(self, audio_input_queue, stop_event: Optional[threading.Event] = None,
-                 queue_time_limit_seconds: Optional[float] = None):
+    def __init__(
+            self,
+            audio_input_queue,
+            stop_event: Optional[threading.Event] = None,
+            queue_limiter: Optional[QueueBacklogLimiter] = None,
+    ):
         self.audio_input_queue = audio_input_queue
         self.stop_event = stop_event
-        self.queue_time_limit_seconds = queue_time_limit_seconds
+        self.queue_limiter = queue_limiter
         self.approx_input_sample_rate = TARGET_SAMPLE_RATE
         self.stream = sd.InputStream(callback=self.audio_callback)
 
@@ -31,16 +35,19 @@ class MicRecorder:
         data_flattened = indata.squeeze().copy()
         # print("frames",frames)
         # print("indata length",len(indata))
+        duration_seconds = len(data_flattened) / self.approx_input_sample_rate if self.approx_input_sample_rate else 0
+
+        if self.queue_limiter and not self.queue_limiter.try_add(duration_seconds):
+            return
 
         # Fancy indexing with mapping creates a (necessary!) copy:
-        self.audio_input_queue.put(AudioSegment(start=time.time(), audio=data_flattened))
-        if self.queue_time_limit_seconds is not None:
-            trim_audio_queue_backlog(
-                self.audio_input_queue,
-                max_seconds=self.queue_time_limit_seconds,
-                approx_sample_rate=self.approx_input_sample_rate,
-                source_label="microphone",
+        self.audio_input_queue.put(
+            AudioSegment(
+                start=time.time(),
+                audio=data_flattened,
+                duration_seconds=duration_seconds if duration_seconds > 0 else None,
             )
+        )
 
     def record(self,language):
         with sd.InputStream(dtype='float32', callback=self.audio_callback) as stream:
@@ -49,4 +56,9 @@ class MicRecorder:
                 raise ValueError(f"only support single channel for now")
             if input_sample_rate:
                 self.approx_input_sample_rate = input_sample_rate
-            SpeechDetector(self.audio_input_queue,language=language, stop_event=self.stop_event).process_input(input_sample_rate)
+            SpeechDetector(
+                self.audio_input_queue,
+                language=language,
+                stop_event=self.stop_event,
+                queue_backlog_limiter=self.queue_limiter,
+            ).process_input(input_sample_rate)

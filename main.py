@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from silero_vad import (load_silero_vad)
 
 from whisper_transcribe_py.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
-    SpeechDetector, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment
+    SpeechDetector, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter
 from whisper_transcribe_py.mic_recorder import MicRecorder
 from whisper_transcribe_py.db import build_database_writer, connect_to_database
 
@@ -42,7 +42,8 @@ CLI_QUEUE_TIME_LIMIT_SECONDS = 60.0
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
                   transcript_persistence_callback=None,transcribe_model_size='large-v3-turbo',segment_callback=None,
-                  timestamp_strategy='wall_clock',n_threads=1, stop_event=None):
+                  timestamp_strategy='wall_clock',n_threads=1, stop_event=None,
+                  queue_backlog_limiter: Optional[QueueBacklogLimiter] = None):
     print("process_queue")
     if save_audio and audio_segment_callback is None:
         audio_segment_callback = create_audio_file_saver()
@@ -57,10 +58,12 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                    timestamp_strategy=timestamp_strategy,
                    n_threads=n_threads,
                    stop_event=stop_event,
+                   queue_backlog_limiter=queue_backlog_limiter,
                    ).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(q,language, stop_event=None, max_queue_seconds: Optional[float] = None):
-    MicRecorder(q, stop_event=stop_event, queue_time_limit_seconds=max_queue_seconds).record(language=language)
+    limiter = QueueBacklogLimiter(max_queue_seconds, source_label="microphone") if max_queue_seconds else None
+    MicRecorder(q, stop_event=stop_event, queue_limiter=limiter).record(language=language)
 
 
 def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
@@ -206,6 +209,7 @@ if __name__ == '__main__':
 
             audio_input_queue = queue.Queue()
             stop_event = threading.Event()
+            queue_limiter = QueueBacklogLimiter(CLI_QUEUE_TIME_LIMIT_SECONDS, source_label=data.get('show_name', 'stream'))
 
             db_writer = build_database_writer(conn, data['show_name'])
 
@@ -219,6 +223,7 @@ if __name__ == '__main__':
                 'transcribe_model_size': data.get('transcribe_model_size', 'large-v3-turbo'),
                 'n_threads': data.get('n_threads', 1),
                 'stop_event': stop_event,
+                'queue_backlog_limiter': queue_limiter,
             })
 
             # Start the thread
@@ -232,8 +237,7 @@ if __name__ == '__main__':
                     'url': url,
                     'audio_input_queue': audio_input_queue,
                     'stop_event': stop_event,
-                    'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
-                    'queue_label': data.get('show_name', 'stream'),
+                    'queue_limiter': queue_limiter,
                 },
                 daemon=True
             )
