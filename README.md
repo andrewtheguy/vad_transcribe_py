@@ -6,7 +6,7 @@ voice activity detection on an audio stream using silero-vad and transcribing th
 Process an audio file and save the transcript as JSON.
 
 ```commandline
-python main.py file --file /path/to/file --lang en --output /path/to/output.json
+uv run python main.py file --file /path/to/file --lang en --output /path/to/output.json
 ```
 
 **Behavior:**
@@ -24,7 +24,7 @@ python main.py file --file /path/to/file --lang en --output /path/to/output.json
 Record from microphone and transcribe in real-time.
 
 ```commandline
-python main.py mic --lang en
+uv run python main.py mic --lang en
 ```
 
 **Behavior:**
@@ -40,7 +40,7 @@ python main.py mic --lang en
 Stream audio from URL and save transcripts to database.
 
 ```commandline
-python main.py config --config configs/rthk2.toml
+uv run python main.py config --config configs/rthk2.toml
 ```
 
 **Behavior:**
