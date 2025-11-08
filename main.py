@@ -121,7 +121,7 @@ if __name__ == '__main__':
             'segment_callback': transcript_writer.add_segment,
             'timestamp_strategy': 'relative',
             'transcribe_model_size': args.model,
-            'n_threads': args.n_threads,
+            'n_threads': int(args.n_threads),
             'stop_event': stop_event,
         })
 
@@ -221,7 +221,7 @@ if __name__ == '__main__':
                 'show_name': data['show_name'],
                 'transcript_persistence_callback': db_writer,
                 'transcribe_model_size': data.get('transcribe_model_size', 'large-v3-turbo'),
-                'n_threads': data.get('n_threads', 1),
+                'n_threads': int(data.get('n_threads', 1)),
                 'stop_event': stop_event,
                 'queue_backlog_limiter': queue_limiter,
             })
