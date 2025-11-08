@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 const TARGET_SAMPLE_RATE = 16_000
+const TRANSCRIPT_FETCH_LIMIT = 1000
+const TRANSCRIPT_POLL_INTERVAL_MS = 2000
 const API_BASE =
   (
     (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -16,6 +18,12 @@ type PendingChunk = {
   payload: ArrayBuffer
 }
 
+type TranscriptRow = {
+  id: number
+  timestamp: string
+  content: string
+}
+
 const apiUrl = (path: string) => `${API_BASE}${path}`
 const SUPPORTED_LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -25,6 +33,17 @@ const SUPPORTED_LANGUAGES = [
 ]
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+
+const formatTimestamp = (iso: string) => {
+  if (!iso) {
+    return ''
+  }
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) {
+    return iso
+  }
+  return date.toLocaleString()
+}
 
 const downsampleBuffer = (
   input: Float32Array,
@@ -85,9 +104,10 @@ const floatTo16BitPCM = (input: Float32Array): ArrayBuffer => {
 function App() {
   const [isRecording, setIsRecording] = useState(false)
   const [status, setStatus] = useState('Idle')
-  const [events, setEvents] = useState<string[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [language, setLanguage] = useState('en')
+  const [transcripts, setTranscripts] = useState<TranscriptRow[]>([])
+  const [transcriptError, setTranscriptError] = useState<string | null>(null)
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const processorRef = useRef<ScriptProcessorNode | null>(null)
@@ -99,12 +119,11 @@ function App() {
   const flushingRef = useRef(false)
   const destroyedRef = useRef(false)
   const stopRecordingRef = useRef<() => Promise<void>>(async () => {})
+  const transcriptPollerRef = useRef<number | null>(null)
 
-  const appendEvent = useCallback((message: string) => {
-    setEvents((prev) => {
-      const next = [`${new Date().toLocaleTimeString()} — ${message}`, ...prev]
-      return next.slice(0, 30)
-    })
+  const logEvent = useCallback((message: string) => {
+    const timestamp = new Date().toLocaleTimeString()
+    console.info(`[Whisper Transcribe ${timestamp}] ${message}`)
   }, [])
 
   const cleanupAudioGraph = useCallback(() => {
@@ -136,23 +155,66 @@ function App() {
     }
     try {
       await fetch(apiUrl(`/api/transcribe/stream/${sessionId}`), { method: 'DELETE' })
-      appendEvent(`Session ${sessionId} closed`)
+      logEvent(`Session ${sessionId} closed`)
     } catch (_err) {
-      appendEvent(`Session ${sessionId} closed locally (DELETE failed)`)
+      logEvent(`Session ${sessionId} closed locally (DELETE failed)`)
     }
-  }, [appendEvent])
+  }, [logEvent])
+
+  const fetchTranscripts = useCallback(async () => {
+    const sessionId = sessionIdRef.current
+    if (!sessionId) {
+      return
+    }
+    try {
+      const params = new URLSearchParams({
+        limit: TRANSCRIPT_FETCH_LIMIT.toString(),
+      })
+      const response = await fetch(
+        apiUrl(`/api/transcribe/stream/${sessionId}/transcripts?${params.toString()}`),
+      )
+      if (!response.ok) {
+        const detail = await response.text()
+        throw new Error(detail || `Server responded with ${response.status}`)
+      }
+      const data = await response.json()
+      setTranscripts(data.transcripts ?? [])
+      setTranscriptError(null)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown error while fetching transcripts'
+      setTranscriptError(message)
+      console.error('[Whisper Transcribe] Transcript fetch failed:', message)
+    }
+  }, [])
+
+  const clearTranscriptPolling = useCallback(() => {
+    if (transcriptPollerRef.current !== null) {
+      window.clearInterval(transcriptPollerRef.current)
+      transcriptPollerRef.current = null
+    }
+  }, [])
+
+  const startTranscriptPolling = useCallback(() => {
+    clearTranscriptPolling()
+    void fetchTranscripts()
+    transcriptPollerRef.current = window.setInterval(() => {
+      void fetchTranscripts()
+    }, TRANSCRIPT_POLL_INTERVAL_MS)
+  }, [clearTranscriptPolling, fetchTranscripts])
 
   const handleFatalError = useCallback(
     async (message: string) => {
-      appendEvent(message)
+      logEvent(message)
       cleanupAudioGraph()
       chunkQueueRef.current = []
       sentSamplesRef.current = 0
+      clearTranscriptPolling()
       setIsRecording(false)
       setStatus('Idle')
       await finalizeSession()
     },
-    [appendEvent, cleanupAudioGraph, finalizeSession],
+    [logEvent, cleanupAudioGraph, clearTranscriptPolling, finalizeSession],
   )
 
   const flushQueue = useCallback(async () => {
@@ -185,7 +247,7 @@ function App() {
           const detail = await response.text()
           throw new Error(detail || `Server responded with ${response.status}`)
         }
-        appendEvent(
+        logEvent(
           `Chunk @ ${chunk.start.toFixed(2)}s • ${(chunk.payload.byteLength / 2).toLocaleString()} samples`,
         )
       } catch (error) {
@@ -196,7 +258,7 @@ function App() {
       }
     }
     flushingRef.current = false
-  }, [appendEvent, handleFatalError, language])
+  }, [logEvent, handleFatalError, language])
 
   const enqueueChunk = useCallback(
     (chunk: PendingChunk) => {
@@ -211,7 +273,7 @@ function App() {
       return
     }
     if (!navigator.mediaDevices?.getUserMedia) {
-      appendEvent('Media devices API is not available in this browser')
+      logEvent('Media devices API is not available in this browser')
       return
     }
     setStatus('Requesting microphone…')
@@ -257,13 +319,16 @@ function App() {
 
       setIsRecording(true)
       setStatus('Streaming audio to backend')
-      appendEvent(`Session ${sessionId} started`)
+      logEvent(`Session ${sessionId} started`)
+      setTranscripts([])
+      setTranscriptError(null)
+      startTranscriptPolling()
     } catch (error) {
       await handleFatalError(
         error instanceof Error ? `Failed to start recording: ${error.message}` : 'Failed to start recording',
       )
     }
-  }, [appendEvent, enqueueChunk, handleFatalError, isRecording, language])
+  }, [logEvent, enqueueChunk, handleFatalError, isRecording, language, startTranscriptPolling])
 
   const stopRecording = useCallback(async () => {
     if (!isRecording && !sessionIdRef.current) {
@@ -273,10 +338,11 @@ function App() {
     cleanupAudioGraph()
     chunkQueueRef.current = []
     sentSamplesRef.current = 0
+    clearTranscriptPolling()
     setIsRecording(false)
     await finalizeSession()
     setStatus('Idle')
-  }, [cleanupAudioGraph, finalizeSession, isRecording])
+  }, [cleanupAudioGraph, clearTranscriptPolling, finalizeSession, isRecording])
 
   useEffect(() => {
     stopRecordingRef.current = stopRecording
@@ -287,8 +353,9 @@ function App() {
     return () => {
       destroyedRef.current = true
       void stopRecordingRef.current()
+      clearTranscriptPolling()
     }
-  }, [])
+  }, [clearTranscriptPolling])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
@@ -390,14 +457,26 @@ function App() {
           </CardHeader>
           <CardContent>
             <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-6 min-h-[220px] text-left overflow-y-auto">
-              {events.length === 0 ? (
+              {transcriptError ? (
+                <p className="text-rose-500 dark:text-rose-400 text-center">
+                  Failed to load transcripts: {transcriptError}
+                </p>
+              ) : transcripts.length === 0 ? (
                 <p className="text-slate-500 dark:text-slate-400 text-center">
-                  No activity yet. Start recording to stream audio.
+                  No transcripts yet. Start recording to stream audio.
                 </p>
               ) : (
-                <ul className="space-y-2 text-sm font-mono text-slate-700 dark:text-slate-200">
-                  {events.map((event, idx) => (
-                    <li key={`${event}-${idx}`}>{event}</li>
+                <ul className="space-y-3 text-sm text-slate-800 dark:text-slate-100">
+                  {transcripts.map((row) => (
+                    <li
+                      key={row.id}
+                      className="rounded-md border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-800/80"
+                    >
+                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        #{row.id} · {formatTimestamp(row.timestamp)}
+                      </div>
+                      <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-200">{row.content}</p>
+                    </li>
                   ))}
                 </ul>
               )}

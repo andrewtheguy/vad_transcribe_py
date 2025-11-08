@@ -105,6 +105,66 @@ def create_app(dev_mode: bool = False) -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found")
         return {"status": "stopped", "session_id": session_id}
 
+    @app.get("/api/transcribe/stream/{session_id}/transcripts")
+    async def fetch_transcripts(
+        session_id: str,
+        limit: int = Query(1000, ge=1, le=2000, description="Max number of transcripts to return"),
+    ):
+        """Return up to `limit` transcripts; if more exist, return the latest ones for the session."""
+        session = streaming_sessions.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found or no longer active")
+
+        if not os.environ.get("DATABASE_URL"):
+            raise HTTPException(status_code=503, detail="Database not configured")
+
+        if session.first_transcript_id is None:
+            return {"first_id": None, "transcripts": []}
+
+        latest_id = None
+        start_id = session.first_transcript_id
+
+        try:
+            with connect_to_database() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        '''
+                        SELECT MAX(id) FROM transcripts
+                        WHERE show_name = %s AND id >= %s
+                        ''',
+                        ("web_recording", session.first_transcript_id),
+                    )
+                    max_row = cur.fetchone()
+                    if not max_row or max_row[0] is None:
+                        return {"first_id": session.first_transcript_id, "transcripts": []}
+
+                    latest_id = max_row[0]
+                    start_id = max(session.first_transcript_id, latest_id - limit + 1)
+
+                    cur.execute(
+                        '''
+                        SELECT id, "timestamp", content
+                        FROM transcripts
+                        WHERE show_name = %s AND id BETWEEN %s AND %s
+                        ORDER BY id ASC
+                        ''',
+                        ("web_recording", start_id, latest_id),
+                    )
+                    rows = cur.fetchall()
+        except Exception as exc:
+            logger.error("Failed to fetch transcripts for session %s: %s", session_id, exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to fetch transcripts") from exc
+
+        return {
+            "first_id": session.first_transcript_id,
+            "latest_id": latest_id,
+            "start_id": start_id,
+            "transcripts": [
+                {"id": row[0], "timestamp": row[1].isoformat(), "content": row[2]}
+                for row in rows
+            ],
+        }
+
     @app.get("/api/sessions")
     async def list_sessions():
         """Placeholder: Get list of transcription sessions."""

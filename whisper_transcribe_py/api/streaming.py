@@ -44,6 +44,7 @@ class StreamingSession:
     last_activity: float = field(default_factory=time.time)
     transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None
     persistence_cleanup: Optional[Callable[[], None]] = None
+    first_transcript_id: Optional[int] = None
 
     def ensure_running(self) -> None:
         if self.detector is not None:
@@ -119,9 +120,18 @@ class StreamingSessionManager:
             session_id=session_id,
             language=language,
             input_sample_rate=sample_rate,
-            transcript_persistence_callback=persistence_callback,
             persistence_cleanup=cleanup_callback,
         )
+
+        if persistence_callback is not None:
+            def _wrapped(segment, *, _session=session, _writer=persistence_callback):
+                inserted_id = _writer(segment)
+                if inserted_id is not None and _session.first_transcript_id is None:
+                    _session.first_transcript_id = inserted_id
+                return inserted_id
+
+            session.transcript_persistence_callback = _wrapped
+
         self._sessions[session_id] = session
         session.ensure_running()
         return session
@@ -169,6 +179,10 @@ class StreamingSessionManager:
         session.close()
         self._revoked_session_ids.add(session_id)
         return True
+
+    def get_session(self, session_id: str) -> Optional[StreamingSession]:
+        with self._lock:
+            return self._sessions.get(session_id)
 
     def cleanup_inactive(self, ttl_seconds: float = 300.0) -> None:
         """Remove idle sessions to avoid leaking resources."""
