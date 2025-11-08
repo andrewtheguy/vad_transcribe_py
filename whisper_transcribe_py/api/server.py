@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,20 @@ from whisper_transcribe_py.db import build_database_writer, connect_to_database
 from whisper_transcribe_py.speech_detector import pcm_s16le_to_float32
 
 logger = logging.getLogger(__name__)
+
+
+def to_utc_isoformat(dt: Optional[datetime]) -> Optional[str]:
+    """Convert a naive datetime to UTC-aware ISO format string.
+
+    Database stores timestamps without timezone info, but they are conceptually UTC.
+    This function ensures the returned ISO string explicitly indicates UTC timezone.
+    """
+    if dt is None:
+        return None
+    # If datetime is naive, treat it as UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 def create_app(dev_mode: bool = False) -> FastAPI:
@@ -164,7 +179,7 @@ def create_app(dev_mode: bool = False) -> FastAPI:
             "latest_id": latest_id,
             "start_id": start_id,
             "transcripts": [
-                {"id": row[0], "timestamp": row[1].isoformat(), "content": row[2]}
+                {"id": row[0], "timestamp": to_utc_isoformat(row[1]), "content": row[2]}
                 for row in rows
             ],
         }
@@ -211,8 +226,8 @@ def create_app(dev_mode: bool = False) -> FastAPI:
                 {
                     "name": row[0],
                     "transcript_count": row[1],
-                    "latest_timestamp": row[2].isoformat() if row[2] else None,
-                    "earliest_timestamp": row[3].isoformat() if row[3] else None,
+                    "latest_timestamp": to_utc_isoformat(row[2]),
+                    "earliest_timestamp": to_utc_isoformat(row[3]),
                 }
                 for row in rows
             ]
@@ -269,7 +284,7 @@ def create_app(dev_mode: bool = False) -> FastAPI:
             "offset": offset,
             "limit": limit,
             "transcripts": [
-                {"id": row[0], "timestamp": row[1].isoformat(), "content": row[2]}
+                {"id": row[0], "timestamp": to_utc_isoformat(row[1]), "content": row[2]}
                 for row in rows
             ],
         }

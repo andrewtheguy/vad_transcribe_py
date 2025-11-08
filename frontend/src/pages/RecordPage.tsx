@@ -49,6 +49,11 @@ const getStoredLanguage = () => {
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
+/**
+ * Format a UTC ISO timestamp to local timezone string.
+ * Backend sends timestamps in UTC (ISO 8601 format with +00:00 or Z suffix).
+ * This function converts to the user's local timezone for display.
+ */
 const formatTimestamp = (iso: string) => {
   if (!iso) {
     return ''
@@ -57,7 +62,15 @@ const formatTimestamp = (iso: string) => {
   if (Number.isNaN(date.getTime())) {
     return iso
   }
-  return date.toLocaleString()
+  // Display in local timezone with date and time
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 
 const downsampleBuffer = (
