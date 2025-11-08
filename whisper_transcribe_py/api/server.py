@@ -27,6 +27,10 @@ def create_app(dev_mode: bool = False) -> FastAPI:
     Returns:
         Configured FastAPI application
     """
+    # Check environment variable for dev mode (used when factory=True in uvicorn)
+    if not dev_mode:
+        dev_mode = os.environ.get("WHISPER_DEV_MODE", "").lower() == "true"
+
     app = FastAPI(
         title="Whisper Transcribe API",
         description="AI-powered speech transcription with voice activity detection",
@@ -231,6 +235,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, dev: bool = False):
     import uvicorn
 
     if dev:
+        # Set environment variable so create_app knows we're in dev mode
+        os.environ["WHISPER_DEV_MODE"] = "true"
 
         # Use import string for reload to work
         uvicorn.run(
