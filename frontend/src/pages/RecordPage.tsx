@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, Square, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import workletUrl from '../workers/audio-processor.ts?worker&url'
 
 const TARGET_SAMPLE_RATE = 16_000
 const TRANSCRIPT_FETCH_LIMIT = 1000
@@ -47,8 +48,6 @@ const getStoredLanguage = () => {
   return isSupportedLanguage(stored) ? (stored as string) : DEFAULT_LANGUAGE
 }
 
-const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
-
 /**
  * Format a UTC ISO timestamp to local timezone string.
  * Backend sends timestamps in UTC (ISO 8601 format with +00:00 or Z suffix).
@@ -73,62 +72,6 @@ const formatTimestamp = (iso: string) => {
   })
 }
 
-const downsampleBuffer = (
-  input: Float32Array,
-  inputSampleRate: number,
-  targetSampleRate: number,
-): Float32Array => {
-  if (targetSampleRate === inputSampleRate) {
-    return input
-  }
-
-  if (targetSampleRate > inputSampleRate) {
-    // Handle the rare case where we must up-sample.
-    const ratio = targetSampleRate / inputSampleRate
-    const newLength = Math.floor(input.length * ratio)
-    const result = new Float32Array(newLength)
-    for (let i = 0; i < newLength; i += 1) {
-      const index = i / ratio
-      const low = Math.floor(index)
-      const high = Math.min(Math.ceil(index), input.length - 1)
-      const frac = index - low
-      result[i] = input[low] * (1 - frac) + input[high] * frac
-    }
-    return result
-  }
-
-  const ratio = inputSampleRate / targetSampleRate
-  const newLength = Math.floor(input.length / ratio)
-  const result = new Float32Array(newLength)
-  let offsetResult = 0
-  let offsetBuffer = 0
-
-  while (offsetResult < newLength) {
-    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
-    let accum = 0
-    let count = 0
-    for (let i = offsetBuffer; i < nextOffsetBuffer && i < input.length; i += 1) {
-      accum += input[i]
-      count += 1
-    }
-    result[offsetResult] = count > 0 ? accum / count : 0
-    offsetResult += 1
-    offsetBuffer = nextOffsetBuffer
-  }
-
-  return result
-}
-
-const floatTo16BitPCM = (input: Float32Array): ArrayBuffer => {
-  const buffer = new ArrayBuffer(input.length * 2)
-  const view = new DataView(buffer)
-  for (let i = 0; i < input.length; i += 1) {
-    const sample = clamp(input[i], -1, 1)
-    view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
-  }
-  return buffer
-}
-
 export default function RecordPage() {
   const [isRecording, setIsRecording] = useState(false)
   const [status, setStatus] = useState('Idle')
@@ -138,13 +81,11 @@ export default function RecordPage() {
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
 
   const audioContextRef = useRef<AudioContext | null>(null)
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null)
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const sessionIdRef = useRef<string | null>(null)
-  const sentSamplesRef = useRef(0)
   const chunkQueueRef = useRef<PendingChunk[]>([])
-  const pendingSamplesRef = useRef<Float32Array | null>(null)
   const flushingRef = useRef(false)
   const destroyedRef = useRef(false)
   const stopRecordingRef = useRef<() => Promise<void>>(async () => {})
@@ -168,10 +109,10 @@ export default function RecordPage() {
   }, [])
 
   const cleanupAudioGraph = useCallback(() => {
-    if (processorRef.current) {
-      processorRef.current.disconnect()
-      processorRef.current.onaudioprocess = null
-      processorRef.current = null
+    if (workletNodeRef.current) {
+      workletNodeRef.current.port.close()
+      workletNodeRef.current.disconnect()
+      workletNodeRef.current = null
     }
     if (sourceRef.current) {
       sourceRef.current.disconnect()
@@ -249,7 +190,6 @@ export default function RecordPage() {
       logEvent(message)
       cleanupAudioGraph()
       chunkQueueRef.current = []
-      sentSamplesRef.current = 0
       clearTranscriptPolling()
       setIsRecording(false)
       setStatus('Idle')
@@ -309,58 +249,6 @@ export default function RecordPage() {
     [flushQueue],
   )
 
-  const transmitChunkSamples = useCallback(
-    (samples: Float32Array) => {
-      if (!samples.length) {
-        return
-      }
-      const chunkStart = sentSamplesRef.current / TARGET_SAMPLE_RATE
-      sentSamplesRef.current += samples.length
-      const payload = floatTo16BitPCM(samples)
-      enqueueChunk({ start: chunkStart, payload })
-    },
-    [enqueueChunk],
-  )
-
-  const flushPendingSamples = useCallback(
-    (force = false) => {
-      let pending = pendingSamplesRef.current
-      if (!pending || pending.length === 0) {
-        pendingSamplesRef.current = pending
-        return
-      }
-      while (pending && pending.length >= TARGET_CHUNK_SAMPLES) {
-        const chunk = pending.slice(0, TARGET_CHUNK_SAMPLES)
-        transmitChunkSamples(chunk)
-        pending = pending.length > TARGET_CHUNK_SAMPLES ? pending.slice(TARGET_CHUNK_SAMPLES) : null
-      }
-      if (force && pending && pending.length) {
-        transmitChunkSamples(pending)
-        pending = null
-      }
-      pendingSamplesRef.current = pending
-    },
-    [transmitChunkSamples],
-  )
-
-  const queueSamplesForChunking = useCallback(
-    (samples: Float32Array) => {
-      if (!samples.length) {
-        return
-      }
-      if (!pendingSamplesRef.current || pendingSamplesRef.current.length === 0) {
-        pendingSamplesRef.current = samples
-      } else {
-        const merged = new Float32Array(pendingSamplesRef.current.length + samples.length)
-        merged.set(pendingSamplesRef.current)
-        merged.set(samples, pendingSamplesRef.current.length)
-        pendingSamplesRef.current = merged
-      }
-      flushPendingSamples()
-    },
-    [flushPendingSamples],
-  )
-
   const startRecording = useCallback(async () => {
     if (isRecording) {
       return
@@ -371,7 +259,16 @@ export default function RecordPage() {
     }
     setStatus('Requesting microphone…')
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Request stereo audio if available
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: { ideal: 2 }, // Prefer stereo if available
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
+
       const AudioContextCtor =
         window.AudioContext ||
         (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
@@ -379,31 +276,61 @@ export default function RecordPage() {
         throw new Error('Web Audio API is not supported in this browser')
       }
       const audioContext = new AudioContextCtor()
-      const source = audioContext.createMediaStreamSource(stream)
-      const processor = audioContext.createScriptProcessor(AUDIO_PROCESSOR_BUFFER_SIZE, 1, 1)
 
+      // Check for AudioWorklet support
+      if (!audioContext.audioWorklet) {
+        throw new Error(
+          'AudioWorklet is not supported in this browser. ' +
+          'Please use Chrome 66+, Firefox 76+, Safari 14.1+, or Edge 79+'
+        )
+      }
+
+      const source = audioContext.createMediaStreamSource(stream)
+
+      // Load the AudioWorklet processor
+      try {
+        await audioContext.audioWorklet.addModule(workletUrl)
+      } catch (error) {
+        console.error('Failed to load audio worklet:', error)
+        throw new Error('Failed to initialize audio processing')
+      }
+
+      // Create the AudioWorklet node
+      const workletNode = new AudioWorkletNode(audioContext, 'audio-processor', {
+        numberOfInputs: 1,
+        numberOfOutputs: 0,
+        channelCount: 2, // Allow stereo input
+        channelCountMode: 'max', // Accept max channels from source
+        processorOptions: {
+          targetSampleRate: TARGET_SAMPLE_RATE,
+          targetChunkSamples: TARGET_CHUNK_SAMPLES,
+        },
+      })
+
+      // Set up message handler for chunks from the worklet
+      workletNode.port.onmessage = (event) => {
+        const { type, chunk, start, message } = event.data
+
+        if (type === 'chunk') {
+          enqueueChunk({ start, payload: chunk })
+        } else if (type === 'error') {
+          console.error('[AudioWorklet] Error:', message)
+        }
+      }
+
+      // Store references
       audioContextRef.current = audioContext
       sourceRef.current = source
-      processorRef.current = processor
+      workletNodeRef.current = workletNode
       mediaStreamRef.current = stream
-      sentSamplesRef.current = 0
       chunkQueueRef.current = []
-      pendingSamplesRef.current = null
 
       const sessionId = crypto.randomUUID()
       sessionIdRef.current = sessionId
       setActiveSessionId(sessionId)
 
-      processor.onaudioprocess = (event) => {
-        const raw = event.inputBuffer.getChannelData(0)
-        const copy = new Float32Array(raw.length)
-        copy.set(raw)
-        const downsampled = downsampleBuffer(copy, audioContext.sampleRate, TARGET_SAMPLE_RATE)
-        queueSamplesForChunking(downsampled)
-      }
-
-      source.connect(processor)
-      processor.connect(audioContext.destination)
+      // Connect audio graph (no need to connect to destination)
+      source.connect(workletNode)
 
       setIsRecording(true)
       setStatus('Streaming audio to backend')
@@ -417,22 +344,20 @@ export default function RecordPage() {
         error instanceof Error ? `Failed to start recording: ${error.message}` : 'Failed to start recording',
       )
     }
-  }, [logEvent, queueSamplesForChunking, handleFatalError, isRecording, language, startTranscriptPolling])
+  }, [logEvent, enqueueChunk, handleFatalError, isRecording, startTranscriptPolling])
 
   const stopRecording = useCallback(async () => {
     if (!isRecording && !sessionIdRef.current) {
       return
     }
     setStatus('Stopping…')
-    flushPendingSamples(true)
     cleanupAudioGraph()
     chunkQueueRef.current = []
-    sentSamplesRef.current = 0
     clearTranscriptPolling()
     setIsRecording(false)
     await finalizeSession()
     setStatus('Idle')
-  }, [cleanupAudioGraph, clearTranscriptPolling, finalizeSession, flushPendingSamples, isRecording])
+  }, [cleanupAudioGraph, clearTranscriptPolling, finalizeSession, isRecording])
 
   useEffect(() => {
     stopRecordingRef.current = stopRecording
