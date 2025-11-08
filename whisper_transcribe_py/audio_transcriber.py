@@ -274,6 +274,8 @@ class QueueBacklogLimiter:
         self._last_logged_backlog_bucket: Optional[int] = None
         self._last_backlog_log_time = 0.0
         self._timestamp_consumed_seconds = 0.0
+        self._drop_callbacks: list[Callable[[Optional[float]], None]] = []
+        self._drop_notice_active = False
         if resume_seconds is not None:
             self.resume_seconds = max(0.0, resume_seconds)
         elif self.max_seconds:
@@ -312,10 +314,33 @@ class QueueBacklogLimiter:
             file=sys.stderr,
         )
 
+    def _estimate_next_chunk_timestamp_locked(self) -> Optional[float]:
+        if self._initial_timestamp is None:
+            return None
+        processing_estimate = self._initial_timestamp + self._dropped_seconds + self._timestamp_consumed_seconds
+        live_estimate = time.time() - self.current_seconds
+        estimate = max(processing_estimate, live_estimate)
+        return min(estimate, time.time())
+
+    def register_drop_callback(self, callback: Callable[[Optional[float]], None]) -> None:
+        if callback is None:
+            return
+        with self._lock:
+            self._drop_callbacks.append(callback)
+
+    def _notify_drop_start(self, timestamp: Optional[float], callbacks: list[Callable[[Optional[float]], None]]) -> None:
+        for callback in callbacks:
+            try:
+                callback(timestamp)
+            except Exception:
+                logging.exception("Drop notice callback failed for %s", self.source_label)
+
     def try_add(self, duration_seconds: float) -> bool:
         """Return True and account for the chunk if it fits under the cap."""
         if duration_seconds <= 0:
             return True
+        callbacks_to_notify: list[Callable[[Optional[float]], None]] = []
+        drop_notice_timestamp: Optional[float] = None
         with self._lock:
             if self._initial_timestamp is None:
                 self._initial_timestamp = time.time()
@@ -326,20 +351,28 @@ class QueueBacklogLimiter:
                 return False
             if self._drop_mode and self.current_seconds <= resume_threshold:
                 self._drop_mode = False
+                self._drop_notice_active = False
             if self.max_seconds is None or self.max_seconds <= 0:
                 self.current_seconds += duration_seconds
                 self._total_accounted_seconds += duration_seconds
                 self._log_backlog_state_locked()
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
+                if not self._drop_mode or not self._drop_notice_active:
+                    callbacks_to_notify = list(self._drop_callbacks)
+                    drop_notice_timestamp = self._estimate_next_chunk_timestamp_locked()
+                    self._drop_notice_active = True
                 self._drop_mode = True
                 self._dropped_seconds += duration_seconds
                 self._log_drop(duration_seconds)
-                return False
-            self.current_seconds += duration_seconds
-            self._total_accounted_seconds += duration_seconds
-            self._log_backlog_state_locked()
-            return True
+            else:
+                self.current_seconds += duration_seconds
+                self._total_accounted_seconds += duration_seconds
+                self._log_backlog_state_locked()
+                return True
+        if callbacks_to_notify:
+            self._notify_drop_start(drop_notice_timestamp, callbacks_to_notify)
+        return False
 
     def consume(self, duration_seconds: float) -> None:
         """Reduce the tracked backlog after a chunk has been processed."""
@@ -353,6 +386,7 @@ class QueueBacklogLimiter:
                 and self.current_seconds <= self.resume_seconds
             ):
                 self._drop_mode = False
+                self._drop_notice_active = False
             self._log_backlog_state_locked()
 
     def pending_chunk_start_timestamp(self) -> Optional[float]:
@@ -363,14 +397,7 @@ class QueueBacklogLimiter:
         """
 
         with self._lock:
-            if self._initial_timestamp is None:
-                return None
-            processing_estimate = (
-                self._initial_timestamp + self._dropped_seconds + self._timestamp_consumed_seconds
-            )
-            live_estimate = time.time() - self.current_seconds
-            estimate = max(processing_estimate, live_estimate)
-            return min(estimate, time.time())
+            return self._estimate_next_chunk_timestamp_locked()
 
     @property
     def dropped_seconds(self) -> float:
@@ -427,6 +454,8 @@ class AudioTranscriber:
         self.wall_clock_reference = wall_clock_reference
         self.queue_backlog_limiter = queue_backlog_limiter
         self._pending_silence_seconds = 0.0
+        if self.queue_backlog_limiter is not None:
+            self.queue_backlog_limiter.register_drop_callback(self._handle_drop_notice)
         #if transcribe_backend == "faster-whisper":
         #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
         #    #self._load_faster_whisper()
@@ -519,7 +548,6 @@ class AudioTranscriber:
             if queued_item is None:
                 #print("finished transcribing audio",file=sys.stderr)
                 break
-
             if isinstance(queued_item, AudioSegment):
                 audio = queued_item.audio
                 segment_offset = queued_item.start
@@ -561,7 +589,6 @@ class AudioTranscriber:
             if queued_item is None:
                 print("finished transcribing audio",file=sys.stderr)
                 break
-
             if isinstance(queued_item, AudioSegment):
                 audio = queued_item.audio
                 segment_offset = queued_item.start
@@ -637,6 +664,31 @@ class AudioTranscriber:
             )
         )
         self.vad_model.reset_states()
+
+    def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
+        self._emit_drop_notice(timestamp)
+
+    def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
+        ts_seconds = wall_clock_ts if wall_clock_ts is not None else time.time()
+        ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
+        relative_time = 0.0
+        if self.wall_clock_reference is not None:
+            relative_time = max(0.0, ts_seconds - self.wall_clock_reference)
+        text = "(transcript temporarily dropped)"
+        print(f"[{ts_dt} -> {ts_dt}] {text}")
+        if self.transcript_persistence_callback is not None:
+            segment_payload = TranscribedSegment(
+                show_name=self.show_name,
+                language=self.language,
+                text=text,
+                relative_start=relative_time,
+                relative_end=relative_time,
+                start_timestamp=ts_dt,
+                end_timestamp=ts_dt,
+            )
+            self.transcript_persistence_callback(segment_payload)
+        if self.segment_callback is not None:
+            self.segment_callback(start=relative_time, end=relative_time, text=text)
 
     def process_input(self,input_sample_rate):
 
