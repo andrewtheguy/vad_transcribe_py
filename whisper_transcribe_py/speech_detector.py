@@ -241,7 +241,16 @@ def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCall
 
 
 class QueueBacklogLimiter:
-    """Tracks approximate buffered audio duration for a queue."""
+    """
+    Tracks how much unprocessed audio (in seconds) is currently buffered so that
+    producers can shed load instead of letting queues grow without bound.
+
+    A limiter instance is typically shared between the code that places audio
+    chunks on a queue (see `stream_url_thread` or `MicRecorder`) and the
+    consumer (`SpeechDetector`). Producers call `try_add` before enqueuing a
+    chunk; if it returns `False` the chunk is dropped. Consumers call
+    `consume` after audio is processed to release the accounted time.
+    """
 
     def __init__(
             self,
@@ -254,6 +263,7 @@ class QueueBacklogLimiter:
         self._lock = threading.Lock()
 
     def try_add(self, duration_seconds: float) -> bool:
+        """Return True and account for the chunk if it fits under the cap."""
         if self.max_seconds is None or self.max_seconds <= 0 or duration_seconds <= 0:
             return True
         with self._lock:
@@ -268,6 +278,7 @@ class QueueBacklogLimiter:
             return True
 
     def consume(self, duration_seconds: float) -> None:
+        """Reduce the tracked backlog after a chunk has been processed."""
         if self.max_seconds is None or self.max_seconds <= 0 or duration_seconds <= 0:
             return
         with self._lock:
