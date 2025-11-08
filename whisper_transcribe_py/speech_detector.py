@@ -233,6 +233,41 @@ def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCall
 
     return _save
 
+
+def trim_audio_queue_backlog(
+        audio_queue: queue.Queue,
+        max_seconds: float,
+        approx_sample_rate: float,
+        source_label: str = "audio input",
+) -> None:
+    """Ensure the queue never buffers more than ``max_seconds`` of audio."""
+    if max_seconds is None or max_seconds <= 0:
+        return
+    approx_sr = approx_sample_rate or TARGET_SAMPLE_RATE
+    dropped = 0
+    total_seconds = 0.0
+
+    with audio_queue.mutex:
+        for item in audio_queue.queue:
+            if isinstance(item, AudioSegment) and item.audio is not None:
+                total_seconds += len(item.audio) / approx_sr
+
+        while total_seconds > max_seconds and audio_queue.queue:
+            oldest = audio_queue.queue[0]
+            if oldest is None:
+                break
+            oldest = audio_queue.queue.popleft()
+            if isinstance(oldest, AudioSegment) and oldest.audio is not None:
+                total_seconds -= len(oldest.audio) / approx_sr
+            dropped += 1
+
+    if dropped:
+        print(
+            f"Warning: dropped {dropped} buffered audio segment(s) from {source_label} queue "
+            f"to keep backlog under {int(max_seconds)} seconds.",
+            file=sys.stderr,
+        )
+
 class SpeechDetector:
     def __init__(
             self,
@@ -246,6 +281,7 @@ class SpeechDetector:
             timestamp_strategy: str = "wall_clock",
             n_threads: int = 1,
             stop_event: Optional[threading.Event] = None,
+            wall_clock_reference: Optional[float] = None,
     ):
         self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
@@ -261,6 +297,7 @@ class SpeechDetector:
         self.current_audio_offset = 0.0
         self.n_threads = n_threads
         self.stop_event = stop_event
+        self.wall_clock_reference = wall_clock_reference
         #if transcribe_backend == "faster-whisper":
         #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
         #    #self._load_faster_whisper()
@@ -366,7 +403,10 @@ class SpeechDetector:
             self.current_audio_offset = segment_offset
 
             if self.timestamp_strategy == "wall_clock":
-                self.ts_transcribe_start = time.time()
+                if self.wall_clock_reference is not None:
+                    self.ts_transcribe_start = self.wall_clock_reference + segment_offset
+                else:
+                    self.ts_transcribe_start = time.time()
             else:
                 self.ts_transcribe_start = segment_offset
 
@@ -391,7 +431,10 @@ class SpeechDetector:
             self.current_audio_offset = segment_offset
 
             if self.timestamp_strategy == "wall_clock":
-                self.ts_transcribe_start = time.time()
+                if self.wall_clock_reference is not None:
+                    self.ts_transcribe_start = self.wall_clock_reference + segment_offset
+                else:
+                    self.ts_transcribe_start = time.time()
             else:
                 self.ts_transcribe_start = segment_offset
 
@@ -525,7 +568,13 @@ class SpeechDetector:
         transcribing_thread.join()
 
 
-def stream_url_thread(url, audio_input_queue, stop_event=None):
+def stream_url_thread(
+        url,
+        audio_input_queue,
+        stop_event=None,
+        max_queue_seconds: Optional[float] = None,
+        queue_label: str = "stream",
+):
     ts = 0
     while True:
         if stop_event is not None and stop_event.is_set():
@@ -544,6 +593,13 @@ def stream_url_thread(url, audio_input_queue, stop_event=None):
                 if stop_event is not None and stop_event.is_set():
                     break
                 audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                if max_queue_seconds is not None:
+                    trim_audio_queue_backlog(
+                        audio_input_queue,
+                        max_queue_seconds=max_queue_seconds,
+                        approx_sample_rate=TARGET_SAMPLE_RATE,
+                        source_label=queue_label,
+                    )
                 #print("audio_input_queue size", audio_input_queue.qsize())
                 ts += len(audio) / TARGET_SAMPLE_RATE
         if stop_event is not None and stop_event.is_set():

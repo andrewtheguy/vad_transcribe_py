@@ -5,15 +5,16 @@ import queue
 import sys
 import threading
 import tomllib
+from typing import Optional
 
 from dotenv import load_dotenv
 
-import psycopg
 from silero_vad import (load_silero_vad)
 
 from whisper_transcribe_py.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     SpeechDetector, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment
 from whisper_transcribe_py.mic_recorder import MicRecorder
+from whisper_transcribe_py.db import build_database_writer, connect_to_database
 
 
 class JsonTranscriptWriter:
@@ -36,16 +37,7 @@ class JsonTranscriptWriter:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
 
 
-def build_database_writer(conn, show_name: str):
-    def _persist(segment: TranscribedSegment):
-        if segment.start_timestamp is None:
-            raise ValueError("Database writes require wall clock timestamps.")
-        with conn.cursor() as cur:
-            cur.execute(
-                '''INSERT INTO transcripts (show_name,"timestamp", content) VALUES (%s, %s, %s)''',
-                (show_name, segment.start_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f'), segment.text, ))
-
-    return _persist
+CLI_QUEUE_TIME_LIMIT_SECONDS = 60.0
 
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
@@ -67,8 +59,8 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                    stop_event=stop_event,
                    ).process_input(TARGET_SAMPLE_RATE)
 
-def process_mic(q,language, stop_event=None):
-    MicRecorder(q, stop_event=stop_event).record(language=language)
+def process_mic(q,language, stop_event=None, max_queue_seconds: Optional[float] = None):
+    MicRecorder(q, stop_event=stop_event, queue_time_limit_seconds=max_queue_seconds).record(language=language)
 
 
 def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
@@ -83,7 +75,7 @@ def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
 if __name__ == '__main__':
     load_dotenv()
     argparse = argparse.ArgumentParser()
-    argparse.add_argument('action', type=str, choices=['file','mic','config'])
+    argparse.add_argument('action', type=str, choices=['file','mic','config','web'])
     argparse.add_argument('--file', type=str, required=False)
     argparse.add_argument('--lang', type=str, required=False)
     argparse.add_argument('--config', type=str, required=False) # for url live streaming
@@ -91,9 +83,15 @@ if __name__ == '__main__':
     argparse.add_argument('--n-threads', type=int, required=False, default=1, help='Number of threads for whisper model (default: 1)')
     # https://absadiki.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
     argparse.add_argument('--model', type=str, required=False, default='large-v3-turbo', help='Whisper model name (default: large-v3-turbo)')
+    # Web server options
+    argparse.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
+    argparse.add_argument('--port', type=int, required=False, default=8000, help='Port to bind web server to (default: 8000)')
+    argparse.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
     args = argparse.parse_args()
 
-    vad_model = load_silero_vad()
+    # Skip loading VAD model for web action (it will be loaded on-demand if needed)
+    if args.action != 'web':
+        vad_model = load_silero_vad()
 
     if args.action == 'file':
         if not args.file:
@@ -157,7 +155,15 @@ if __name__ == '__main__':
     elif args.action == 'mic':
         audio_input_queue = queue.Queue()
         stop_event = threading.Event()
-        thread_transcribe = threading.Thread(target=process_mic, args=(audio_input_queue, args.lang, stop_event,))
+        thread_transcribe = threading.Thread(
+            target=process_mic,
+            kwargs={
+                'q': audio_input_queue,
+                'language': args.lang,
+                'stop_event': stop_event,
+                'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
+            },
+        )
 
         # Start the thread
         thread_transcribe.start()
@@ -181,12 +187,7 @@ if __name__ == '__main__':
             data = tomllib.load(f)
 
         # Connect to an existing database
-        db_timeout = int(os.environ.get('DATABASE_TIMEOUT', '10'))  # Default 10 seconds
-        with psycopg.connect(
-            os.environ['DATABASE_URL'],
-            autocommit=True,
-            connect_timeout=db_timeout
-        ) as conn:
+        with connect_to_database() as conn:
 
             # Open a cursor to perform database operations
             with conn.cursor() as cur:
@@ -227,7 +228,13 @@ if __name__ == '__main__':
 
             thread_streaming = threading.Thread(
                 target=stream_url_thread,
-                args=(url, audio_input_queue, stop_event,),
+                kwargs={
+                    'url': url,
+                    'audio_input_queue': audio_input_queue,
+                    'stop_event': stop_event,
+                    'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
+                    'queue_label': data.get('show_name', 'stream'),
+                },
                 daemon=True
             )
 
@@ -248,5 +255,15 @@ if __name__ == '__main__':
             thread_transcribe.join()
         print("thread_transcribe joined")
         #thread_streaming.join()
+    elif args.action == 'web':
+        from whisper_transcribe_py.api.server import run_server
+
+        print(f"Starting web server on {args.host}:{args.port}")
+        if args.dev:
+            print("Development mode enabled - CORS and hot reload active")
+            print("Frontend dev server: http://localhost:5173")
+        print(f"API server: http://{args.host}:{args.port}")
+
+        run_server(host=args.host, port=args.port, dev=args.dev)
     else:
         raise ValueError("Invalid action {}".format(args.action))
