@@ -262,6 +262,7 @@ class QueueBacklogLimiter:
             max_seconds: Optional[float],
             source_label: str = "audio input",
             initial_timestamp: Optional[float] = None,
+            resume_seconds: Optional[float] = None,
     ):
         self.max_seconds = max_seconds
         self.source_label = source_label
@@ -273,6 +274,13 @@ class QueueBacklogLimiter:
         self._last_logged_backlog_bucket: Optional[int] = None
         self._last_backlog_log_time = 0.0
         self._timestamp_consumed_seconds = 0.0
+        if resume_seconds is not None:
+            self.resume_seconds = max(0.0, resume_seconds)
+        elif self.max_seconds:
+            self.resume_seconds = min(self.max_seconds, 15.0)
+        else:
+            self.resume_seconds = 0.0
+        self._drop_mode = False
 
     def _log_backlog_state_locked(self) -> None:
         if self.max_seconds is None or self.max_seconds <= 0:
@@ -295,6 +303,15 @@ class QueueBacklogLimiter:
         self._last_logged_backlog_bucket = bucket
         self._last_backlog_log_time = now
 
+    def _log_drop(self, duration_seconds: float) -> None:
+        backlog_seconds = self.current_seconds
+        print(
+            f"Warning: dropping newest audio chunk from {self.source_label} queue "
+            f"to keep backlog under {int(self.max_seconds)} seconds "
+            f"(current backlog {backlog_seconds:.1f}s, chunk {duration_seconds:.2f}s).",
+            file=sys.stderr,
+        )
+
     def try_add(self, duration_seconds: float) -> bool:
         """Return True and account for the chunk if it fits under the cap."""
         if duration_seconds <= 0:
@@ -302,20 +319,22 @@ class QueueBacklogLimiter:
         with self._lock:
             if self._initial_timestamp is None:
                 self._initial_timestamp = time.time()
+            resume_threshold = self.resume_seconds if self.resume_seconds else 0.0
+            if resume_threshold > 0 and self._drop_mode and self.current_seconds > resume_threshold:
+                self._dropped_seconds += duration_seconds
+                self._log_drop(duration_seconds)
+                return False
+            if self._drop_mode and self.current_seconds <= resume_threshold:
+                self._drop_mode = False
             if self.max_seconds is None or self.max_seconds <= 0:
                 self.current_seconds += duration_seconds
                 self._total_accounted_seconds += duration_seconds
                 self._log_backlog_state_locked()
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
+                self._drop_mode = True
                 self._dropped_seconds += duration_seconds
-                backlog_seconds = self.current_seconds
-                print(
-                    f"Warning: dropping newest audio chunk from {self.source_label} queue "
-                    f"to keep backlog under {int(self.max_seconds)} seconds "
-                    f"(current backlog {backlog_seconds:.1f}s, chunk {duration_seconds:.2f}s).",
-                    file=sys.stderr,
-                )
+                self._log_drop(duration_seconds)
                 return False
             self.current_seconds += duration_seconds
             self._total_accounted_seconds += duration_seconds
@@ -328,6 +347,12 @@ class QueueBacklogLimiter:
             return
         with self._lock:
             self.current_seconds = max(0.0, self.current_seconds - duration_seconds)
+            if (
+                self._drop_mode
+                and self.resume_seconds
+                and self.current_seconds <= self.resume_seconds
+            ):
+                self._drop_mode = False
             self._log_backlog_state_locked()
 
     def pending_chunk_start_timestamp(self) -> Optional[float]:
