@@ -133,6 +133,8 @@ function App() {
   const destroyedRef = useRef(false)
   const stopRecordingRef = useRef<() => Promise<void>>(async () => {})
   const transcriptPollerRef = useRef<number | null>(null)
+  const transcriptContainerRef = useRef<HTMLDivElement | null>(null)
+  const userScrolledUpRef = useRef(false)
 
   useEffect(() => {
     if (!isSupportedLanguage(language)) {
@@ -345,6 +347,7 @@ function App() {
       logEvent(`Session ${sessionId} started`)
       setTranscripts([])
       setTranscriptError(null)
+      userScrolledUpRef.current = false
       startTranscriptPolling()
     } catch (error) {
       await handleFatalError(
@@ -379,6 +382,31 @@ function App() {
       clearTranscriptPolling()
     }
   }, [clearTranscriptPolling])
+
+  // Auto-scroll to bottom when new transcripts arrive (unless user scrolled up)
+  useEffect(() => {
+    const container = transcriptContainerRef.current
+    if (!container || transcripts.length === 0) {
+      return
+    }
+
+    // Only auto-scroll if user hasn't manually scrolled up
+    if (!userScrolledUpRef.current) {
+      container.scrollTop = container.scrollHeight
+    }
+  }, [transcripts])
+
+  // Track user scroll behavior
+  const handleScroll = useCallback(() => {
+    const container = transcriptContainerRef.current
+    if (!container) {
+      return
+    }
+
+    // Check if user is near the bottom (within 50px)
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50
+    userScrolledUpRef.current = !isNearBottom
+  }, [])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
@@ -479,7 +507,11 @@ function App() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 min-h-[220px] max-h-[500px] text-left overflow-y-auto">
+            <div
+              ref={transcriptContainerRef}
+              onScroll={handleScroll}
+              className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 min-h-[220px] max-h-[500px] text-left overflow-y-auto"
+            >
               {transcriptError ? (
                 <p className="text-rose-500 dark:text-rose-400 text-center">
                   Failed to load transcripts: {transcriptError}
