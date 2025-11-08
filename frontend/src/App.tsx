@@ -1,8 +1,289 @@
-import { Mic, FileText } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Mic, Square, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
+const TARGET_SAMPLE_RATE = 16_000
+const LANGUAGE = 'en'
+const API_BASE =
+  (
+    (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+    (import.meta.env.VITE_API_BASE as string | undefined) ??
+    ''
+  ).replace(/\/$/, '')
+
+type PendingChunk = {
+  start: number
+  payload: ArrayBuffer
+}
+
+const apiUrl = (path: string) => `${API_BASE}${path}`
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+
+const downsampleBuffer = (
+  input: Float32Array,
+  inputSampleRate: number,
+  targetSampleRate: number,
+): Float32Array => {
+  if (targetSampleRate === inputSampleRate) {
+    return input
+  }
+
+  if (targetSampleRate > inputSampleRate) {
+    // Handle the rare case where we must up-sample.
+    const ratio = targetSampleRate / inputSampleRate
+    const newLength = Math.floor(input.length * ratio)
+    const result = new Float32Array(newLength)
+    for (let i = 0; i < newLength; i += 1) {
+      const index = i / ratio
+      const low = Math.floor(index)
+      const high = Math.min(Math.ceil(index), input.length - 1)
+      const frac = index - low
+      result[i] = input[low] * (1 - frac) + input[high] * frac
+    }
+    return result
+  }
+
+  const ratio = inputSampleRate / targetSampleRate
+  const newLength = Math.floor(input.length / ratio)
+  const result = new Float32Array(newLength)
+  let offsetResult = 0
+  let offsetBuffer = 0
+
+  while (offsetResult < newLength) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
+    let accum = 0
+    let count = 0
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < input.length; i += 1) {
+      accum += input[i]
+      count += 1
+    }
+    result[offsetResult] = count > 0 ? accum / count : 0
+    offsetResult += 1
+    offsetBuffer = nextOffsetBuffer
+  }
+
+  return result
+}
+
+const floatTo16BitPCM = (input: Float32Array): ArrayBuffer => {
+  const buffer = new ArrayBuffer(input.length * 2)
+  const view = new DataView(buffer)
+  for (let i = 0; i < input.length; i += 1) {
+    const sample = clamp(input[i], -1, 1)
+    view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+  }
+  return buffer
+}
+
 function App() {
+  const [isRecording, setIsRecording] = useState(false)
+  const [status, setStatus] = useState('Idle')
+  const [events, setEvents] = useState<string[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
+  const sentSamplesRef = useRef(0)
+  const chunkQueueRef = useRef<PendingChunk[]>([])
+  const flushingRef = useRef(false)
+  const destroyedRef = useRef(false)
+  const stopRecordingRef = useRef<() => Promise<void>>(async () => {})
+
+  const appendEvent = useCallback((message: string) => {
+    setEvents((prev) => {
+      const next = [`${new Date().toLocaleTimeString()} — ${message}`, ...prev]
+      return next.slice(0, 30)
+    })
+  }, [])
+
+  const cleanupAudioGraph = useCallback(() => {
+    if (processorRef.current) {
+      processorRef.current.disconnect()
+      processorRef.current.onaudioprocess = null
+      processorRef.current = null
+    }
+    if (sourceRef.current) {
+      sourceRef.current.disconnect()
+      sourceRef.current = null
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => undefined)
+      audioContextRef.current = null
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop())
+      mediaStreamRef.current = null
+    }
+  }, [])
+
+  const finalizeSession = useCallback(async () => {
+    const sessionId = sessionIdRef.current
+    sessionIdRef.current = null
+    setActiveSessionId(null)
+    if (!sessionId) {
+      return
+    }
+    try {
+      await fetch(apiUrl(`/api/transcribe/stream/${sessionId}`), { method: 'DELETE' })
+      appendEvent(`Session ${sessionId} closed`)
+    } catch (_err) {
+      appendEvent(`Session ${sessionId} closed locally (DELETE failed)`)
+    }
+  }, [appendEvent])
+
+  const handleFatalError = useCallback(
+    async (message: string) => {
+      appendEvent(message)
+      cleanupAudioGraph()
+      chunkQueueRef.current = []
+      sentSamplesRef.current = 0
+      setIsRecording(false)
+      setStatus('Idle')
+      await finalizeSession()
+    },
+    [appendEvent, cleanupAudioGraph, finalizeSession],
+  )
+
+  const flushQueue = useCallback(async () => {
+    if (flushingRef.current || destroyedRef.current) {
+      return
+    }
+    flushingRef.current = true
+    while (chunkQueueRef.current.length > 0) {
+      const sessionId = sessionIdRef.current
+      if (!sessionId) {
+        chunkQueueRef.current = []
+        break
+      }
+      const chunk = chunkQueueRef.current.shift()!
+      const params = new URLSearchParams({
+        session_id: sessionId,
+        start: chunk.start.toString(),
+        sample_rate: TARGET_SAMPLE_RATE.toString(),
+        language: LANGUAGE,
+      })
+      try {
+        const response = await fetch(apiUrl(`/api/transcribe/stream?${params.toString()}`), {
+          method: 'POST',
+          body: chunk.payload,
+          headers: {
+            'Content-Type': 'application/octet-stream',
+          },
+        })
+        if (!response.ok) {
+          const detail = await response.text()
+          throw new Error(detail || `Server responded with ${response.status}`)
+        }
+        appendEvent(
+          `Chunk @ ${chunk.start.toFixed(2)}s • ${(chunk.payload.byteLength / 2).toLocaleString()} samples`,
+        )
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown error while streaming audio chunk'
+        await handleFatalError(`Streaming halted: ${message}`)
+        break
+      }
+    }
+    flushingRef.current = false
+  }, [appendEvent, handleFatalError])
+
+  const enqueueChunk = useCallback(
+    (chunk: PendingChunk) => {
+      chunkQueueRef.current.push(chunk)
+      void flushQueue()
+    },
+    [flushQueue],
+  )
+
+  const startRecording = useCallback(async () => {
+    if (isRecording) {
+      return
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      appendEvent('Media devices API is not available in this browser')
+      return
+    }
+    setStatus('Requesting microphone…')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const AudioContextCtor =
+        window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!AudioContextCtor) {
+        throw new Error('Web Audio API is not supported in this browser')
+      }
+      const audioContext = new AudioContextCtor()
+      const source = audioContext.createMediaStreamSource(stream)
+      const processor = audioContext.createScriptProcessor(4096, 1, 1)
+
+      audioContextRef.current = audioContext
+      sourceRef.current = source
+      processorRef.current = processor
+      mediaStreamRef.current = stream
+      sentSamplesRef.current = 0
+      chunkQueueRef.current = []
+
+      const sessionId = crypto.randomUUID()
+      sessionIdRef.current = sessionId
+      setActiveSessionId(sessionId)
+
+      processor.onaudioprocess = (event) => {
+        const raw = event.inputBuffer.getChannelData(0)
+        const copy = new Float32Array(raw.length)
+        copy.set(raw)
+        const downsampled = downsampleBuffer(copy, audioContext.sampleRate, TARGET_SAMPLE_RATE)
+        if (!downsampled.length) {
+          return
+        }
+        const chunkStart = sentSamplesRef.current / TARGET_SAMPLE_RATE
+        sentSamplesRef.current += downsampled.length
+        const payload = floatTo16BitPCM(downsampled)
+        enqueueChunk({ start: chunkStart, payload })
+      }
+
+      source.connect(processor)
+      processor.connect(audioContext.destination)
+
+      setIsRecording(true)
+      setStatus('Streaming audio to backend')
+      appendEvent(`Session ${sessionId} started`)
+    } catch (error) {
+      await handleFatalError(
+        error instanceof Error ? `Failed to start recording: ${error.message}` : 'Failed to start recording',
+      )
+    }
+  }, [appendEvent, enqueueChunk, handleFatalError, isRecording])
+
+  const stopRecording = useCallback(async () => {
+    if (!isRecording && !sessionIdRef.current) {
+      return
+    }
+    setStatus('Stopping…')
+    cleanupAudioGraph()
+    chunkQueueRef.current = []
+    sentSamplesRef.current = 0
+    setIsRecording(false)
+    await finalizeSession()
+    setStatus('Idle')
+  }, [cleanupAudioGraph, finalizeSession, isRecording])
+
+  useEffect(() => {
+    stopRecordingRef.current = stopRecording
+  }, [stopRecording])
+
+  useEffect(() => {
+    destroyedRef.current = false
+    return () => {
+      destroyedRef.current = true
+      void stopRecordingRef.current()
+    }
+  }, [])
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -26,18 +307,50 @@ function App() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="text-center py-12">
+            <div className="text-center py-8">
               <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-slate-100 dark:bg-slate-800 mb-6">
-                <Mic className="w-12 h-12 text-slate-600 dark:text-slate-400" />
+                {isRecording ? (
+                  <Square className="w-12 h-12 text-rose-500" />
+                ) : (
+                  <Mic className="w-12 h-12 text-slate-600 dark:text-slate-400" />
+                )}
               </div>
               <p className="text-slate-600 dark:text-slate-400 mb-8 max-w-md mx-auto">
-                Click the button below to start recording from your microphone.
-                Transcriptions will appear in real-time as you speak.
+                {isRecording
+                  ? 'Recording in progress. Audio is down-sampled to 16 kHz in the browser and streamed to the backend.'
+                  : 'Click the button below to start recording from your microphone. Audio will be resampled client-side.'}
               </p>
-              <Button disabled size="lg" className="px-8">
-                <Mic className="w-5 h-5 mr-2" />
-                Start Recording (Coming Soon)
-              </Button>
+              <div className="flex flex-col items-center gap-4">
+                <Button
+                  size="lg"
+                  className="px-8"
+                  variant={isRecording ? 'destructive' : 'default'}
+                  onClick={isRecording ? () => void stopRecording() : () => void startRecording()}
+                >
+                  {isRecording ? (
+                    <>
+                      <Square className="w-5 h-5 mr-2" />
+                      Stop Recording
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-5 h-5 mr-2" />
+                      Start Recording
+                    </>
+                  )}
+                </Button>
+                <div className="text-sm text-slate-500 dark:text-slate-400 text-center">
+                  Status: <span className="font-medium">{status}</span>
+                  {activeSessionId ? (
+                    <div className="mt-1 break-all">
+                      Session ID:{' '}
+                      <span className="font-mono text-xs text-slate-600 dark:text-slate-300">
+                        {activeSessionId}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -49,14 +362,22 @@ function App() {
               Transcription Results
             </CardTitle>
             <CardDescription>
-              Your transcriptions will appear here in real-time
+              Audio chunks stream to the backend; transcriptions currently print on the server console
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-8 min-h-[200px] text-center flex items-center justify-center">
-              <p className="text-slate-500 dark:text-slate-400">
-                No transcriptions yet. Start recording to see results.
-              </p>
+            <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-6 min-h-[220px] text-left overflow-y-auto">
+              {events.length === 0 ? (
+                <p className="text-slate-500 dark:text-slate-400 text-center">
+                  No activity yet. Start recording to stream audio.
+                </p>
+              ) : (
+                <ul className="space-y-2 text-sm font-mono text-slate-700 dark:text-slate-200">
+                  {events.map((event, idx) => (
+                    <li key={`${event}-${idx}`}>{event}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           </CardContent>
         </Card>

@@ -246,6 +246,7 @@ class SpeechDetector:
             timestamp_strategy: str = "wall_clock",
             n_threads: int = 1,
             stop_event: Optional[threading.Event] = None,
+            wall_clock_reference: Optional[float] = None,
     ):
         self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
@@ -261,6 +262,7 @@ class SpeechDetector:
         self.current_audio_offset = 0.0
         self.n_threads = n_threads
         self.stop_event = stop_event
+        self.wall_clock_reference = wall_clock_reference
         #if transcribe_backend == "faster-whisper":
         #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
         #    #self._load_faster_whisper()
@@ -366,7 +368,10 @@ class SpeechDetector:
             self.current_audio_offset = segment_offset
 
             if self.timestamp_strategy == "wall_clock":
-                self.ts_transcribe_start = time.time()
+                if self.wall_clock_reference is not None:
+                    self.ts_transcribe_start = self.wall_clock_reference + segment_offset
+                else:
+                    self.ts_transcribe_start = time.time()
             else:
                 self.ts_transcribe_start = segment_offset
 
@@ -391,7 +396,10 @@ class SpeechDetector:
             self.current_audio_offset = segment_offset
 
             if self.timestamp_strategy == "wall_clock":
-                self.ts_transcribe_start = time.time()
+                if self.wall_clock_reference is not None:
+                    self.ts_transcribe_start = self.wall_clock_reference + segment_offset
+                else:
+                    self.ts_transcribe_start = time.time()
             else:
                 self.ts_transcribe_start = segment_offset
 

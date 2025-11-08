@@ -1,13 +1,17 @@
 """FastAPI server for Whisper Transcribe web interface."""
 
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+
+from whisper_transcribe_py.api.streaming import SessionRevokedError, streaming_sessions
+from whisper_transcribe_py.speech_detector import pcm_s16le_to_float32
 
 
 def create_app(dev_mode: bool = False) -> FastAPI:
@@ -50,13 +54,49 @@ def create_app(dev_mode: bool = False) -> FastAPI:
             detail="File transcription not yet implemented"
         )
 
-    @app.websocket("/api/transcribe/stream")
-    async def transcribe_stream():
-        """Placeholder: WebSocket endpoint for streaming audio transcription."""
-        raise HTTPException(
-            status_code=501,
-            detail="Streaming transcription not yet implemented"
-        )
+    @app.post("/api/transcribe/stream")
+    async def ingest_audio_chunk(
+        request: Request,
+        session_id: str = Query(..., description="Client provided session identifier"),
+        start: float = Query(..., description="Relative start timestamp (seconds) for this chunk"),
+        sample_rate: int = Query(16000, gt=0, description="Sample rate of the provided audio"),
+        language: str = Query("en", description="Language code for transcription"),
+    ):
+        """Accept a small PCM chunk and enqueue it for transcription."""
+        payload = await request.body()
+        if not payload:
+            raise HTTPException(status_code=400, detail="Audio chunk is empty")
+        if len(payload) % 2 != 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Audio chunk length must align to 16-bit samples",
+            )
+
+        try:
+            session = streaming_sessions.get_or_create(
+                session_id=session_id,
+                language=language,
+                sample_rate=sample_rate,
+            )
+        except SessionRevokedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        audio = pcm_s16le_to_float32(payload)
+        approx_reference = max(time.time() - max(start, 0.0), 0.0)
+        session.enqueue(audio=audio, start_ts=start, approx_wall_clock=approx_reference)
+
+        return {
+            "status": "queued",
+            "session_id": session_id,
+            "samples": len(audio),
+        }
+
+    @app.delete("/api/transcribe/stream/{session_id}")
+    async def stop_stream(session_id: str):
+        """Stop an active streaming transcription session."""
+        if not streaming_sessions.stop(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"status": "stopped", "session_id": session_id}
 
     @app.get("/api/sessions")
     async def list_sessions():
