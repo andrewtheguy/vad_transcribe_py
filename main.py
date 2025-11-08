@@ -83,7 +83,7 @@ def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
 if __name__ == '__main__':
     load_dotenv()
     argparse = argparse.ArgumentParser()
-    argparse.add_argument('action', type=str, choices=['file','mic','config'])
+    argparse.add_argument('action', type=str, choices=['file','mic','config','web'])
     argparse.add_argument('--file', type=str, required=False)
     argparse.add_argument('--lang', type=str, required=False)
     argparse.add_argument('--config', type=str, required=False) # for url live streaming
@@ -91,9 +91,15 @@ if __name__ == '__main__':
     argparse.add_argument('--n-threads', type=int, required=False, default=1, help='Number of threads for whisper model (default: 1)')
     # https://absadiki.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
     argparse.add_argument('--model', type=str, required=False, default='large-v3-turbo', help='Whisper model name (default: large-v3-turbo)')
+    # Web server options
+    argparse.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
+    argparse.add_argument('--port', type=int, required=False, default=8000, help='Port to bind web server to (default: 8000)')
+    argparse.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
     args = argparse.parse_args()
 
-    vad_model = load_silero_vad()
+    # Skip loading VAD model for web action (it will be loaded on-demand if needed)
+    if args.action != 'web':
+        vad_model = load_silero_vad()
 
     if args.action == 'file':
         if not args.file:
@@ -248,5 +254,15 @@ if __name__ == '__main__':
             thread_transcribe.join()
         print("thread_transcribe joined")
         #thread_streaming.join()
+    elif args.action == 'web':
+        from whisper_transcribe_py.api.server import run_server
+
+        print(f"Starting web server on {args.host}:{args.port}")
+        if args.dev:
+            print("Development mode enabled - CORS and hot reload active")
+            print("Frontend dev server: http://localhost:5173")
+        print(f"API server: http://{args.host}:{args.port}")
+
+        run_server(host=args.host, port=args.port, dev=args.dev)
     else:
         raise ValueError("Invalid action {}".format(args.action))
