@@ -384,7 +384,7 @@ class AudioTranscriber:
         self.stop_event = stop_event
         self.wall_clock_reference = wall_clock_reference
         self.queue_backlog_limiter = queue_backlog_limiter
-        self._limiter_processed_offset = 0.0
+        self._pending_silence_seconds = 0.0
         #if transcribe_backend == "faster-whisper":
         #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
         #    #self._load_faster_whisper()
@@ -504,9 +504,12 @@ class AudioTranscriber:
                 segment_duration_seconds = queued_item.duration_seconds
             if segment_duration_seconds is None and audio is not None:
                 segment_duration_seconds = len(audio) / TARGET_SAMPLE_RATE
-            if segment_duration_seconds is not None:
-                segment_end_offset = segment_offset + segment_duration_seconds
-                self._release_limiter_up_to(segment_end_offset)
+            if (
+                    self.queue_backlog_limiter is not None
+                    and segment_duration_seconds is not None
+                    and segment_duration_seconds > 0
+            ):
+                self.queue_backlog_limiter.consume(segment_duration_seconds)
 
 
     def _transcribe_faster_whisper(self):
@@ -566,9 +569,12 @@ class AudioTranscriber:
                 segment_duration_seconds = queued_item.duration_seconds
             if segment_duration_seconds is None and audio is not None:
                 segment_duration_seconds = len(audio) / TARGET_SAMPLE_RATE
-            if segment_duration_seconds is not None:
-                segment_end_offset = segment_offset + segment_duration_seconds
-                self._release_limiter_up_to(segment_end_offset)
+            if (
+                    self.queue_backlog_limiter is not None
+                    and segment_duration_seconds is not None
+                    and segment_duration_seconds > 0
+            ):
+                self.queue_backlog_limiter.consume(segment_duration_seconds)
 
 
     def _process_end_of_speech(self, speech_section, last_has_speech_ts, wall_clock_start):
@@ -589,16 +595,6 @@ class AudioTranscriber:
             )
         )
         self.vad_model.reset_states()
-
-    def _release_limiter_up_to(self, target_offset: Optional[float]) -> None:
-        if self.queue_backlog_limiter is None or target_offset is None:
-            return
-        delta = target_offset - self._limiter_processed_offset
-        if delta <= 0:
-            return
-        self.queue_backlog_limiter.consume(delta)
-        self._limiter_processed_offset = target_offset
-
 
     def process_input(self,input_sample_rate):
 
@@ -670,10 +666,6 @@ class AudioTranscriber:
                 arr = buffer[:window_size_samples]
                 buffer = buffer[window_size_samples:]
                 data_slice = np.asarray(arr)
-                window_start = ts
-                window_end = None
-                if window_start is not None:
-                    window_end = window_start + window_seconds
                 #ts += window_size_samples / TARGET_SAMPLE_RATE
                 #if len(data_slice) != window_size_samples:
                 #    raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
@@ -687,9 +679,16 @@ class AudioTranscriber:
                         if prev_slice is not None:
                             speech_section.extend(prev_slice)
                             prev_slice = None
+                            self._pending_silence_seconds = 0.0
                         speech_section.extend(data_slice)
                     else:
                         #print("still no speech",ts,file=sys.stderr)
+                        if self.queue_backlog_limiter is not None:
+                            if self._pending_silence_seconds > 0:
+                                self.queue_backlog_limiter.consume(self._pending_silence_seconds)
+                            self._pending_silence_seconds = window_seconds
+                        else:
+                            self._pending_silence_seconds = window_seconds
                         prev_slice = data_slice
                 else:
                     if seconds > max_speech_seconds:
@@ -714,9 +713,6 @@ class AudioTranscriber:
                         has_speech_begin_wall_clock = None
                         prev_slice = None
 
-                if has_speech_begin_timestamp is None and not has_speech and window_end is not None:
-                    self._release_limiter_up_to(window_end)
-
                 prev_has_speech = has_speech
 
                 if ts is not None:
@@ -728,6 +724,10 @@ class AudioTranscriber:
 
         if len(speech_section) > 0 and not stop_requested:
             self._process_end_of_speech(speech_section, has_speech_begin_timestamp, has_speech_begin_wall_clock)
+
+        if self.queue_backlog_limiter and self._pending_silence_seconds > 0:
+            self.queue_backlog_limiter.consume(self._pending_silence_seconds)
+            self._pending_silence_seconds = 0.0
 
         if stop_requested:
             # Drop any queued-but-unprocessed transcribe work so shutdown is fast
