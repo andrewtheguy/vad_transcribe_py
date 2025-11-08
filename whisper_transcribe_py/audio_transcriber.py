@@ -222,6 +222,11 @@ class AudioSegment:
 
 
 @dataclass
+class DropNotice:
+    timestamp: Optional[float]
+
+
+@dataclass
 class TranscribedSegment:
     show_name: str
     language: str
@@ -554,6 +559,9 @@ class AudioTranscriber:
             if queued_item is None:
                 #print("finished transcribing audio",file=sys.stderr)
                 break
+            if isinstance(queued_item, DropNotice):
+                self._emit_drop_notice(queued_item.timestamp)
+                continue
             if isinstance(queued_item, AudioSegment):
                 audio = queued_item.audio
                 segment_offset = queued_item.start
@@ -595,6 +603,9 @@ class AudioTranscriber:
             if queued_item is None:
                 print("finished transcribing audio",file=sys.stderr)
                 break
+            if isinstance(queued_item, DropNotice):
+                self._emit_drop_notice(queued_item.timestamp)
+                continue
             if isinstance(queued_item, AudioSegment):
                 audio = queued_item.audio
                 segment_offset = queued_item.start
@@ -672,12 +683,15 @@ class AudioTranscriber:
         self.vad_model.reset_states()
 
     def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
-        self._emit_drop_notice(timestamp)
-
-    def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = self._last_transcript_wall_clock
         if ts_seconds is None:
-            ts_seconds = wall_clock_ts if wall_clock_ts is not None else time.time()
+            ts_seconds = timestamp
+        self.transcribe_queue.put(DropNotice(ts_seconds))
+
+    def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
+        ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
+        if ts_seconds is None:
+            ts_seconds = time.time()
         ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
         relative_time = 0.0
         if self.wall_clock_reference is not None:
