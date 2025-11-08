@@ -593,7 +593,7 @@ class AudioTranscriber:
                 ts = segment.start
                 ts_wall_clock = segment.wall_clock_start
             elif len(buffer) == 0:
-                logging.debug(f"queue is empty, reset ts {ts},to new_ts {segment.start}")
+                logging.warning(f"queue is empty, reset ts {ts},to new_ts {segment.start}")
                 ts = segment.start
                 ts_wall_clock = segment.wall_clock_start
             if input_sample_rate != TARGET_SAMPLE_RATE:
