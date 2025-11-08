@@ -13,7 +13,7 @@ import readchar
 from silero_vad import (load_silero_vad)
 
 from whisper_transcribe_py.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
-    SpeechDetector, AudioSegment, stream_url_thread
+    SpeechDetector, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment
 from whisper_transcribe_py.mic_recorder import MicRecorder
 
 
@@ -37,12 +37,31 @@ class JsonTranscriptWriter:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
 
 
-def process_queue(q,language,save_file=True,show_name=None,database_connection=None,transcribe_model_size='large-v3-turbo',segment_callback=None,timestamp_strategy='wall_clock'):
+def build_database_writer(conn, show_name: str):
+    def _persist(segment: TranscribedSegment):
+        if segment.start_timestamp is None:
+            raise ValueError("Database writes require wall clock timestamps.")
+        with conn.cursor() as cur:
+            cur.execute(
+                '''INSERT INTO transcripts (show_name,"timestamp", content) VALUES (%s, %s, %s)''',
+                (show_name, segment.start_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f'), segment.text, ))
+
+    return _persist
+
+
+def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
+                  transcript_persistence_callback=None,transcribe_model_size='large-v3-turbo',segment_callback=None,
+                  timestamp_strategy='wall_clock'):
     print("process_queue")
-    SpeechDetector(audio_input_queue=q,language=language,save_file=save_file,
+    if save_audio and audio_segment_callback is None:
+        audio_segment_callback = create_audio_file_saver()
+
+    SpeechDetector(audio_input_queue=q,
+                   language=language,
                    show_name=show_name,
-                   database_connection=database_connection,
                    transcribe_model_size=transcribe_model_size,
+                   audio_segment_callback=audio_segment_callback,
+                   transcript_persistence_callback=transcript_persistence_callback,
                    segment_callback=segment_callback,
                    timestamp_strategy=timestamp_strategy,
                    ).process_input(TARGET_SAMPLE_RATE)
@@ -157,13 +176,15 @@ if __name__ == '__main__':
 
             audio_input_queue = queue.Queue()
 
+            db_writer = build_database_writer(conn, data['show_name'])
+
             # Create a new thread
             thread_transcribe = threading.Thread(target=process_queue,  kwargs={
                 'q': audio_input_queue,
                 'language': data['language'],
-                'save_file': False,
+                'save_audio': False,
                 'show_name': data['show_name'],
-                'database_connection': conn,
+                'transcript_persistence_callback': db_writer,
                 'transcribe_model_size': data.get('transcribe_model_size', 'large-v3-turbo')
             })
 
