@@ -584,27 +584,32 @@ def stream_url_thread(
     while True:
         if stop_event is not None and stop_event.is_set():
             break
-        with stream_url(url) as stdout:
-            while True:
-                if stop_event is not None and stop_event.is_set():
-                    break
-                chunk = stdout.read(TARGET_SAMPLE_RATE*2) # 1 second
-                if not chunk:
-                    break
-                audio = pcm_s16le_to_float32(chunk)
-                # ts = time.time()
-                # time.sleep(5)
-                # put audio into queue one by one
-                if stop_event is not None and stop_event.is_set():
-                    break
-                duration_seconds = len(audio) / TARGET_SAMPLE_RATE
-                if queue_limiter and not queue_limiter.try_add(duration_seconds):
-                    continue
-                audio_input_queue.put(
-                    AudioSegment(audio=audio, start=ts, duration_seconds=duration_seconds)
-                )
-                #print("audio_input_queue size", audio_input_queue.qsize())
-                ts += len(audio) / TARGET_SAMPLE_RATE
+        try:
+            with stream_url(url) as stdout:
+                while True:
+                    if stop_event is not None and stop_event.is_set():
+                        break
+                    chunk = stdout.read(TARGET_SAMPLE_RATE*2) # 1 second
+                    if not chunk:
+                        break
+                    audio = pcm_s16le_to_float32(chunk)
+                    # ts = time.time()
+                    # time.sleep(5)
+                    # put audio into queue one by one
+                    if stop_event is not None and stop_event.is_set():
+                        break
+                    duration_seconds = len(audio) / TARGET_SAMPLE_RATE
+                    if queue_limiter and not queue_limiter.try_add(duration_seconds):
+                        continue
+                    audio_input_queue.put(
+                        AudioSegment(audio=audio, start=ts, duration_seconds=duration_seconds)
+                    )
+                    #print("audio_input_queue size", audio_input_queue.qsize())
+                    ts += len(audio) / TARGET_SAMPLE_RATE
+        except ValueError as exc:
+            if stop_event is not None and stop_event.is_set():
+                break
+            logging.warning("ffmpeg stream exited unexpectedly (%s); retrying shortly.", exc)
         if stop_event is not None and stop_event.is_set():
             break
         print("stream_stopped, restarting", file=sys.stderr)
