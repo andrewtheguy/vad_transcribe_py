@@ -11,7 +11,6 @@ dependencies = [
     "soundfile>=0.12.1,<0.13",
     "sounddevice>=0.5.1,<0.6",
     "scipy>=1.14.1,<2",
-    "pywhispercpp",
     "readchar>=4.2.1,<5",
     "psycopg[binary]>=3.2.3,<4",
     "python-dotenv>=1.0.1,<2",
