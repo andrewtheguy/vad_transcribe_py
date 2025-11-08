@@ -8,12 +8,12 @@ import tomllib
 
 from dotenv import load_dotenv
 
-import psycopg
 from silero_vad import (load_silero_vad)
 
 from whisper_transcribe_py.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     SpeechDetector, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment
 from whisper_transcribe_py.mic_recorder import MicRecorder
+from whisper_transcribe_py.db import build_database_writer, connect_to_database
 
 
 class JsonTranscriptWriter:
@@ -34,18 +34,6 @@ class JsonTranscriptWriter:
             os.makedirs(directory, exist_ok=True)
         with open(self.output_path, "w", encoding="utf-8") as f:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
-
-
-def build_database_writer(conn, show_name: str):
-    def _persist(segment: TranscribedSegment):
-        if segment.start_timestamp is None:
-            raise ValueError("Database writes require wall clock timestamps.")
-        with conn.cursor() as cur:
-            cur.execute(
-                '''INSERT INTO transcripts (show_name,"timestamp", content) VALUES (%s, %s, %s)''',
-                (show_name, segment.start_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f'), segment.text, ))
-
-    return _persist
 
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
@@ -187,12 +175,7 @@ if __name__ == '__main__':
             data = tomllib.load(f)
 
         # Connect to an existing database
-        db_timeout = int(os.environ.get('DATABASE_TIMEOUT', '10'))  # Default 10 seconds
-        with psycopg.connect(
-            os.environ['DATABASE_URL'],
-            autocommit=True,
-            connect_timeout=db_timeout
-        ) as conn:
+        with connect_to_database() as conn:
 
             # Open a cursor to perform database operations
             with conn.cursor() as cur:

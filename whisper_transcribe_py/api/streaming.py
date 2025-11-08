@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Set
+from typing import Callable, Dict, Optional, Set, Tuple
 
 import numpy.typing as npt
 
-from whisper_transcribe_py.speech_detector import AudioSegment, SpeechDetector
+from whisper_transcribe_py.speech_detector import (
+    AudioSegment,
+    SpeechDetector,
+    TranscriptPersistenceCallback,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class SessionError(Exception):
@@ -35,6 +42,8 @@ class StreamingSession:
     wall_clock_reference: Optional[float] = None
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
+    transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None
+    persistence_cleanup: Optional[Callable[[], None]] = None
 
     def ensure_running(self) -> None:
         if self.detector is not None:
@@ -45,6 +54,7 @@ class StreamingSession:
             timestamp_strategy="wall_clock",
             stop_event=self.stop_event,
             wall_clock_reference=self.wall_clock_reference,
+            transcript_persistence_callback=self.transcript_persistence_callback,
         )
         self.thread = threading.Thread(
             target=self.detector.process_input,
@@ -69,22 +79,48 @@ class StreamingSession:
         self.queue.put(None)
         if self.thread is not None:
             self.thread.join(timeout=2)
+        if self.persistence_cleanup is not None:
+            try:
+                self.persistence_cleanup()
+            finally:
+                self.persistence_cleanup = None
+
+
+PersistenceFactory = Callable[
+    [],
+    Tuple[Optional[TranscriptPersistenceCallback], Optional[Callable[[], None]]],
+]
 
 
 class StreamingSessionManager:
     """Tracks active streaming sessions."""
 
-    def __init__(self) -> None:
+    def __init__(self, persistence_factory: Optional[PersistenceFactory] = None) -> None:
         self._sessions: Dict[str, StreamingSession] = {}
         self._lock = threading.Lock()
         self._active_session_id: Optional[str] = None
         self._revoked_session_ids: Set[str] = set()
+        self._persistence_factory = persistence_factory
+
+    def set_persistence_factory(self, factory: Optional[PersistenceFactory]) -> None:
+        with self._lock:
+            self._persistence_factory = factory
 
     def _create_session(self, *, session_id: str, language: str, sample_rate: int) -> StreamingSession:
+        persistence_callback = None
+        cleanup_callback = None
+        if self._persistence_factory is not None:
+            try:
+                persistence_callback, cleanup_callback = self._persistence_factory()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("Failed to initialize persistence for session %s: %s", session_id, exc, exc_info=True)
+
         session = StreamingSession(
             session_id=session_id,
             language=language,
             input_sample_rate=sample_rate,
+            transcript_persistence_callback=persistence_callback,
+            persistence_cleanup=cleanup_callback,
         )
         self._sessions[session_id] = session
         session.ensure_running()

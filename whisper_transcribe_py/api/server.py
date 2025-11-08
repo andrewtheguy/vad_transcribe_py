@@ -1,5 +1,6 @@
 """FastAPI server for Whisper Transcribe web interface."""
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -11,7 +12,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from whisper_transcribe_py.api.streaming import SessionRevokedError, streaming_sessions
+from whisper_transcribe_py.db import build_database_writer, connect_to_database
 from whisper_transcribe_py.speech_detector import pcm_s16le_to_float32
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(dev_mode: bool = False) -> FastAPI:
@@ -28,6 +32,9 @@ def create_app(dev_mode: bool = False) -> FastAPI:
         description="AI-powered speech transcription with voice activity detection",
         version="0.1.0",
     )
+
+    # Configure persistence factory (database writes)
+    streaming_sessions.set_persistence_factory(_build_persistence_factory())
 
     # CORS middleware for development
     if dev_mode:
@@ -171,3 +178,26 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, dev: bool = False):
         factory=True,
         log_level="info" if dev else "warning",
     )
+
+
+def _build_persistence_factory():
+    """Create a factory that provides database writers for streaming sessions."""
+    if not os.environ.get("DATABASE_URL"):
+        logger.warning("DATABASE_URL not set; streaming transcripts will not be persisted")
+        return None
+
+    def factory():
+        try:
+            conn = connect_to_database()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Failed to connect to database for streaming session: %s", exc, exc_info=True)
+            return None, None
+
+        writer = build_database_writer(conn, show_name="web_recording")
+
+        def cleanup():
+            conn.close()
+
+        return writer, cleanup
+
+    return factory

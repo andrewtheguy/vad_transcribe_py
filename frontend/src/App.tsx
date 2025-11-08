@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 const TARGET_SAMPLE_RATE = 16_000
-const LANGUAGE = 'en'
 const API_BASE =
   (
     (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -18,6 +17,12 @@ type PendingChunk = {
 }
 
 const apiUrl = (path: string) => `${API_BASE}${path}`
+const SUPPORTED_LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'zh', label: 'Mandarin (zh)' },
+  { code: 'yue', label: 'Cantonese (yue)' },
+]
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
@@ -82,6 +87,7 @@ function App() {
   const [status, setStatus] = useState('Idle')
   const [events, setEvents] = useState<string[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [language, setLanguage] = useState('en')
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const processorRef = useRef<ScriptProcessorNode | null>(null)
@@ -165,7 +171,7 @@ function App() {
         session_id: sessionId,
         start: chunk.start.toString(),
         sample_rate: TARGET_SAMPLE_RATE.toString(),
-        language: LANGUAGE,
+        language,
       })
       try {
         const response = await fetch(apiUrl(`/api/transcribe/stream?${params.toString()}`), {
@@ -190,7 +196,7 @@ function App() {
       }
     }
     flushingRef.current = false
-  }, [appendEvent, handleFatalError])
+  }, [appendEvent, handleFatalError, language])
 
   const enqueueChunk = useCallback(
     (chunk: PendingChunk) => {
@@ -257,7 +263,7 @@ function App() {
         error instanceof Error ? `Failed to start recording: ${error.message}` : 'Failed to start recording',
       )
     }
-  }, [appendEvent, enqueueChunk, handleFatalError, isRecording])
+  }, [appendEvent, enqueueChunk, handleFatalError, isRecording, language])
 
   const stopRecording = useCallback(async () => {
     if (!isRecording && !sessionIdRef.current) {
@@ -341,6 +347,23 @@ function App() {
                 </Button>
                 <div className="text-sm text-slate-500 dark:text-slate-400 text-center">
                   Status: <span className="font-medium">{status}</span>
+                  <div className="mt-2 flex items-center gap-2 justify-center">
+                    <label className="text-xs uppercase tracking-wide text-slate-400">
+                      Language
+                    </label>
+                    <select
+                      value={language}
+                      onChange={(event) => setLanguage(event.target.value)}
+                      disabled={isRecording}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800"
+                    >
+                      {SUPPORTED_LANGUAGES.map((lang) => (
+                        <option key={lang.code} value={lang.code}>
+                          {lang.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   {activeSessionId ? (
                     <div className="mt-1 break-all">
                       Session ID:{' '}
