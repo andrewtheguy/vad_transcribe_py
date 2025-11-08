@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from whisper_transcribe_py.api.streaming import SessionRevokedError, streaming_sessions
 from whisper_transcribe_py.db import build_database_writer, connect_to_database
-from whisper_transcribe_py.speech_detector import pcm_s16le_to_float32
+from whisper_transcribe_py.audio_transcriber import pcm_s16le_to_float32
 
 logger = logging.getLogger(__name__)
 

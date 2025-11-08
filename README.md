@@ -90,7 +90,7 @@ This will use the 'base' model and 8 threads regardless of what's in the config 
 
 ## Queue backlog limiter
 
-Long-running streams can fall behind if Whisper processing slows down. To avoid unbounded memory growth, producers and consumers share a `QueueBacklogLimiter` (defined in `whisper_transcribe_py/speech_detector.py`) that keeps track of how many seconds of unprocessed audio are buffered:
+Long-running streams can fall behind if Whisper processing slows down. To avoid unbounded memory growth, producers and consumers share a `QueueBacklogLimiter` (defined in `whisper_transcribe_py/audio_transcriber.py`) that keeps track of how many seconds of unprocessed audio are buffered:
 - If adding a chunk would push the backlog over `max_seconds`, the chunk is dropped and a warning is printed to stderr. This favors staying live over perfect recall.
 - The microphone CLI uses `CLI_QUEUE_TIME_LIMIT_SECONDS` (default 60 s) to cap the recorder queue.
 - Stream configs wrap both the downloader and the speech detector with the same limiter so dropped chunks reference the show name.

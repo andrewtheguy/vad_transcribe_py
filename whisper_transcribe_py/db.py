@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import psycopg
 
-from whisper_transcribe_py.speech_detector import TranscribedSegment
+from whisper_transcribe_py.audio_transcriber import TranscribedSegment
 
 
 def connect_to_database():
