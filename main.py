@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import queue
 import sys
@@ -16,12 +17,34 @@ from whisper_transcribe_py.speech_detector import TARGET_SAMPLE_RATE, ffmpeg_get
 from whisper_transcribe_py.mic_recorder import MicRecorder
 
 
-def process_queue(q,language,save_file=True,show_name=None,database_connection=None,transcribe_model_size='large-v3-turbo'):
+class JsonTranscriptWriter:
+    def __init__(self, output_path: str):
+        self.output_path = output_path
+        self.segments = []
+
+    def add_segment(self, *, start: float, end: float, text: str):
+        self.segments.append({
+            "start": start,
+            "end": end,
+            "text": text,
+        })
+
+    def flush(self):
+        directory = os.path.dirname(self.output_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(self.output_path, "w", encoding="utf-8") as f:
+            json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
+
+
+def process_queue(q,language,save_file=True,show_name=None,database_connection=None,transcribe_model_size='large-v3-turbo',segment_callback=None,timestamp_strategy='wall_clock'):
     print("process_queue")
     SpeechDetector(audio_input_queue=q,language=language,save_file=save_file,
                    show_name=show_name,
                    database_connection=database_connection,
-                   transcribe_model_size=transcribe_model_size
+                   transcribe_model_size=transcribe_model_size,
+                   segment_callback=segment_callback,
+                   timestamp_strategy=timestamp_strategy,
                    ).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(q,language):
@@ -35,6 +58,7 @@ if __name__ == '__main__':
     argparse.add_argument('--file', type=str, required=False)
     argparse.add_argument('--lang', type=str, required=False)
     argparse.add_argument('--config', type=str, required=False) # for url live streaming
+    argparse.add_argument('--output', type=str, required=False)
     args = argparse.parse_args()
 
     vad_model = load_silero_vad()
@@ -47,10 +71,22 @@ if __name__ == '__main__':
             print(f"File {args.file} does not exist")
             exit(1)
 
+        if not args.output:
+            print("Please provide an --output path for the JSON transcript")
+            exit(1)
+
+        output_path = args.output
+        transcript_writer = JsonTranscriptWriter(output_path)
+
         audio_input_queue = queue.Queue()
 
         # Create a new thread
-        thread_transcribe = threading.Thread(target=process_queue, args=(audio_input_queue, args.lang))
+        thread_transcribe = threading.Thread(target=process_queue, kwargs={
+            'q': audio_input_queue,
+            'language': args.lang,
+            'segment_callback': transcript_writer.add_segment,
+            'timestamp_strategy': 'relative'
+        })
 
         # Start the thread
         thread_transcribe.start()
@@ -70,6 +106,8 @@ if __name__ == '__main__':
 
         audio_input_queue.put(None)
         thread_transcribe.join()
+        transcript_writer.flush()
+        print(f"Transcript written to {output_path}")
 
         #SpeechDetector().process_silero(audio)
     elif args.action == 'mic':
