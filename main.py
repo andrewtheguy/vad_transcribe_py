@@ -133,7 +133,12 @@ if __name__ == '__main__':
             data = tomllib.load(f)
 
         # Connect to an existing database
-        with psycopg.connect(os.environ['DATABASE_URL'],autocommit=True) as conn:
+        db_timeout = int(os.environ.get('DATABASE_TIMEOUT', '10'))  # Default 10 seconds
+        with psycopg.connect(
+            os.environ['DATABASE_URL'],
+            autocommit=True,
+            connect_timeout=db_timeout
+        ) as conn:
 
             # Open a cursor to perform database operations
             with conn.cursor() as cur:
