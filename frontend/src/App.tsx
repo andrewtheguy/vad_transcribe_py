@@ -479,7 +479,7 @@ function App() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-6 min-h-[220px] text-left overflow-y-auto">
+            <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 min-h-[220px] max-h-[500px] text-left overflow-y-auto">
               {transcriptError ? (
                 <p className="text-rose-500 dark:text-rose-400 text-center">
                   Failed to load transcripts: {transcriptError}
@@ -489,16 +489,16 @@ function App() {
                   No transcripts yet. Start recording to stream audio.
                 </p>
               ) : (
-                <ul className="space-y-3 text-sm text-slate-800 dark:text-slate-100">
+                <ul className="space-y-1.5 text-sm text-slate-800 dark:text-slate-100">
                   {transcripts.map((row) => (
                     <li
                       key={row.id}
-                      className="rounded-md border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-800/80"
+                      className="rounded border border-slate-200 bg-white/80 px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-800/80"
                     >
-                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                        #{row.id} · {formatTimestamp(row.timestamp)}
-                      </div>
-                      <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-200">{row.content}</p>
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        {formatTimestamp(row.timestamp)}
+                      </span>
+                      <span className="ml-2 whitespace-pre-wrap text-slate-700 dark:text-slate-200">{row.content}</span>
                     </li>
                   ))}
                 </ul>

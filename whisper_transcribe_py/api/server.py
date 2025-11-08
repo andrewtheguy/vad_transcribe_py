@@ -230,14 +230,26 @@ def run_server(host: str = "0.0.0.0", port: int = 8000, dev: bool = False):
     """
     import uvicorn
 
-    uvicorn.run(
-        "whisper_transcribe_py.api.server:create_app",
-        host=host,
-        port=port,
-        reload=dev,
-        factory=True,
-        log_level="info" if dev else "warning",
-    )
+    if dev:
+
+        # Use import string for reload to work
+        uvicorn.run(
+            "whisper_transcribe_py.api.server:create_app",
+            host=host,
+            port=port,
+            reload=True,
+            factory=True,
+            log_level="info",
+        )
+    else:
+        # Production mode: create app directly
+        app = create_app(dev_mode=False)
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="warning",
+        )
 
 
 def _build_persistence_factory():
