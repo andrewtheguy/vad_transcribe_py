@@ -97,7 +97,7 @@ export default function HistoryPage() {
       try {
         const params = new URLSearchParams({
           offset: offset.toString(),
-          limit: '50',
+          limit: '100',
         })
         const response = await fetch(
           apiUrl(`/api/shows/${encodeURIComponent(showName)}/transcripts?${params.toString()}`),
