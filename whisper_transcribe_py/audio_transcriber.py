@@ -454,6 +454,7 @@ class AudioTranscriber:
         self.wall_clock_reference = wall_clock_reference
         self.queue_backlog_limiter = queue_backlog_limiter
         self._pending_silence_seconds = 0.0
+        self._last_transcript_wall_clock: Optional[float] = None
         if self.queue_backlog_limiter is not None:
             self.queue_backlog_limiter.register_drop_callback(self._handle_drop_notice)
         #if transcribe_backend == "faster-whisper":
@@ -541,6 +542,11 @@ class AudioTranscriber:
 
         if self.segment_callback is not None:
             self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
+
+        if self.timestamp_strategy == "wall_clock" and ts_end_dt is not None:
+            self._last_transcript_wall_clock = ts_end_dt.timestamp()
+        else:
+            self._last_transcript_wall_clock = time.time()
 
     def _transcribe_whisper_cpp(self):
         while True:
@@ -669,7 +675,9 @@ class AudioTranscriber:
         self._emit_drop_notice(timestamp)
 
     def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
-        ts_seconds = wall_clock_ts if wall_clock_ts is not None else time.time()
+        ts_seconds = self._last_transcript_wall_clock
+        if ts_seconds is None:
+            ts_seconds = wall_clock_ts if wall_clock_ts is not None else time.time()
         ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
         relative_time = 0.0
         if self.wall_clock_reference is not None:
@@ -689,6 +697,7 @@ class AudioTranscriber:
             self.transcript_persistence_callback(segment_payload)
         if self.segment_callback is not None:
             self.segment_callback(start=relative_time, end=relative_time, text=text)
+        self._last_transcript_wall_clock = ts_seconds
 
     def process_input(self,input_sample_rate):
 
