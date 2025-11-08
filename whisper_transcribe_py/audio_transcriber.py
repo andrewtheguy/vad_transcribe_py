@@ -284,9 +284,11 @@ class QueueBacklogLimiter:
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
                 self._dropped_seconds += duration_seconds
+                backlog_seconds = self.current_seconds
                 print(
                     f"Warning: dropping newest audio chunk from {self.source_label} queue "
-                    f"to keep backlog under {int(self.max_seconds)} seconds.",
+                    f"to keep backlog under {int(self.max_seconds)} seconds "
+                    f"(current backlog {backlog_seconds:.1f}s, chunk {duration_seconds:.2f}s).",
                     file=sys.stderr,
                 )
                 return False

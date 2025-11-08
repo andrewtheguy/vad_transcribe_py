@@ -14,6 +14,7 @@ import numpy.typing as npt
 from whisper_transcribe_py.audio_transcriber import (
     AudioSegment,
     AudioTranscriber,
+    QueueBacklogLimiter,
     TranscriptPersistenceCallback,
 )
 
@@ -26,6 +27,8 @@ class SessionError(Exception):
 
 class SessionRevokedError(SessionError):
     """Raised when an API call references a revoked session."""
+
+DEFAULT_SESSION_QUEUE_TIME_LIMIT_SECONDS = 60.0
 
 
 @dataclass
@@ -46,6 +49,7 @@ class StreamingSession:
     persistence_cleanup: Optional[Callable[[], None]] = None
     first_transcript_id: Optional[int] = None
     n_threads: int = 1
+    queue_limiter: Optional[QueueBacklogLimiter] = None
 
     def ensure_running(self) -> None:
         if self.detector is not None:
@@ -57,6 +61,7 @@ class StreamingSession:
             stop_event=self.stop_event,
             wall_clock_reference=self.wall_clock_reference,
             transcript_persistence_callback=self.transcript_persistence_callback,
+            queue_backlog_limiter=self.queue_limiter,
             n_threads=self.n_threads,
         )
         self.thread = threading.Thread(
@@ -72,6 +77,17 @@ class StreamingSession:
             self.detector.wall_clock_reference = approx_wall_clock
         elif approx_wall_clock is not None and self.detector is None:
             self.wall_clock_reference = approx_wall_clock
+
+        duration_seconds = len(audio) / self.input_sample_rate if self.input_sample_rate else 0.0
+        if self.queue_limiter and duration_seconds > 0:
+            if not self.queue_limiter.try_add(duration_seconds):
+                logger.debug(
+                    "Dropped %.2fs chunk for session %s because backlog exceeded %.0fs cap",
+                    duration_seconds,
+                    self.session_id,
+                    self.queue_limiter.max_seconds if self.queue_limiter.max_seconds is not None else 0.0,
+                )
+                return
 
         self.queue.put(AudioSegment(audio=audio, start=start_ts, wall_clock_start=approx_wall_clock))
 
@@ -118,11 +134,19 @@ class StreamingSessionManager:
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("Failed to initialize persistence for session %s: %s", session_id, exc, exc_info=True)
 
+        limiter = None
+        if DEFAULT_SESSION_QUEUE_TIME_LIMIT_SECONDS and DEFAULT_SESSION_QUEUE_TIME_LIMIT_SECONDS > 0:
+            limiter = QueueBacklogLimiter(
+                DEFAULT_SESSION_QUEUE_TIME_LIMIT_SECONDS,
+                source_label=f"session:{session_id}",
+            )
+
         session = StreamingSession(
             session_id=session_id,
             language=language,
             input_sample_rate=sample_rate,
             persistence_cleanup=cleanup_callback,
+            queue_limiter=limiter,
         )
 
         if persistence_callback is not None:
