@@ -272,6 +272,7 @@ class QueueBacklogLimiter:
         self._lock = threading.Lock()
         self._last_logged_backlog_bucket: Optional[int] = None
         self._last_backlog_log_time = 0.0
+        self._timestamp_consumed_seconds = 0.0
 
     def _log_backlog_state_locked(self) -> None:
         if self.max_seconds is None or self.max_seconds <= 0:
@@ -339,8 +340,7 @@ class QueueBacklogLimiter:
         with self._lock:
             if self._initial_timestamp is None:
                 return None
-            processed_seconds = self._total_accounted_seconds - self.current_seconds
-            return self._initial_timestamp + self._dropped_seconds + processed_seconds
+            return self._initial_timestamp + self._dropped_seconds + self._timestamp_consumed_seconds
 
     @property
     def dropped_seconds(self) -> float:
@@ -351,6 +351,18 @@ class QueueBacklogLimiter:
     def initial_timestamp(self) -> Optional[float]:
         with self._lock:
             return self._initial_timestamp
+
+    def note_timestamp_progress(self, duration_seconds: float) -> None:
+        if duration_seconds <= 0:
+            return
+        with self._lock:
+            if self._total_accounted_seconds <= 0:
+                return
+            remaining = self._total_accounted_seconds - self._timestamp_consumed_seconds
+            if remaining <= 0:
+                return
+            advance = min(duration_seconds, remaining)
+            self._timestamp_consumed_seconds += advance
 
 class AudioTranscriber:
     def __init__(
@@ -645,6 +657,8 @@ class AudioTranscriber:
             if segment_wall_clock_start is None:
                 segment_wall_clock_start = None
             segment.wall_clock_start = segment_wall_clock_start
+            if self.queue_backlog_limiter and segment_duration is not None:
+                self.queue_backlog_limiter.note_timestamp_progress(segment_duration)
             if ts is None:
                 ts = segment.start
                 ts_wall_clock = segment.wall_clock_start
