@@ -518,11 +518,15 @@ class SpeechDetector:
         transcribing_thread.join()
 
 
-def stream_url_thread(url,audio_input_queue):
+def stream_url_thread(url, audio_input_queue, stop_event=None):
     ts = 0
     while True:
+        if stop_event is not None and stop_event.is_set():
+            break
         with stream_url(url) as stdout:
             while True:
+                if stop_event is not None and stop_event.is_set():
+                    break
                 chunk = stdout.read(TARGET_SAMPLE_RATE*2) # 1 second
                 if not chunk:
                     break
@@ -530,8 +534,13 @@ def stream_url_thread(url,audio_input_queue):
                 # ts = time.time()
                 # time.sleep(5)
                 # put audio into queue one by one
+                if stop_event is not None and stop_event.is_set():
+                    break
                 audio_input_queue.put(AudioSegment(audio=audio, start=ts))
                 #print("audio_input_queue size", audio_input_queue.qsize())
                 ts += len(audio) / TARGET_SAMPLE_RATE
+        if stop_event is not None and stop_event.is_set():
+            break
         print("stream_stopped, restarting", file=sys.stderr)
         sleep(0.5)
+    print("stream_url_thread exiting", file=sys.stderr)

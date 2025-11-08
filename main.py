@@ -71,6 +71,15 @@ def process_mic(q,language):
     MicRecorder(q).record(language=language)
 
 
+def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
+    """
+    Signal worker threads to stop and place a sentinel in the audio queue.
+    """
+    if not stop_event.is_set():
+        stop_event.set()
+        audio_queue.put(None)
+
+
 if __name__ == '__main__':
     load_dotenv()
     argparse = argparse.ArgumentParser()
@@ -102,6 +111,7 @@ if __name__ == '__main__':
         transcript_writer = JsonTranscriptWriter(output_path)
 
         audio_input_queue = queue.Queue()
+        stop_event = threading.Event()
 
         # Create a new thread
         thread_transcribe = threading.Thread(target=process_queue, kwargs={
@@ -117,38 +127,54 @@ if __name__ == '__main__':
         thread_transcribe.start()
 
         ts = 0
-        with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
-            while True:
-                chunk = stdout.read(4096)
-                if not chunk:
-                    break
-                audio = pcm_s16le_to_float32(chunk)
-                #ts = time.time()
-                #time.sleep(5)
-                # put audio into queue one by one
-                audio_input_queue.put(AudioSegment(audio=audio, start=ts))
-                ts += len(audio) / TARGET_SAMPLE_RATE
+        interrupted = False
+        try:
+            with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+                while True:
+                    if stop_event.is_set():
+                        break
+                    chunk = stdout.read(4096)
+                    if not chunk:
+                        break
+                    audio = pcm_s16le_to_float32(chunk)
+                    audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                    ts += len(audio) / TARGET_SAMPLE_RATE
+        except KeyboardInterrupt:
+            interrupted = True
+            print("\nCtrl+C received, stopping transcription...", file=sys.stderr)
+        finally:
+            _request_shutdown(stop_event, audio_input_queue)
+            thread_transcribe.join()
 
-        audio_input_queue.put(None)
-        thread_transcribe.join()
         transcript_writer.flush()
-        print(f"Transcript written to {output_path}")
+        if interrupted:
+            print(f"Transcript written to {output_path} (partial)")
+        else:
+            print(f"Transcript written to {output_path}")
 
         #SpeechDetector().process_silero(audio)
     elif args.action == 'mic':
         audio_input_queue = queue.Queue()
+        stop_event = threading.Event()
         thread_transcribe = threading.Thread(target=process_mic, args=(audio_input_queue, args.lang,))
 
         # Start the thread
         thread_transcribe.start()
 
+        def stop_mic():
+            _request_shutdown(stop_event, audio_input_queue)
+
         # press q and enter to quit
-        while True:
-            print("Press q and enter to quit")
-            input2 = sys.stdin.read(1)
-            if input2 == 'q':
-                audio_input_queue.put(None)
-                break
+        try:
+            while not stop_event.is_set():
+                print("Press q and enter to quit")
+                input2 = sys.stdin.read(1)
+                if input2 == 'q':
+                    stop_mic()
+                    break
+        except KeyboardInterrupt:
+            print("\nCtrl+C received, stopping microphone capture...", file=sys.stderr)
+            stop_mic()
 
         thread_transcribe.join()
     elif args.action == 'config':
@@ -181,6 +207,7 @@ if __name__ == '__main__':
                 """)
 
             audio_input_queue = queue.Queue()
+            stop_event = threading.Event()
 
             db_writer = build_database_writer(conn, data['show_name'])
 
@@ -200,19 +227,29 @@ if __name__ == '__main__':
 
             url = data['url']
 
-            thread_streaming = threading.Thread(target=stream_url_thread, args=(url, audio_input_queue,))
-
-            thread_streaming.daemon = True
+            thread_streaming = threading.Thread(
+                target=stream_url_thread,
+                args=(url, audio_input_queue, stop_event,),
+                daemon=True
+            )
 
             thread_streaming.start()
 
-            while True:
-                print('press q to quit:')
-                char = readchar.readchar()
-                if char == 'q':
-                    break
+            def stop_stream():
+                _request_shutdown(stop_event, audio_input_queue)
 
-            audio_input_queue.put(None)
+            try:
+                while not stop_event.is_set():
+                    print('press q to quit:')
+                    char = readchar.readchar()
+                    if char == 'q':
+                        stop_stream()
+                        break
+            except KeyboardInterrupt:
+                print("\nCtrl+C received, stopping stream...", file=sys.stderr)
+                stop_stream()
+
+            stop_stream()
             thread_transcribe.join()
         print("thread_transcribe joined")
         #thread_streaming.join()
