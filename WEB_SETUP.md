@@ -99,13 +99,13 @@ The web interface is a **shell/skeleton** focused on microphone recording, ready
 
 ## Next Steps for Implementation
 
-To add actual functionality:
+To add microphone recording functionality:
 
-1. **File Upload**: Implement the `/api/transcribe/file` endpoint in `whisper_transcribe_py/api/server.py`
-2. **Microphone Streaming**: Implement WebSocket endpoint for browser audio streaming
-3. **Frontend Integration**: Connect frontend to working API endpoints
-4. **State Management**: Add state management for transcription results
-5. **Database Integration**: Connect to existing PostgreSQL database for session storage
+1. **WebSocket Audio Streaming**: Implement WebSocket endpoint at `/api/transcribe/stream` for browser audio streaming
+2. **Frontend Audio Capture**: Add browser MediaRecorder API or Web Audio API to capture microphone input
+3. **Real-time Transcription Display**: Stream transcription results back to frontend via WebSocket
+4. **State Management**: Add React state management for recording status and transcription results
+5. **Optional Database**: Connect to existing PostgreSQL database for storing transcription history
 
 ## Technologies Used
 
