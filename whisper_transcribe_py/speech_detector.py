@@ -496,9 +496,11 @@ class SpeechDetector:
         prev_slice = None
 
         buffer = []
+        stop_requested = False
 
         while True:
             if self.stop_event is not None and self.stop_event.is_set():
+                stop_requested = True
                 break
             try:
                 segment = self.audio_input_queue.get(timeout=0.5)
@@ -568,8 +570,21 @@ class SpeechDetector:
                 prev_has_speech = has_speech
 
         print("finished processing audio",ts,file=sys.stderr)
-        if len(speech_section) > 0 and not (self.stop_event is not None and self.stop_event.is_set()):
+
+        if len(speech_section) > 0 and not stop_requested:
             self._process_end_of_speech(speech_section, has_speech_begin_timestamp)
+
+        if stop_requested:
+            # Drop any queued-but-unprocessed transcribe work so shutdown is fast
+            while True:
+                try:
+                    item = self.transcribe_queue.get_nowait()
+                    if item is None:
+                        # do not requeue sentinel; loop will add a fresh one
+                        continue
+                except queue.Empty:
+                    break
+
         self.transcribe_queue.put(None)
         transcribing_thread.join()
 
