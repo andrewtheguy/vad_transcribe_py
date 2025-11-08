@@ -45,6 +45,7 @@ class StreamingSession:
     transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None
     persistence_cleanup: Optional[Callable[[], None]] = None
     first_transcript_id: Optional[int] = None
+    n_threads: int = 1
 
     def ensure_running(self) -> None:
         if self.detector is not None:
@@ -56,6 +57,7 @@ class StreamingSession:
             stop_event=self.stop_event,
             wall_clock_reference=self.wall_clock_reference,
             transcript_persistence_callback=self.transcript_persistence_callback,
+            n_threads=self.n_threads,
         )
         self.thread = threading.Thread(
             target=self.detector.process_input,

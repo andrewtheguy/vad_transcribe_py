@@ -61,9 +61,9 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                    queue_backlog_limiter=queue_backlog_limiter,
                    ).process_input(TARGET_SAMPLE_RATE)
 
-def process_mic(q,language, stop_event=None, max_queue_seconds: Optional[float] = None):
+def process_mic(q,language, stop_event=None, max_queue_seconds: Optional[float] = None, n_threads: int = 1):
     limiter = QueueBacklogLimiter(max_queue_seconds, source_label="microphone") if max_queue_seconds else None
-    MicRecorder(q, stop_event=stop_event, queue_limiter=limiter).record(language=language)
+    MicRecorder(q, stop_event=stop_event, queue_limiter=limiter, n_threads=n_threads).record(language=language)
 
 
 def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
@@ -83,9 +83,9 @@ if __name__ == '__main__':
     argparse.add_argument('--lang', type=str, required=False)
     argparse.add_argument('--config', type=str, required=False) # for url live streaming
     argparse.add_argument('--output', type=str, required=False)
-    argparse.add_argument('--n-threads', type=int, required=False, default=1, help='Number of threads for whisper model (default: 1)')
+    argparse.add_argument('--n-threads', type=int, required=False, default=None, help='Number of threads for whisper model (default: 1 or from config file)')
     # https://absadiki.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
-    argparse.add_argument('--model', type=str, required=False, default='large-v3-turbo', help='Whisper model name (default: large-v3-turbo)')
+    argparse.add_argument('--model', type=str, required=False, default=None, help='Whisper model name (default: large-v3-turbo or from config file)')
     # Web server options
     argparse.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
     argparse.add_argument('--port', type=int, required=False, default=8000, help='Port to bind web server to (default: 8000)')
@@ -120,8 +120,8 @@ if __name__ == '__main__':
             'language': args.lang,
             'segment_callback': transcript_writer.add_segment,
             'timestamp_strategy': 'relative',
-            'transcribe_model_size': args.model,
-            'n_threads': int(args.n_threads),
+            'transcribe_model_size': args.model if args.model is not None else 'large-v3-turbo',
+            'n_threads': args.n_threads if args.n_threads is not None else 1,
             'stop_event': stop_event,
         })
 
@@ -165,6 +165,7 @@ if __name__ == '__main__':
                 'language': args.lang,
                 'stop_event': stop_event,
                 'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
+                'n_threads': args.n_threads if args.n_threads is not None else 1,
             },
         )
 
@@ -220,8 +221,8 @@ if __name__ == '__main__':
                 'save_audio': False,
                 'show_name': data['show_name'],
                 'transcript_persistence_callback': db_writer,
-                'transcribe_model_size': data.get('transcribe_model_size', 'large-v3-turbo'),
-                'n_threads': int(data.get('n_threads', 1)),
+                'transcribe_model_size': args.model if args.model is not None else data.get('transcribe_model_size', 'large-v3-turbo'),
+                'n_threads': args.n_threads if args.n_threads is not None else int(data.get('n_threads', 1)),
                 'stop_event': stop_event,
                 'queue_backlog_limiter': queue_limiter,
             })

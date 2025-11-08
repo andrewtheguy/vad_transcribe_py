@@ -20,6 +20,10 @@ uv run python main.py file --file /path/to/file --lang en --output /path/to/outp
 - `--lang`: Language code (e.g., 'en', 'zh', 'yue')
 - `--output`: Path for JSON output file
 
+**Optional arguments:**
+- `--model`: Whisper model size (default: 'large-v3-turbo')
+- `--n-threads`: Number of threads for Whisper (default: 1)
+
 ### 2. Transcribe from microphone
 Record from microphone and transcribe in real-time.
 
@@ -36,6 +40,9 @@ uv run python main.py mic --lang en
 **Required arguments:**
 - `--lang`: Language code (e.g., 'en', 'zh', 'yue')
 
+**Optional arguments:**
+- `--n-threads`: Number of threads for Whisper (default: 1)
+
 ### 3. Transcribe from audio stream
 Stream audio from URL and save transcripts to database.
 
@@ -50,6 +57,13 @@ uv run python main.py stream --config configs/rthk2.toml
 - Uses wall clock timestamps
 - Press 'q' to quit
 
+**Required arguments:**
+- `--config`: Path to TOML configuration file
+
+**Optional arguments:**
+- `--model`: Whisper model size (overrides config file, default: 'large-v3-turbo')
+- `--n-threads`: Number of threads for Whisper (overrides config file, default: 1)
+
 **Required environment variables:**
 - `DATABASE_URL`: PostgreSQL connection string (e.g., `postgresql://user:pass@localhost/db`)
 
@@ -58,11 +72,21 @@ uv run python main.py stream --config configs/rthk2.toml
 
 **Config file format (TOML):**
 ```toml
-url = 'https://example.com/stream.m3u8'
-show_name = 'my_show'
-language = 'en'
-transcribe_model_size = 'large-v3-turbo'  # optional, defaults to 'large-v3-turbo'
+# Required fields
+url = 'https://example.com/stream.m3u8'  # Stream URL
+show_name = 'my_show'                     # Show identifier for database
+language = 'en'                           # Language code (e.g., 'en', 'zh', 'yue')
+
+# Optional fields
+transcribe_model_size = 'large-v3-turbo'  # Whisper model size (default: 'large-v3-turbo')
+n_threads = 4                             # Number of threads for Whisper (default: 1)
 ```
+
+**Note:** Command line arguments take priority over config file settings. For example:
+```commandline
+uv run python main.py stream --config configs/rthk2.toml --model base --n-threads 8
+```
+This will use the 'base' model and 8 threads regardless of what's in the config file.
 
 ## Queue backlog limiter
 

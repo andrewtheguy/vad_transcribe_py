@@ -19,10 +19,12 @@ class MicRecorder:
             audio_input_queue,
             stop_event: Optional[threading.Event] = None,
             queue_limiter: Optional[QueueBacklogLimiter] = None,
+            n_threads: int = 1,
     ):
         self.audio_input_queue = audio_input_queue
         self.stop_event = stop_event
         self.queue_limiter = queue_limiter
+        self.n_threads = n_threads
         self.approx_input_sample_rate = TARGET_SAMPLE_RATE
         self.stream = sd.InputStream(callback=self.audio_callback)
 
@@ -63,4 +65,5 @@ class MicRecorder:
                 language=language,
                 stop_event=self.stop_event,
                 queue_backlog_limiter=self.queue_limiter,
+                n_threads=self.n_threads,
             ).process_input(input_sample_rate)

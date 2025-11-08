@@ -368,6 +368,9 @@ class SpeechDetector:
     def _load_whisper_cpp(self):
         from pywhispercpp.model import Model
 
+        print("n_threads...")
+        print(self.n_threads)
+
         self.whisper_cpp_model = Model(self.transcribe_model_size,
 
                                        print_realtime=False,
@@ -376,6 +379,12 @@ class SpeechDetector:
                                        n_threads=self.n_threads,
 
                                        )
+
+        print("Whisper.cpp model loaded:")
+        print(self.whisper_cpp_model.get_params())
+        print("Whisper.cpp model schema:")
+        print(self.whisper_cpp_model.get_params_schema())
+        print(self.whisper_cpp_model.system_info())
 
     def process_silero(self, audio):
         #return True
