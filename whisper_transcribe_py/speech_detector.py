@@ -244,6 +244,7 @@ class SpeechDetector:
             transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
             segment_callback: Optional[Callable[..., None]] = None,
             timestamp_strategy: str = "wall_clock",
+            n_threads: int = 1,
     ):
         self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
@@ -257,6 +258,7 @@ class SpeechDetector:
         self.segment_callback = segment_callback
         self.timestamp_strategy = timestamp_strategy
         self.current_audio_offset = 0.0
+        self.n_threads = n_threads
         #if transcribe_backend == "faster-whisper":
         #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
         #    #self._load_faster_whisper()
@@ -280,7 +282,7 @@ class SpeechDetector:
                                        print_realtime=False,
                                        print_progress=False,
                                        print_timestamps=False,
-                                       n_threads=1,
+                                       n_threads=self.n_threads,
 
                                        )
 

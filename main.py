@@ -51,7 +51,7 @@ def build_database_writer(conn, show_name: str):
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
                   transcript_persistence_callback=None,transcribe_model_size='large-v3-turbo',segment_callback=None,
-                  timestamp_strategy='wall_clock'):
+                  timestamp_strategy='wall_clock',n_threads=1):
     print("process_queue")
     if save_audio and audio_segment_callback is None:
         audio_segment_callback = create_audio_file_saver()
@@ -64,6 +64,7 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                    transcript_persistence_callback=transcript_persistence_callback,
                    segment_callback=segment_callback,
                    timestamp_strategy=timestamp_strategy,
+                   n_threads=n_threads,
                    ).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(q,language):
@@ -78,6 +79,9 @@ if __name__ == '__main__':
     argparse.add_argument('--lang', type=str, required=False)
     argparse.add_argument('--config', type=str, required=False) # for url live streaming
     argparse.add_argument('--output', type=str, required=False)
+    argparse.add_argument('--n-threads', type=int, required=False, default=1, help='Number of threads for whisper model (default: 1)')
+    # https://absadiki.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
+    argparse.add_argument('--model', type=str, required=False, default='large-v3-turbo', help='Whisper model name (default: large-v3-turbo)')
     args = argparse.parse_args()
 
     vad_model = load_silero_vad()
@@ -104,7 +108,9 @@ if __name__ == '__main__':
             'q': audio_input_queue,
             'language': args.lang,
             'segment_callback': transcript_writer.add_segment,
-            'timestamp_strategy': 'relative'
+            'timestamp_strategy': 'relative',
+            'transcribe_model_size': args.model,
+            'n_threads': args.n_threads
         })
 
         # Start the thread
@@ -185,7 +191,8 @@ if __name__ == '__main__':
                 'save_audio': False,
                 'show_name': data['show_name'],
                 'transcript_persistence_callback': db_writer,
-                'transcribe_model_size': data.get('transcribe_model_size', 'large-v3-turbo')
+                'transcribe_model_size': data.get('transcribe_model_size', 'large-v3-turbo'),
+                'n_threads': data.get('n_threads', 1)
             })
 
             # Start the thread
