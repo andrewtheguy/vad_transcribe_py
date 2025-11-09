@@ -35,8 +35,10 @@ def stream_url(url):
     command = [
         "ffmpeg",
         "-i", url,
+        "-attempt_recovery", "1",
         "-hide_banner",
         "-loglevel", "error",
+        "-recovery_wait_time", "1",
         "-f", "s16le",  # Output format: raw PCM, signed 16-bit little-endian
         "-acodec", "pcm_s16le",  # Audio codec: PCM 16-bit signed little-endian
         "-ac", "1",  # Number of audio channels (1 = mono)
