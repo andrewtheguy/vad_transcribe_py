@@ -672,6 +672,8 @@ class AudioTranscriber:
             backlog_wall_clock_start = None
             if self.queue_backlog_limiter and segment_duration is not None:
                 backlog_wall_clock_start = self.queue_backlog_limiter.pending_chunk_start_timestamp()
+            if backlog_wall_clock_start is not None and self._last_transcript_wall_clock is not None:
+                backlog_wall_clock_start = max(backlog_wall_clock_start, self._last_transcript_wall_clock)
             if backlog_wall_clock_start is not None:
                 segment_wall_clock_start = backlog_wall_clock_start
             if segment_wall_clock_start is None:
