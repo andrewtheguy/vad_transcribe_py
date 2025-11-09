@@ -589,19 +589,18 @@ class AudioTranscriber:
         self.vad_model.reset_states()
 
     def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
-        candidate = timestamp if timestamp is not None else time.time()
         if self._last_transcript_wall_clock is not None:
-            candidate = max(candidate, self._last_transcript_wall_clock)
-        ts_seconds = candidate
+            ts_seconds = self._last_transcript_wall_clock
+        elif timestamp is not None:
+            ts_seconds = timestamp
+        else:
+            ts_seconds = time.time()
         self.transcribe_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
-        now = time.time()
         if ts_seconds is None:
-            ts_seconds = now
-        if ts_seconds > now:
-            ts_seconds = now
+            ts_seconds = time.time()
         ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
         relative_time = 0.0
         if self.wall_clock_reference is not None:
@@ -681,8 +680,6 @@ class AudioTranscriber:
                     backlog_wall_clock_start = self._last_transcript_wall_clock
             if backlog_wall_clock_start is not None:
                 segment_wall_clock_start = backlog_wall_clock_start
-            if segment_wall_clock_start is None and self._last_transcript_wall_clock is not None:
-                segment_wall_clock_start = self._last_transcript_wall_clock
             if segment_wall_clock_start is None:
                 segment_wall_clock_start = None
             segment.wall_clock_start = segment_wall_clock_start
