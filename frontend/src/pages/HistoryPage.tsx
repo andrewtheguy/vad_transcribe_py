@@ -299,65 +299,106 @@ export default function HistoryPage() {
   }, [selectedShow, loadingMore, hasMore, isFollowing, fetchTranscripts])
 
   return (
-    <div className="grid grid-cols-12 gap-6">
-      {/* Left sidebar - Show list */}
-      <div className="col-span-4">
+    <div className="space-y-6">
+      {/* Mobile dropdown - only visible on mobile */}
+      <div className="md:hidden">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <History className="w-5 h-5" />
-              Shows
+              Select Show
             </CardTitle>
-            <CardDescription>
-              Select a show to view its transcript history
-            </CardDescription>
           </CardHeader>
           <CardContent>
             {loading && shows.length === 0 ? (
-              <div className="flex items-center justify-center py-8">
+              <div className="flex items-center justify-center py-4">
                 <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
               </div>
             ) : error && shows.length === 0 ? (
-              <p className="text-rose-500 dark:text-rose-400 text-sm text-center py-4">
+              <p className="text-rose-500 dark:text-rose-400 text-sm text-center py-2">
                 {error}
               </p>
             ) : shows.length === 0 ? (
-              <p className="text-slate-500 dark:text-slate-400 text-sm text-center py-4">
+              <p className="text-slate-500 dark:text-slate-400 text-sm text-center py-2">
                 No shows found. Start recording to create transcripts.
               </p>
             ) : (
-              <div className="space-y-2 max-h-[600px] overflow-y-auto">
+              <select
+                value={selectedShow ?? ''}
+                onChange={(e) => e.target.value && handleSelectShow(e.target.value)}
+                className="w-full p-3 rounded-lg border border-slate-300 bg-white text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-slate-500 focus:border-transparent"
+              >
+                <option value="">Choose a show...</option>
                 {shows.map((show) => (
-                  <button
-                    key={show.name}
-                    onClick={() => handleSelectShow(show.name)}
-                    className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                      selectedShow === show.name
-                        ? 'border-slate-900 bg-slate-100 dark:border-slate-100 dark:bg-slate-800'
-                        : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <div className="font-medium text-sm text-slate-900 dark:text-slate-100 mb-1">
-                      {show.name}
-                    </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      {show.transcript_count.toLocaleString()} transcripts
-                    </div>
-                    {show.latest_timestamp && (
-                      <div className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                        Latest: {formatDate(show.latest_timestamp)}
-                      </div>
-                    )}
-                  </button>
+                  <option key={show.name} value={show.name}>
+                    {show.name} ({show.transcript_count.toLocaleString()} transcripts)
+                  </option>
                 ))}
-              </div>
+              </select>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Right side - Transcript viewer */}
-      <div className="col-span-8">
+      <div className="grid grid-cols-12 gap-6">
+        {/* Left sidebar - Show list (hidden on mobile) */}
+        <div className="hidden md:block md:col-span-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="w-5 h-5" />
+                Shows
+              </CardTitle>
+              <CardDescription>
+                Select a show to view its transcript history
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loading && shows.length === 0 ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                </div>
+              ) : error && shows.length === 0 ? (
+                <p className="text-rose-500 dark:text-rose-400 text-sm text-center py-4">
+                  {error}
+                </p>
+              ) : shows.length === 0 ? (
+                <p className="text-slate-500 dark:text-slate-400 text-sm text-center py-4">
+                  No shows found. Start recording to create transcripts.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                  {shows.map((show) => (
+                    <button
+                      key={show.name}
+                      onClick={() => handleSelectShow(show.name)}
+                      className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                        selectedShow === show.name
+                          ? 'border-slate-900 bg-slate-100 dark:border-slate-100 dark:bg-slate-800'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="font-medium text-sm text-slate-900 dark:text-slate-100 mb-1">
+                        {show.name}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {show.transcript_count.toLocaleString()} transcripts
+                      </div>
+                      {show.latest_timestamp && (
+                        <div className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                          Latest: {formatDate(show.latest_timestamp)}
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Right side - Transcript viewer */}
+        <div className="col-span-12 md:col-span-8">
         <Card>
           <CardHeader>
             <div className="flex items-start justify-between">
@@ -445,6 +486,7 @@ export default function HistoryPage() {
             )}
           </CardContent>
         </Card>
+      </div>
       </div>
     </div>
   )
