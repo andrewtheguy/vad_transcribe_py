@@ -25,6 +25,9 @@ TARGET_SAMPLE_RATE = 16000
 
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
+QUEUE_TIME_LIMIT_SECONDS = 60.0
+QUEUE_RESUME_LIMIT_SECONDS = 15.0
+
 # use ffmpeg to stream audio from url
 @contextmanager
 def stream_url(url):
@@ -264,7 +267,7 @@ class QueueBacklogLimiter:
         if resume_seconds is not None:
             self.resume_seconds = max(0.0, resume_seconds)
         elif self.max_seconds:
-            self.resume_seconds = min(self.max_seconds, 15.0)
+            self.resume_seconds = min(self.max_seconds, QUEUE_RESUME_LIMIT_SECONDS)
         else:
             self.resume_seconds = 0.0
         self._drop_mode = False
@@ -405,6 +408,21 @@ class QueueBacklogLimiter:
                 return
             advance = min(duration_seconds, remaining)
             self._timestamp_consumed_seconds += advance
+
+
+def create_default_queue_limiter(
+        source_label: str,
+        *,
+        resume_seconds: Optional[float] = None,
+) -> "QueueBacklogLimiter":
+    """
+    Convenience wrapper that instantiates a limiter using the shared default cap.
+    """
+    return QueueBacklogLimiter(
+        QUEUE_TIME_LIMIT_SECONDS,
+        source_label=source_label,
+        resume_seconds=resume_seconds,
+    )
 
 class AudioTranscriber:
     def __init__(

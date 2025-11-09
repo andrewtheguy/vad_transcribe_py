@@ -13,7 +13,7 @@ from silero_vad import (load_silero_vad)
 
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter, \
-    TranscriptPersistenceCallback
+    TranscriptPersistenceCallback, create_default_queue_limiter
 from whisper_transcribe_py.mic_recorder import MicRecorder
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 from file_lock import acquire_lock, LockError
@@ -37,9 +37,6 @@ class JsonTranscriptWriter:
             os.makedirs(directory, exist_ok=True)
         with open(self.output_path, "w", encoding="utf-8") as f:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
-
-
-CLI_QUEUE_TIME_LIMIT_SECONDS = 60.0
 
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
@@ -72,7 +69,12 @@ def process_mic(
         show_name: str = "microphone",
         transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
 ):
-    limiter = QueueBacklogLimiter(max_queue_seconds, source_label=show_name) if max_queue_seconds else None
+    if max_queue_seconds is None:
+        limiter = create_default_queue_limiter(show_name)
+    elif max_queue_seconds > 0:
+        limiter = QueueBacklogLimiter(max_queue_seconds, source_label=show_name)
+    else:
+        limiter = None
     MicRecorder(
         q,
         stop_event=stop_event,
@@ -188,7 +190,6 @@ if __name__ == '__main__':
                             'q': audio_input_queue,
                             'language': args.lang,
                             'stop_event': stop_event,
-                            'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
                             'n_threads': args.n_threads if args.n_threads is not None else 1,
                             'show_name': show_name,
                             'transcript_persistence_callback': transcript_writer,
@@ -230,7 +231,7 @@ if __name__ == '__main__':
 
                     audio_input_queue = queue.Queue()
                     stop_event = threading.Event()
-                    queue_limiter = QueueBacklogLimiter(CLI_QUEUE_TIME_LIMIT_SECONDS, source_label=data.get('show_name', 'stream'))
+                    queue_limiter = create_default_queue_limiter(data.get('show_name', 'stream'))
 
                     db_writer = build_database_writer(conn, data['show_name'])
 

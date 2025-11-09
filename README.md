@@ -143,10 +143,11 @@ This will use the 'base' model and 8 threads regardless of what's in the config 
 
 Long-running streams can fall behind if Whisper processing slows down. To avoid unbounded memory growth, producers and consumers share a `QueueBacklogLimiter` (defined in `whisper_transcribe_py/audio_transcriber.py`) that keeps track of how many seconds of unprocessed audio are buffered:
 - If adding a chunk would push the backlog over `max_seconds`, the chunk is dropped and a warning is printed to stderr. This favors staying live over perfect recall.
-- The microphone CLI uses `CLI_QUEUE_TIME_LIMIT_SECONDS` (default 60 s) to cap the recorder queue.
+- The microphone CLI uses `QUEUE_TIME_LIMIT_SECONDS` (default 60 s, defined in `whisper_transcribe_py/audio_transcriber.py`) to cap the recorder queue.
+- Consumers resume normal processing when the backlog shrinks below `QUEUE_RESUME_LIMIT_SECONDS` (default 15 s). This hysteresis prevents rapid oscillation between dropping and accepting chunks.
 - Stream configs wrap both the downloader and the speech detector with the same limiter so dropped chunks reference the show name.
 
-To change the cap, edit `CLI_QUEUE_TIME_LIMIT_SECONDS` in `main.py` or create your own limiter and pass it to `process_queue`, `process_mic`, or `stream_url_thread`. Matching limiter instances for producers and consumers ensures dropped time is accounted for correctly.
+To change the caps, edit `QUEUE_TIME_LIMIT_SECONDS` or `QUEUE_RESUME_LIMIT_SECONDS` in `whisper_transcribe_py/audio_transcriber.py`, or create your own limiter and pass it to `process_queue`, `process_mic`, or `stream_url_thread`. Matching limiter instances for producers and consumers ensures dropped time is accounted for correctly.
 
 ## Web Interface
 
