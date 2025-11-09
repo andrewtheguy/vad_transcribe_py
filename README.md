@@ -1,4 +1,40 @@
-voice activity detection on an audio stream using silero-vad and transcribing the detected voice segments using whispercpp
+# Whisper Transcribe
+
+**Whisper Transcribe** is a real-time speech transcription system that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and [whispercpp](https://github.com/absadiki/pywhispercpp) (a Python binding for whisper.cpp) to transcribe them with high accuracy.
+
+## Key Features
+
+- **Smart Voice Detection**: Uses Silero VAD to detect speech segments, reducing unnecessary processing
+- **Multiple Input Sources**: Process audio files, microphone input, or live audio streams
+- **Real-time Transcription**: Low-latency transcription for live audio sources
+- **Web Interface**: Modern web UI for browser-based microphone recording and transcription
+- **Database Persistence**: Stores transcripts in PostgreSQL with timestamps for easy retrieval
+- **Multi-language Support**: Supports multiple languages including English, Chinese, and Cantonese
+- **Queue Backlog Management**: Prevents memory overflow during long-running sessions
+
+## Quick Start
+
+### Web Interface
+
+The easiest way to use Whisper Transcribe is through the web interface:
+
+```bash
+# Set up database connection (required)
+export DATABASE_URL="postgresql://user:password@localhost/dbname"
+
+# Development mode (hot reload, separate frontend dev server)
+uv run python main.py web --dev
+
+# Production mode (serves built frontend)
+cd frontend && npm run build && cd ..
+uv run python main.py web
+```
+
+Access the web UI at `http://localhost:5002` and start recording from your browser microphone.
+
+### Command Line
+
+For batch processing or automation, use the CLI commands below.
 
 ## Commands
 
@@ -94,3 +130,67 @@ Long-running streams can fall behind if Whisper processing slows down. To avoid 
 - Stream configs wrap both the downloader and the speech detector with the same limiter so dropped chunks reference the show name.
 
 To change the cap, edit `CLI_QUEUE_TIME_LIMIT_SECONDS` in `main.py` or create your own limiter and pass it to `process_queue`, `process_mic`, or `stream_url_thread`. Matching limiter instances for producers and consumers ensures dropped time is accounted for correctly.
+
+## Web Interface
+
+The web interface provides a modern, user-friendly way to interact with Whisper Transcribe through your browser. It supports real-time microphone recording and transcription with instant feedback.
+
+### Features
+
+- **Browser-based Recording**: Record audio directly from your browser microphone
+- **Real-time Transcription**: See transcripts appear as you speak
+- **Session Management**: Each recording session is tracked with a unique ID
+- **Transcript History**: View all transcripts stored in the database by show name
+- **RESTful API**: Access all functionality programmatically via HTTP endpoints
+
+### API Endpoints
+
+**Session Management**
+- `POST /api/transcribe/stream/session` - Create a new streaming session
+  - Request body: `{"language": "en", "sample_rate": 16000}`
+  - Returns: `{"session_id": "uuid-here"}`
+
+**Audio Streaming**
+- `POST /api/transcribe/stream?session_id=<id>&start=<seconds>&sample_rate=16000&language=en` - Send audio chunk
+  - Request body: Raw PCM audio bytes (signed 16-bit little-endian)
+  - Returns: `{"status": "queued", "session_id": "...", "samples": 1234}`
+
+**Transcript Retrieval**
+- `GET /api/transcribe/stream/{session_id}/transcripts?limit=1000` - Get transcripts for a session
+  - Returns latest transcripts with timestamps and content
+- `GET /api/shows` - List all show names with metadata
+- `GET /api/shows/{show_name}/transcripts?offset=0&limit=50` - Get paginated transcripts for a show
+
+**Session Control**
+- `DELETE /api/transcribe/stream/{session_id}` - Stop and close a session
+
+**Health Check**
+- `GET /api/health` - Check server status
+
+### Environment Variables
+
+The web server requires the following environment variables:
+
+- `DATABASE_URL` (required): PostgreSQL connection string
+  - Example: `postgresql://user:password@localhost:5432/whisper_db`
+- `DATABASE_TIMEOUT` (optional): Connection timeout in seconds (default: 10)
+
+### Running the Web Server
+
+See the [Web Setup Guide](WEB_SETUP.md) for detailed instructions on setting up and running the web interface.
+
+## Technology Stack
+
+**Backend**
+- FastAPI - Modern Python web framework
+- Uvicorn - ASGI server with hot reload support
+- PostgreSQL - Transcript persistence
+- silero-vad - Voice activity detection
+- pywhispercpp - Whisper.cpp Python bindings
+
+**Frontend**
+- Vite - Fast build tool and dev server
+- React 18 - UI framework
+- TypeScript - Type safety
+- Tailwind CSS - Utility-first styling
+- shadcn/ui - High-quality component library

@@ -2,6 +2,23 @@
 
 The web interface has been successfully integrated into your Whisper Transcribe project!
 
+## Prerequisites
+
+**Required Environment Variables**
+
+The web server requires a PostgreSQL database connection:
+
+```bash
+export DATABASE_URL="postgresql://user:password@localhost:5432/whisper_db"
+```
+
+Optional:
+```bash
+export DATABASE_TIMEOUT=10  # Connection timeout in seconds (default: 10)
+```
+
+The database schema will be automatically initialized when the web server starts. The server will create a `transcripts` table if it doesn't already exist.
+
 ## Quick Start
 
 ### Development Mode (Recommended for Development)
@@ -85,27 +102,46 @@ whisper_transcribe_py/
 
 ## Current Features
 
-The web interface is a **shell/skeleton** focused on microphone recording, ready for future implementation:
+The web interface provides a fully functional real-time transcription system with browser-based microphone recording.
 
-### Shell UI Components
-- **Microphone Recording**: Centered, focused interface for live microphone recording
-- **Results Panel**: Placeholder for real-time transcription display
+### Implemented Features
+- **Browser Microphone Recording**: Record audio directly from the browser
+- **Real-time Transcription**: Live transcription using HTTP streaming (PCM chunks over POST)
+- **Session Management**: Create, track, and stop transcription sessions
+- **Database Persistence**: All transcripts saved to PostgreSQL with timestamps
+- **Transcript Retrieval**: Fetch transcripts by session or show name with pagination
+- **Show Management**: List all shows and their transcripts from the database
 
-### API Endpoints (Placeholders)
-- `GET /api/health` - Health check (working)
-- `POST /api/transcribe/file` - File transcription (not implemented)
-- `WebSocket /api/transcribe/stream` - Streaming transcription (not implemented)
-- `GET /api/sessions` - Session management (not implemented)
+### API Endpoints (Fully Implemented)
 
-## Next Steps for Implementation
+**Core Transcription**
+- `GET /api/health` - Health check endpoint
+- `POST /api/transcribe/stream/session` - Create a new streaming session
+  - Request: `{"language": "en", "sample_rate": 16000}`
+  - Response: `{"session_id": "uuid"}`
+- `POST /api/transcribe/stream` - Send audio chunk for transcription
+  - Query params: `session_id`, `start`, `sample_rate`, `language`
+  - Body: Raw PCM audio bytes (signed 16-bit little-endian)
+  - Response: `{"status": "queued", "session_id": "...", "samples": 1234}`
+- `DELETE /api/transcribe/stream/{session_id}` - Stop a streaming session
 
-To add microphone recording functionality:
+**Transcript Access**
+- `GET /api/transcribe/stream/{session_id}/transcripts` - Get transcripts for active session
+- `GET /api/shows` - List all show names with statistics
+- `GET /api/shows/{show_name}/transcripts` - Get paginated transcripts for a show
 
-1. **WebSocket Audio Streaming**: Implement WebSocket endpoint at `/api/transcribe/stream` for browser audio streaming
-2. **Frontend Audio Capture**: Add browser MediaRecorder API or Web Audio API to capture microphone input
-3. **Real-time Transcription Display**: Stream transcription results back to frontend via WebSocket
-4. **State Management**: Add React state management for recording status and transcription results
-5. **Optional Database**: Connect to existing PostgreSQL database for storing transcription history
+**Not Yet Implemented**
+- `POST /api/transcribe/file` - File upload transcription (returns 501)
+
+### Architecture
+
+**Audio Streaming Protocol**: Uses HTTP POST (not WebSocket) for audio chunk submission
+- Frontend captures microphone audio using Web Audio API
+- Audio is resampled to 16kHz mono PCM
+- Chunks are sent as raw binary data via POST requests
+- Backend enqueues audio for VAD processing and transcription
+- Transcripts are written to PostgreSQL database
+- Frontend polls for new transcripts or can use session-based retrieval
 
 ## Technologies Used
 
@@ -138,6 +174,19 @@ npm run build
 
 ## Troubleshooting
 
+### Database Connection Required
+The web server **requires** a PostgreSQL database and will not start without it. If you see:
+```
+RuntimeError: DATABASE_URL environment variable is required for web server
+```
+
+Solution:
+```bash
+export DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
+```
+
+Make sure PostgreSQL is running and the connection string is correct.
+
 ### Frontend not built
 If you see "Frontend not built" error:
 ```bash
@@ -147,13 +196,23 @@ npm run build
 ```
 
 ### Port already in use
-Change the port:
+The default port is 5002. To change it:
 ```bash
 uv run python main.py web --port 8080
 ```
 
 ### CORS issues in development
-Make sure to use `--dev` flag when running the backend in development:
+Make sure to use `--dev` flag when running the backend in development mode:
 ```bash
 uv run python main.py web --dev
 ```
+
+This enables CORS for the Vite dev server running on port 5173.
+
+### Cannot run multiple instances
+Only one instance can run at a time due to file locking. If you see:
+```
+Another instance is already running
+```
+
+Stop the other instance first, or use different modes (web vs mic vs stream).
