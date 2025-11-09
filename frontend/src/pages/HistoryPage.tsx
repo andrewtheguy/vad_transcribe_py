@@ -41,7 +41,7 @@ const formatTimestamp = (iso: string) => {
   if (Number.isNaN(date.getTime())) {
     return iso
   }
-  // Display in local timezone with date and time
+  // Display in local timezone with date and time in 24-hour format
   return date.toLocaleString(undefined, {
     year: 'numeric',
     month: 'short',
@@ -49,6 +49,7 @@ const formatTimestamp = (iso: string) => {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    hour12: false,
   })
 }
 
