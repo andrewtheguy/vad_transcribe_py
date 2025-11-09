@@ -589,12 +589,20 @@ class AudioTranscriber:
         self.vad_model.reset_states()
 
     def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
+        """
+        Emit a placeholder segment when backlog forces audio shedding.
+        Prefer the provided drop timestamp so the notice aligns with the actual
+        drop event, but never move backwards relative to the last transcript.
+        """
+        ts_candidates: list[float] = []
+        if timestamp is not None:
+            ts_candidates.append(timestamp)
         if self._last_transcript_wall_clock is not None:
-            ts_seconds = self._last_transcript_wall_clock
-        elif timestamp is not None:
-            ts_seconds = timestamp
-        else:
-            ts_seconds = time.time()
+            # Keep timestamps monotonic if we already emitted segments.
+            ts_candidates.append(self._last_transcript_wall_clock)
+        if not ts_candidates:
+            ts_candidates.append(time.time())
+        ts_seconds = max(ts_candidates)
         self.transcribe_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
