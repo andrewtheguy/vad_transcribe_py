@@ -16,6 +16,7 @@ from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_g
     TranscriptPersistenceCallback
 from whisper_transcribe_py.mic_recorder import MicRecorder
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
+from file_lock import acquire_lock, LockError
 
 
 class JsonTranscriptWriter:
@@ -120,160 +121,182 @@ if __name__ == '__main__':
             print("Please provide an --output path for the JSON transcript")
             exit(1)
 
-        output_path = args.output
-        transcript_writer = JsonTranscriptWriter(output_path)
-
-        audio_input_queue = queue.Queue()
-        stop_event = threading.Event()
-
-        # Create a new thread
-        thread_transcribe = threading.Thread(target=process_queue, kwargs={
-            'q': audio_input_queue,
-            'language': args.lang,
-            'segment_callback': transcript_writer.add_segment,
-            'timestamp_strategy': 'relative',
-            'transcribe_model_size': args.model if args.model is not None else 'large-v3-turbo',
-            'n_threads': args.n_threads if args.n_threads is not None else 1,
-            'stop_event': stop_event,
-        })
-
-        # Start the thread
-        thread_transcribe.start()
-
-        ts = 0
-        interrupted = False
         try:
-            with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
-                while True:
-                    if stop_event.is_set():
-                        break
-                    chunk = stdout.read(4096)
-                    if not chunk:
-                        break
-                    audio = pcm_s16le_to_float32(chunk)
-                    audio_input_queue.put(AudioSegment(audio=audio, start=ts))
-                    ts += len(audio) / TARGET_SAMPLE_RATE
-        except KeyboardInterrupt:
-            interrupted = True
-            print("\nCtrl+C received, stopping transcription...", file=sys.stderr)
-        finally:
-            _request_shutdown(stop_event, audio_input_queue)
-            thread_transcribe.join()
+            with acquire_lock('file'):
+                output_path = args.output
+                transcript_writer = JsonTranscriptWriter(output_path)
 
-        transcript_writer.flush()
-        if interrupted:
-            print(f"Transcript written to {output_path} (partial)")
-        else:
-            print(f"Transcript written to {output_path}")
+                audio_input_queue = queue.Queue()
+                stop_event = threading.Event()
+
+                # Create a new thread
+                thread_transcribe = threading.Thread(target=process_queue, kwargs={
+                    'q': audio_input_queue,
+                    'language': args.lang,
+                    'segment_callback': transcript_writer.add_segment,
+                    'timestamp_strategy': 'relative',
+                    'transcribe_model_size': args.model if args.model is not None else 'large-v3-turbo',
+                    'n_threads': args.n_threads if args.n_threads is not None else 1,
+                    'stop_event': stop_event,
+                })
+
+                # Start the thread
+                thread_transcribe.start()
+
+                ts = 0
+                interrupted = False
+                try:
+                    with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+                        while True:
+                            if stop_event.is_set():
+                                break
+                            chunk = stdout.read(4096)
+                            if not chunk:
+                                break
+                            audio = pcm_s16le_to_float32(chunk)
+                            audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                            ts += len(audio) / TARGET_SAMPLE_RATE
+                except KeyboardInterrupt:
+                    interrupted = True
+                    print("\nCtrl+C received, stopping transcription...", file=sys.stderr)
+                finally:
+                    _request_shutdown(stop_event, audio_input_queue)
+                    thread_transcribe.join()
+
+                transcript_writer.flush()
+                if interrupted:
+                    print(f"Transcript written to {output_path} (partial)")
+                else:
+                    print(f"Transcript written to {output_path}")
+        except LockError as e:
+            print(str(e), file=sys.stderr)
+            exit(1)
 
         #AudioTranscriber().process_silero(audio)
     elif args.action == 'mic':
-        audio_input_queue = queue.Queue()
-        stop_event = threading.Event()
-        show_name = "microphone"
+        try:
+            with acquire_lock('mic_web'):
+                audio_input_queue = queue.Queue()
+                stop_event = threading.Event()
+                show_name = "microphone"
 
-        with connect_to_database() as conn:
-            transcript_writer = build_database_writer(conn, show_name)
-            thread_transcribe = threading.Thread(
-                target=process_mic,
-                kwargs={
-                    'q': audio_input_queue,
-                    'language': args.lang,
-                    'stop_event': stop_event,
-                    'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
-                    'n_threads': args.n_threads if args.n_threads is not None else 1,
-                    'show_name': show_name,
-                    'transcript_persistence_callback': transcript_writer,
-                },
-            )
+                with connect_to_database() as conn:
+                    transcript_writer = build_database_writer(conn, show_name)
+                    thread_transcribe = threading.Thread(
+                        target=process_mic,
+                        kwargs={
+                            'q': audio_input_queue,
+                            'language': args.lang,
+                            'stop_event': stop_event,
+                            'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
+                            'n_threads': args.n_threads if args.n_threads is not None else 1,
+                            'show_name': show_name,
+                            'transcript_persistence_callback': transcript_writer,
+                        },
+                    )
 
-            # Start the thread
-            thread_transcribe.start()
+                    # Start the thread
+                    thread_transcribe.start()
 
-            def stop_mic():
-                _request_shutdown(stop_event, audio_input_queue)
+                    def stop_mic():
+                        _request_shutdown(stop_event, audio_input_queue)
 
-            print("Press Ctrl+C to stop microphone capture.")
-            try:
-                while not stop_event.wait(timeout=1):
-                    pass
-            except KeyboardInterrupt:
-                print("\nCtrl+C received, stopping microphone capture...", file=sys.stderr)
-                stop_mic()
+                    print("Press Ctrl+C to stop microphone capture.")
+                    try:
+                        while not stop_event.wait(timeout=1):
+                            pass
+                    except KeyboardInterrupt:
+                        print("\nCtrl+C received, stopping microphone capture...", file=sys.stderr)
+                        stop_mic()
 
-            thread_transcribe.join()
+                    thread_transcribe.join()
+        except LockError as e:
+            print(str(e), file=sys.stderr)
+            exit(1)
     elif args.action == 'stream':
         if args.lang:
             raise ValueError("Language should be provided in the config file rather than as a command line argument")
+
+        # Load config first to get show_name for lock
         with open(args.config, "rb") as f:
             data = tomllib.load(f)
 
-        # Connect to an existing database
-        with connect_to_database() as conn:
-            # Initialize database schema
-            initialize_database_schema(conn)
+        try:
+            with acquire_lock('stream', show_name=data.get('show_name')):
+                # Connect to an existing database
+                with connect_to_database() as conn:
+                    # Initialize database schema
+                    initialize_database_schema(conn)
 
-            audio_input_queue = queue.Queue()
-            stop_event = threading.Event()
-            queue_limiter = QueueBacklogLimiter(CLI_QUEUE_TIME_LIMIT_SECONDS, source_label=data.get('show_name', 'stream'))
+                    audio_input_queue = queue.Queue()
+                    stop_event = threading.Event()
+                    queue_limiter = QueueBacklogLimiter(CLI_QUEUE_TIME_LIMIT_SECONDS, source_label=data.get('show_name', 'stream'))
 
-            db_writer = build_database_writer(conn, data['show_name'])
+                    db_writer = build_database_writer(conn, data['show_name'])
 
-            # Create a new thread
-            thread_transcribe = threading.Thread(target=process_queue,  kwargs={
-                'q': audio_input_queue,
-                'language': data['language'],
-                'save_audio': False,
-                'show_name': data['show_name'],
-                'transcript_persistence_callback': db_writer,
-                'transcribe_model_size': args.model if args.model is not None else data.get('transcribe_model_size', 'large-v3-turbo'),
-                'n_threads': args.n_threads if args.n_threads is not None else int(data.get('n_threads', 1)),
-                'stop_event': stop_event,
-                'queue_backlog_limiter': queue_limiter,
-            })
+                    # Create a new thread
+                    thread_transcribe = threading.Thread(target=process_queue,  kwargs={
+                        'q': audio_input_queue,
+                        'language': data['language'],
+                        'save_audio': False,
+                        'show_name': data['show_name'],
+                        'transcript_persistence_callback': db_writer,
+                        'transcribe_model_size': args.model if args.model is not None else data.get('transcribe_model_size', 'large-v3-turbo'),
+                        'n_threads': args.n_threads if args.n_threads is not None else int(data.get('n_threads', 1)),
+                        'stop_event': stop_event,
+                        'queue_backlog_limiter': queue_limiter,
+                    })
 
-            # Start the thread
-            thread_transcribe.start()
+                    # Start the thread
+                    thread_transcribe.start()
 
-            url = data['url']
+                    url = data['url']
 
-            thread_streaming = threading.Thread(
-                target=stream_url_thread,
-                kwargs={
-                    'url': url,
-                    'audio_input_queue': audio_input_queue,
-                    'stop_event': stop_event,
-                    'queue_limiter': queue_limiter,
-                },
-                daemon=True
-            )
+                    thread_streaming = threading.Thread(
+                        target=stream_url_thread,
+                        kwargs={
+                            'url': url,
+                            'audio_input_queue': audio_input_queue,
+                            'stop_event': stop_event,
+                            'queue_limiter': queue_limiter,
+                        },
+                        daemon=True
+                    )
 
-            thread_streaming.start()
+                    thread_streaming.start()
 
-            def stop_stream():
-                _request_shutdown(stop_event, audio_input_queue)
+                    def stop_stream():
+                        _request_shutdown(stop_event, audio_input_queue)
 
-            print("Press Ctrl+C to stop streaming.")
-            try:
-                while not stop_event.wait(timeout=1):
-                    pass
-            except KeyboardInterrupt:
-                print("\nCtrl+C received, stopping stream...", file=sys.stderr)
-                stop_stream()
+                    print("Press Ctrl+C to stop streaming.")
+                    try:
+                        while not stop_event.wait(timeout=1):
+                            pass
+                    except KeyboardInterrupt:
+                        print("\nCtrl+C received, stopping stream...", file=sys.stderr)
+                        stop_stream()
 
-            stop_stream()
-            thread_transcribe.join()
-        print("thread_transcribe joined")
+                    stop_stream()
+                    thread_transcribe.join()
+                print("thread_transcribe joined")
+        except LockError as e:
+            print(str(e), file=sys.stderr)
+            exit(1)
         #thread_streaming.join()
     elif args.action == 'web':
         from whisper_transcribe_py.api.server import run_server
 
-        print(f"Starting web server on {args.host}:{args.port}")
-        if args.dev:
-            print("Development mode enabled - CORS and hot reload active")
-            print("Frontend dev server: http://localhost:5173")
-        print(f"API server: http://{args.host}:{args.port}")
+        try:
+            with acquire_lock('mic_web'):
+                print(f"Starting web server on {args.host}:{args.port}")
+                if args.dev:
+                    print("Development mode enabled - CORS and hot reload active")
+                    print("Frontend dev server: http://localhost:5173")
+                print(f"API server: http://{args.host}:{args.port}")
 
-        run_server(host=args.host, port=args.port, dev=args.dev)
+                run_server(host=args.host, port=args.port, dev=args.dev)
+        except LockError as e:
+            print(str(e), file=sys.stderr)
+            exit(1)
     else:
         raise ValueError("Invalid action {}".format(args.action))
