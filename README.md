@@ -129,8 +129,8 @@ show_name = 'my_show'                     # Show identifier for database
 language = 'en'                           # Language code (e.g., 'en', 'zh', 'yue')
 
 # Optional fields
-transcribe_model_size = 'large-v3-turbo'  # Whisper model size (default: 'large-v3-turbo')
-n_threads = 4                             # Number of threads for Whisper (default: 1)
+model = 'large-v3-turbo'  # Whisper model name or path (default: 'large-v3-turbo')
+n_threads = 4             # Number of threads for Whisper (default: 1)
 ```
 
 **Note:** Command line arguments take priority over config file settings. For example:

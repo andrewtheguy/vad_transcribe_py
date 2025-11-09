@@ -43,7 +43,7 @@ CLI_QUEUE_TIME_LIMIT_SECONDS = 60.0
 
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
-                  transcript_persistence_callback=None,transcribe_model_size='large-v3-turbo',segment_callback=None,
+                  transcript_persistence_callback=None,model='large-v3-turbo',segment_callback=None,
                   timestamp_strategy='wall_clock',n_threads=1, stop_event=None,
                   queue_backlog_limiter: Optional[QueueBacklogLimiter] = None):
     print("process_queue")
@@ -53,7 +53,7 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
     AudioTranscriber(audio_input_queue=q,
                      language=language,
                      show_name=show_name,
-                     transcribe_model_size=transcribe_model_size,
+                     model=model,
                      audio_segment_callback=audio_segment_callback,
                      transcript_persistence_callback=transcript_persistence_callback,
                      segment_callback=segment_callback,
@@ -135,7 +135,7 @@ if __name__ == '__main__':
                     'language': args.lang,
                     'segment_callback': transcript_writer.add_segment,
                     'timestamp_strategy': 'relative',
-                    'transcribe_model_size': args.model if args.model is not None else 'large-v3-turbo',
+                    'model': args.model if args.model is not None else 'large-v3-turbo',
                     'n_threads': args.n_threads if args.n_threads is not None else 1,
                     'stop_event': stop_event,
                 })
@@ -241,7 +241,7 @@ if __name__ == '__main__':
                         'save_audio': False,
                         'show_name': data['show_name'],
                         'transcript_persistence_callback': db_writer,
-                        'transcribe_model_size': args.model if args.model is not None else data.get('transcribe_model_size', 'large-v3-turbo'),
+                        'model': args.model if args.model is not None else data.get('model', 'large-v3-turbo'),
                         'n_threads': args.n_threads if args.n_threads is not None else int(data.get('n_threads', 1)),
                         'stop_event': stop_event,
                         'queue_backlog_limiter': queue_limiter,

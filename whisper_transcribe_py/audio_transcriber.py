@@ -412,7 +412,7 @@ class AudioTranscriber:
             audio_input_queue: queue.Queue[AudioSegment],
             language: str,
             show_name="unknown",
-            transcribe_model_size="large-v3-turbo",
+            model="large-v3-turbo",
             audio_segment_callback: Optional[AudioSegmentCallback] = None,
             transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
             segment_callback: Optional[Callable[..., None]] = None,
@@ -430,7 +430,7 @@ class AudioTranscriber:
         self.transcript_persistence_callback = transcript_persistence_callback
         self.ts_transcribe_start = None
         self.show_name = show_name
-        self.transcribe_model_size = transcribe_model_size
+        self.model = model
         self.segment_callback = segment_callback
         self.timestamp_strategy = timestamp_strategy
         self.current_audio_offset = 0.0
@@ -454,7 +454,7 @@ class AudioTranscriber:
     def _load_whisper_cpp(self):
         from pywhispercpp.model import Model
 
-        self.whisper_cpp_model = Model(self.transcribe_model_size,
+        self.whisper_cpp_model = Model(self.model,
 
                                        print_realtime=False,
                                        print_progress=False,
