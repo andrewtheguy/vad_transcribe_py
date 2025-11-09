@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 from silero_vad import (load_silero_vad)
 
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
-    AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter
+    AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter, \
+    TranscriptPersistenceCallback
 from whisper_transcribe_py.mic_recorder import MicRecorder
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 
@@ -61,9 +62,24 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                      queue_backlog_limiter=queue_backlog_limiter,
                      ).process_input(TARGET_SAMPLE_RATE)
 
-def process_mic(q,language, stop_event=None, max_queue_seconds: Optional[float] = None, n_threads: int = 1):
-    limiter = QueueBacklogLimiter(max_queue_seconds, source_label="microphone") if max_queue_seconds else None
-    MicRecorder(q, stop_event=stop_event, queue_limiter=limiter, n_threads=n_threads).record(language=language)
+def process_mic(
+        q,
+        language,
+        stop_event=None,
+        max_queue_seconds: Optional[float] = None,
+        n_threads: int = 1,
+        show_name: str = "microphone",
+        transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
+):
+    limiter = QueueBacklogLimiter(max_queue_seconds, source_label=show_name) if max_queue_seconds else None
+    MicRecorder(
+        q,
+        stop_event=stop_event,
+        queue_limiter=limiter,
+        n_threads=n_threads,
+        show_name=show_name,
+        transcript_persistence_callback=transcript_persistence_callback,
+    ).record(language=language)
 
 
 def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
@@ -158,32 +174,38 @@ if __name__ == '__main__':
     elif args.action == 'mic':
         audio_input_queue = queue.Queue()
         stop_event = threading.Event()
-        thread_transcribe = threading.Thread(
-            target=process_mic,
-            kwargs={
-                'q': audio_input_queue,
-                'language': args.lang,
-                'stop_event': stop_event,
-                'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
-                'n_threads': args.n_threads if args.n_threads is not None else 1,
-            },
-        )
+        show_name = "microphone"
 
-        # Start the thread
-        thread_transcribe.start()
+        with connect_to_database() as conn:
+            transcript_writer = build_database_writer(conn, show_name)
+            thread_transcribe = threading.Thread(
+                target=process_mic,
+                kwargs={
+                    'q': audio_input_queue,
+                    'language': args.lang,
+                    'stop_event': stop_event,
+                    'max_queue_seconds': CLI_QUEUE_TIME_LIMIT_SECONDS,
+                    'n_threads': args.n_threads if args.n_threads is not None else 1,
+                    'show_name': show_name,
+                    'transcript_persistence_callback': transcript_writer,
+                },
+            )
 
-        def stop_mic():
-            _request_shutdown(stop_event, audio_input_queue)
+            # Start the thread
+            thread_transcribe.start()
 
-        print("Press Ctrl+C to stop microphone capture.")
-        try:
-            while not stop_event.wait(timeout=1):
-                pass
-        except KeyboardInterrupt:
-            print("\nCtrl+C received, stopping microphone capture...", file=sys.stderr)
-            stop_mic()
+            def stop_mic():
+                _request_shutdown(stop_event, audio_input_queue)
 
-        thread_transcribe.join()
+            print("Press Ctrl+C to stop microphone capture.")
+            try:
+                while not stop_event.wait(timeout=1):
+                    pass
+            except KeyboardInterrupt:
+                print("\nCtrl+C received, stopping microphone capture...", file=sys.stderr)
+                stop_mic()
+
+            thread_transcribe.join()
     elif args.action == 'stream':
         if args.lang:
             raise ValueError("Language should be provided in the config file rather than as a command line argument")

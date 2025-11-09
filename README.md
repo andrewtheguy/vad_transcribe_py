@@ -34,7 +34,7 @@ uv run python main.py mic --lang en
 **Behavior:**
 - Records audio from default microphone
 - Transcribes speech segments to console output
-- Does NOT save to file or database
+- Persists transcripts to the `transcripts` table with show name `microphone`
 - Press 'q' + Enter to quit
 
 **Required arguments:**
