@@ -9,7 +9,7 @@
 - **Real-time Transcription**: Low-latency transcription for live audio sources
 - **Web Interface**: Modern web UI for browser-based microphone recording and transcription
 - **Database Persistence**: Stores transcripts in PostgreSQL with timestamps for easy retrieval
-- **Multi-language Support**: Supports multiple languages including English, Chinese, and Cantonese
+- **Multi-language Support**: Supports all languages available in Whisper models through cli arguments. Currently English, Spanish, Mandarin, and Cantonese is selectable in the web UI to reduce clutter, but others can be added to the web UI dropdown list.
 - **Queue Backlog Management**: Prevents memory overflow during long-running sessions
 
 ## Quick Start
@@ -53,7 +53,7 @@ uv run python main.py file --file /path/to/file --lang en --output /path/to/outp
 
 **Required arguments:**
 - `--file`: Path to audio file
-- `--lang`: Language code (e.g., 'en', 'zh', 'yue')
+- `--lang`: Language code (e.g., 'en', 'es', 'zh', 'yue', etc.)
 - `--output`: Path for JSON output file
 
 **Optional arguments:**
