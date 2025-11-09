@@ -611,9 +611,6 @@ class AudioTranscriber:
         Emit a placeholder segment when backlog forces audio shedding.
         Prefer the provided drop timestamp so the notice aligns with the actual
         drop event, but never move backwards relative to the last transcript.
-
-        Note: We put the notice into audio_input_queue instead of transcribe_queue
-        to maintain proper chronological ordering with other audio segments.
         """
         ts_candidates: list[float] = []
         if timestamp is not None:
@@ -624,7 +621,7 @@ class AudioTranscriber:
         if not ts_candidates:
             ts_candidates.append(time.time())
         ts_seconds = max(ts_candidates)
-        self.audio_input_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
+        self.transcribe_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
