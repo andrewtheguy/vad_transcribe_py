@@ -35,7 +35,6 @@ uv run python main.py mic --lang en
 - Records audio from default microphone
 - Transcribes speech segments to console output
 - Persists transcripts to the `transcripts` table with show name `microphone`
-- Press 'q' + Enter to quit
 
 **Required arguments:**
 - `--lang`: Language code (e.g., 'en', 'zh', 'yue')
@@ -55,7 +54,6 @@ uv run python main.py stream --config configs/rthk2.toml
 - Saves transcripts to PostgreSQL database
 - Creates `transcripts` table automatically if it doesn't exist
 - Uses wall clock timestamps
-- Press 'q' to quit
 
 **Required arguments:**
 - `--config`: Path to TOML configuration file
