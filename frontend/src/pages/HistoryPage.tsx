@@ -23,7 +23,8 @@ type Show = {
 
 type TranscriptRow = {
   id: number
-  timestamp: string
+  start_timestamp: string
+  end_timestamp: string
   content: string
 }
 
@@ -473,7 +474,7 @@ export default function HistoryPage() {
                         className="rounded border border-slate-200 bg-white/80 px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-800/80"
                       >
                         <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                          {formatTimestamp(row.timestamp)}
+                          {formatTimestamp(row.start_timestamp)}
                         </span>
                         <span className="ml-2 whitespace-pre-wrap text-slate-700 dark:text-slate-200">
                           {row.content}
