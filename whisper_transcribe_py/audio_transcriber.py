@@ -203,8 +203,9 @@ class AudioSegment:
 
 
 @dataclass
-class DropNotice:
-    timestamp: Optional[float]
+class TranscriptionNotice:
+    text: str
+    timestamp: Optional[float] = None
 
 
 @dataclass
@@ -487,13 +488,7 @@ class AudioTranscriber:
         #    print("Speech detected")
 
     def _transcribe(self):
-        #if self.transcribe_backend == "faster-whisper":
-        #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
-        #    #self._transcribe_faster_whisper()
-        #elif self.transcribe_backend == "whispercpp":
-            self._transcribe_whisper_cpp()
-        #else:
-        #    raise ValueError(f"Unsupported transcribe backend {self.transcribe_backend}")
+        self._transcribe_whisper_cpp()
 
     def _new_segment_callback(self, segment):
         relative_start = self.current_audio_offset + segment.t0 / 1000
@@ -540,8 +535,8 @@ class AudioTranscriber:
             if queued_item is None:
                 #print("finished transcribing audio",file=sys.stderr)
                 break
-            if isinstance(queued_item, DropNotice):
-                self._emit_drop_notice(queued_item.timestamp)
+            if isinstance(queued_item, TranscriptionNotice):
+                self._emit_notice(queued_item.text, queued_item.timestamp)
                 continue
             if isinstance(queued_item, AudioSegment):
                 audio = queued_item.audio
@@ -576,74 +571,6 @@ class AudioTranscriber:
             ):
                 self.queue_backlog_limiter.consume(segment_duration_seconds)
 
-
-    def _transcribe_faster_whisper(self):
-
-        while True:
-            queued_item = self.transcribe_queue.get(block=True)
-            if queued_item is None:
-                print("finished transcribing audio",file=sys.stderr)
-                break
-            if isinstance(queued_item, DropNotice):
-                self._emit_drop_notice(queued_item.timestamp)
-                continue
-            if isinstance(queued_item, AudioSegment):
-                audio = queued_item.audio
-                segment_offset = queued_item.start
-            else:
-                audio = queued_item
-                segment_offset = 0.0
-
-            self.current_audio_offset = segment_offset
-
-            wall_clock_start = getattr(queued_item, "wall_clock_start", None)
-            if self.timestamp_strategy == "wall_clock":
-                if wall_clock_start is not None:
-                    self.ts_transcribe_start = wall_clock_start
-                elif self.wall_clock_reference is not None:
-                    self.ts_transcribe_start = self.wall_clock_reference + segment_offset
-                else:
-                    self.ts_transcribe_start = time.time()
-            else:
-                self.ts_transcribe_start = segment_offset
-
-            # else:
-            #     sf.write("./tmp/tmp.wav", audio, TARGET_SAMPLE_RATE)
-            #continue
-            # new_sample_rate = 16000
-            #
-            # original_sample_rate = TARGET_SAMPLE_RATE
-            #
-            # # Resample
-            # num_samples = int(len(audio) * new_sample_rate / original_sample_rate)
-            #
-            # resampled_audio = scipy.signal.resample(audio, num_samples)
-
-            print("transcribing audio")
-            segments, info = self.faster_whisper_model.transcribe(audio, beam_size=5, language=self.language)
-
-            #print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
-
-            for segment in segments:
-                print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
-            # or run on GPU with INT8
-            # model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
-            # or run on CPU with INT8
-            # model = WhisperModel(model_size, device="cpu", compute_type="int8")
-
-            segment_duration_seconds = None
-            if isinstance(queued_item, AudioSegment):
-                segment_duration_seconds = queued_item.duration_seconds
-            if segment_duration_seconds is None and audio is not None:
-                segment_duration_seconds = len(audio) / TARGET_SAMPLE_RATE
-            if (
-                    self.queue_backlog_limiter is not None
-                    and segment_duration_seconds is not None
-                    and segment_duration_seconds > 0
-            ):
-                self.queue_backlog_limiter.consume(segment_duration_seconds)
-
-
     def _process_end_of_speech(self, speech_section, last_has_speech_ts, wall_clock_start):
         s = np.asarray(speech_section)
         start_ts = last_has_speech_ts if last_has_speech_ts is not None else 0.0
@@ -664,20 +591,21 @@ class AudioTranscriber:
         self.vad_model.reset_states()
 
     def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
-        ts_seconds = self._last_transcript_wall_clock
+        ts_seconds = timestamp if timestamp is not None else self._last_transcript_wall_clock
         if ts_seconds is None:
-            ts_seconds = timestamp
-        self.transcribe_queue.put(DropNotice(ts_seconds))
+            ts_seconds = time.time()
+        self.transcribe_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
 
-    def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
+    def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
         if ts_seconds is None:
             ts_seconds = time.time()
+        if self._last_transcript_wall_clock is not None:
+            ts_seconds = max(ts_seconds, self._last_transcript_wall_clock)
         ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
         relative_time = 0.0
         if self.wall_clock_reference is not None:
             relative_time = max(0.0, ts_seconds - self.wall_clock_reference)
-        text = "(transcript temporarily dropped)"
         print(f"[{ts_dt} -> {ts_dt}] {text}")
         if self.transcript_persistence_callback is not None:
             segment_payload = TranscribedSegment(
@@ -693,6 +621,10 @@ class AudioTranscriber:
         if self.segment_callback is not None:
             self.segment_callback(start=relative_time, end=relative_time, text=text)
         self._last_transcript_wall_clock = ts_seconds
+        return ts_seconds
+
+    def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
+        self._emit_notice("(transcript temporarily dropped)", wall_clock_ts)
 
     def process_input(self,input_sample_rate):
 
@@ -731,6 +663,9 @@ class AudioTranscriber:
             if segment is None:
                 print("end of audio",ts,file=sys.stderr)
                 break
+            if isinstance(segment, TranscriptionNotice):
+                self.transcribe_queue.put(segment)
+                continue
             segment_duration = segment.duration_seconds
             if segment_duration is None and segment.audio is not None:
                 segment_duration = len(segment.audio) / input_sample_rate
@@ -883,6 +818,7 @@ def stream_url_thread(
             logging.warning("ffmpeg stream exited unexpectedly (%s); retrying shortly.", exc)
         if stop_event is not None and stop_event.is_set():
             break
+        audio_input_queue.put(TranscriptionNotice("(transcript source temporary error)", time.time()))
         print("stream_stopped, restarting", file=sys.stderr)
         sleep(0.5)
     print("stream_url_thread exiting", file=sys.stderr)
