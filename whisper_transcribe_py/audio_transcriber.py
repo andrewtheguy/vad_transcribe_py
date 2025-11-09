@@ -26,7 +26,7 @@ TARGET_SAMPLE_RATE = 16000
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
 QUEUE_TIME_LIMIT_SECONDS = 30.0
-QUEUE_RESUME_LIMIT_SECONDS = 5.0
+QUEUE_RESUME_LIMIT_SECONDS = 10.0
 
 # use ffmpeg to stream audio from url
 @contextmanager
@@ -444,6 +444,7 @@ class AudioTranscriber:
     ):
         self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
+        self._pending_drop_notices: queue.Queue[TranscriptionNotice] = queue.Queue()
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.audio_segment_callback = audio_segment_callback
@@ -607,6 +608,7 @@ class AudioTranscriber:
             )
         )
         self.vad_model.reset_states()
+        self._flush_pending_drop_notices()
 
     def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
         """
@@ -623,7 +625,7 @@ class AudioTranscriber:
         if not ts_candidates:
             ts_candidates.append(time.time())
         ts_seconds = max(ts_candidates)
-        self.transcribe_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
+        self._pending_drop_notices.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
@@ -652,6 +654,14 @@ class AudioTranscriber:
 
     def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
         self._emit_notice("(transcript temporarily dropped)", wall_clock_ts)
+
+    def _flush_pending_drop_notices(self) -> None:
+        while True:
+            try:
+                notice = self._pending_drop_notices.get_nowait()
+            except queue.Empty:
+                break
+            self.transcribe_queue.put(notice)
 
     def process_input(self,input_sample_rate):
 
@@ -783,6 +793,9 @@ class AudioTranscriber:
 
                 prev_has_speech = has_speech
 
+                if not prev_has_speech and len(speech_section) == 0:
+                    self._flush_pending_drop_notices()
+
                 if ts is not None:
                     ts += window_seconds
                 if ts_wall_clock is not None:
@@ -808,6 +821,7 @@ class AudioTranscriber:
                 except queue.Empty:
                     break
 
+        self._flush_pending_drop_notices()
         self.transcribe_queue.put(None)
         transcribing_thread.join()
 
