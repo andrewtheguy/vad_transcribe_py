@@ -460,7 +460,6 @@ class AudioTranscriber:
         self.queue_backlog_limiter = queue_backlog_limiter
         self._pending_silence_seconds = 0.0
         self._last_transcript_wall_clock: Optional[float] = None
-        self._last_transcribed_segment_end: Optional[float] = None
         if self.queue_backlog_limiter is not None:
             self.queue_backlog_limiter.register_drop_callback(self._handle_drop_notice)
         #if transcribe_backend == "faster-whisper":
@@ -544,11 +543,9 @@ class AudioTranscriber:
             self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
 
         if self.timestamp_strategy == "wall_clock" and ts_end_dt is not None:
-            ts_end_seconds = ts_end_dt.timestamp()
+            self._last_transcript_wall_clock = ts_end_dt.timestamp()
         else:
-            ts_end_seconds = time.time()
-        self._last_transcript_wall_clock = ts_end_seconds
-        self._last_transcribed_segment_end = ts_end_seconds
+            self._last_transcript_wall_clock = time.time()
 
     def _transcribe_whisper_cpp(self):
         while True:
@@ -614,17 +611,18 @@ class AudioTranscriber:
     def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
         """
         Emit a placeholder segment when backlog forces audio shedding.
-        Prefer to anchor the notice to the end of the last successfully
-        transcribed segment so users see precisely where the transcript stopped.
+        Prefer the provided drop timestamp so the notice aligns with the actual
+        drop event, but never move backwards relative to the last transcript.
         """
-        if self._last_transcribed_segment_end is not None:
-            ts_seconds = self._last_transcribed_segment_end
-        elif timestamp is not None:
-            ts_seconds = timestamp
-        elif self._last_transcript_wall_clock is not None:
-            ts_seconds = self._last_transcript_wall_clock
-        else:
-            ts_seconds = time.time()
+        ts_candidates: list[float] = []
+        if timestamp is not None:
+            ts_candidates.append(timestamp)
+        if self._last_transcript_wall_clock is not None:
+            # Keep timestamps monotonic if we already emitted segments.
+            ts_candidates.append(self._last_transcript_wall_clock)
+        if not ts_candidates:
+            ts_candidates.append(time.time())
+        ts_seconds = max(ts_candidates)
         self.transcribe_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
