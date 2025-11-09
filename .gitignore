@@ -170,3 +170,5 @@ cython_debug/
 tmp/
 
 .env
+
+.idea/
