@@ -26,7 +26,7 @@ TARGET_SAMPLE_RATE = 16000
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
 QUEUE_TIME_LIMIT_SECONDS = 30.0
-QUEUE_RESUME_LIMIT_SECONDS = 5.0
+QUEUE_RESUME_LIMIT_SECONDS = 10.0
 
 # use ffmpeg to stream audio from url
 @contextmanager
@@ -312,6 +312,14 @@ class QueueBacklogLimiter:
         estimate = max(processing_estimate, live_estimate)
         return min(estimate, time.time())
 
+    def _estimate_drop_notice_timestamp_locked(self) -> Optional[float]:
+        """Estimate the wall-clock time of the newest buffered audio."""
+        base_timestamp = self._estimate_next_chunk_timestamp_locked()
+        if base_timestamp is None:
+            return None
+        latest_timestamp = base_timestamp + self.current_seconds
+        return min(latest_timestamp, time.time())
+
     def register_drop_callback(self, callback: Callable[[Optional[float]], None]) -> None:
         if callback is None:
             return
@@ -350,7 +358,9 @@ class QueueBacklogLimiter:
             if self.current_seconds + duration_seconds > self.max_seconds:
                 if not self._drop_mode or not self._drop_notice_active:
                     callbacks_to_notify = list(self._drop_callbacks)
-                    drop_notice_timestamp = time.time()
+                    drop_notice_timestamp = self._estimate_drop_notice_timestamp_locked()
+                    if drop_notice_timestamp is None:
+                        drop_notice_timestamp = time.time()
                     self._drop_notice_active = True
                 self._drop_mode = True
                 self._dropped_seconds += duration_seconds
@@ -444,6 +454,7 @@ class AudioTranscriber:
     ):
         self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
+        self._notice_queue: queue.Queue[TranscriptionNotice] = queue.Queue()
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.audio_segment_callback = audio_segment_callback
@@ -460,6 +471,7 @@ class AudioTranscriber:
         self.queue_backlog_limiter = queue_backlog_limiter
         self._pending_silence_seconds = 0.0
         self._last_transcript_wall_clock: Optional[float] = None
+        self._timeline_lock = threading.Lock()
         if self.queue_backlog_limiter is not None:
             self.queue_backlog_limiter.register_drop_callback(self._handle_drop_notice)
         #if transcribe_backend == "faster-whisper":
@@ -543,14 +555,18 @@ class AudioTranscriber:
             self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
 
         if self.timestamp_strategy == "wall_clock" and ts_end_dt is not None:
-            self._last_transcript_wall_clock = ts_end_dt.timestamp()
+            with self._timeline_lock:
+                self._last_transcript_wall_clock = ts_end_dt.timestamp()
         else:
-            self._last_transcript_wall_clock = time.time()
+            with self._timeline_lock:
+                self._last_transcript_wall_clock = time.time()
 
     def _transcribe_whisper_cpp(self):
         while True:
+            self._drain_notice_queue()
             queued_item = self.transcribe_queue.get(block=True)
             if queued_item is None:
+                self._drain_notice_queue()
                 #print("finished transcribing audio",file=sys.stderr)
                 break
             if isinstance(queued_item, TranscriptionNotice):
@@ -588,6 +604,7 @@ class AudioTranscriber:
                     and segment_duration_seconds > 0
             ):
                 self.queue_backlog_limiter.consume(segment_duration_seconds)
+            self._drain_notice_queue()
 
     def _process_end_of_speech(self, speech_section, last_has_speech_ts, wall_clock_start):
         s = np.asarray(speech_section)
@@ -617,22 +634,25 @@ class AudioTranscriber:
         ts_candidates: list[float] = []
         if timestamp is not None:
             ts_candidates.append(timestamp)
-        if self._last_transcript_wall_clock is not None:
-            # Keep timestamps monotonic if we already emitted segments.
-            ts_candidates.append(self._last_transcript_wall_clock)
+        with self._timeline_lock:
+            if self._last_transcript_wall_clock is not None:
+                # Keep timestamps monotonic if we already emitted segments.
+                ts_candidates.append(self._last_transcript_wall_clock)
         if not ts_candidates:
             ts_candidates.append(time.time())
         ts_seconds = max(ts_candidates)
-        self.transcribe_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
+        self._notice_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
-        ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
-        if ts_seconds is None:
-            ts_seconds = time.time()
-        ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
-        relative_time = 0.0
-        if self.wall_clock_reference is not None:
-            relative_time = max(0.0, ts_seconds - self.wall_clock_reference)
+        with self._timeline_lock:
+            ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
+            if ts_seconds is None:
+                ts_seconds = time.time()
+            ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
+            relative_time = 0.0
+            if self.wall_clock_reference is not None:
+                relative_time = max(0.0, ts_seconds - self.wall_clock_reference)
+            self._last_transcript_wall_clock = ts_seconds
         print(f"[{ts_dt} -> {ts_dt}] {text}")
         if self.transcript_persistence_callback is not None:
             segment_payload = TranscribedSegment(
@@ -647,11 +667,18 @@ class AudioTranscriber:
             self.transcript_persistence_callback(segment_payload)
         if self.segment_callback is not None:
             self.segment_callback(start=relative_time, end=relative_time, text=text)
-        self._last_transcript_wall_clock = ts_seconds
         return ts_seconds
 
     def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
         self._emit_notice("(transcript temporarily dropped)", wall_clock_ts)
+
+    def _drain_notice_queue(self) -> None:
+        while True:
+            try:
+                notice = self._notice_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._emit_notice(notice.text, notice.timestamp)
 
     def process_input(self,input_sample_rate):
 
