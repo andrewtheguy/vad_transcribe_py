@@ -108,10 +108,6 @@ if __name__ == '__main__':
     argparse.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
     args = argparse.parse_args()
 
-    # Skip loading VAD model for web action (it will be loaded on-demand if needed)
-    if args.action != 'web':
-        vad_model = load_silero_vad()
-
     if args.action == 'file':
         if not args.file:
             print("Please provide a file path")
