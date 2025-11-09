@@ -1,6 +1,6 @@
 # Whisper Transcribe
 
-**Whisper Transcribe** is a real-time speech transcription system that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and [whispercpp](https://github.com/absadiki/pywhispercpp) (a Python binding for whisper.cpp) to transcribe them with high accuracy.
+**OpenAI Whisper Transcribe** is a real-time speech transcription system that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and [whispercpp](https://github.com/absadiki/pywhispercpp) (a Python binding for whisper.cpp) to transcribe them with high accuracy.
 
 ## Key Features
 
@@ -9,7 +9,7 @@
 - **Real-time Transcription**: Low-latency transcription for live audio sources
 - **Web Interface**: Modern web UI for browser-based microphone recording and transcription
 - **Database Persistence**: Stores transcripts in PostgreSQL with timestamps for easy retrieval
-- **Multi-language Support**: Supports all languages available in Whisper models through cli arguments. Currently English, Spanish, Mandarin, and Cantonese is selectable in the web UI to reduce clutter, but others can be added to the web UI dropdown list.
+- **Multi-language Support**: Supports all languages available in OpenAI Whisper models through cli arguments. Currently English, Spanish, Mandarin, and Cantonese is selectable in the web UI to reduce clutter, but others can be added to the web UI dropdown list.
 - **Queue Backlog Management**: Prevents memory overflow during long-running sessions
 
 ## Quick Start
