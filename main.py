@@ -88,7 +88,7 @@ if __name__ == '__main__':
     argparse.add_argument('--model', type=str, required=False, default=None, help='Whisper model name (default: large-v3-turbo or from config file)')
     # Web server options
     argparse.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
-    argparse.add_argument('--port', type=int, required=False, default=8000, help='Port to bind web server to (default: 8000)')
+    argparse.add_argument('--port', type=int, required=False, default=5002, help='Port to bind web server to (default: 5002)')
     argparse.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
     args = argparse.parse_args()
 

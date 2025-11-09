@@ -333,7 +333,7 @@ def create_app(dev_mode: bool = False) -> FastAPI:
     return app
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8000, dev: bool = False):
+def run_server(host: str = "0.0.0.0", port: int = 5002, dev: bool = False):
     """Run the FastAPI server with uvicorn.
 
     Args:

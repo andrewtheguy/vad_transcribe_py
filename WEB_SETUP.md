@@ -16,7 +16,7 @@ cd frontend
 npm run dev
 ```
 
-- Backend API: http://localhost:8000
+- Backend API: http://localhost:5002
 - Frontend UI: http://localhost:5173
 
 **Option 2: Run production build**
@@ -28,7 +28,7 @@ cd frontend && npm run build && cd ..
 uv run python main.py web
 ```
 
-- Access at: http://localhost:8000
+- Access at: http://localhost:5002
 
 ### Production Mode
 
@@ -39,7 +39,7 @@ npm run build
 cd ..
 
 # Run the server
-uv run python main.py web --host 0.0.0.0 --port 8000
+uv run python main.py web --host 0.0.0.0 --port 5002
 ```
 
 ## CLI Options
@@ -49,7 +49,7 @@ uv run python main.py web [OPTIONS]
 
 Options:
   --host HOST    Host to bind to (default: 0.0.0.0)
-  --port PORT    Port to bind to (default: 8000)
+  --port PORT    Port to bind to (default: 5002)
   --dev          Enable development mode with hot reload and CORS
 ```
 
