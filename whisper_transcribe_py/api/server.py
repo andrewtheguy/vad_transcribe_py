@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -13,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from whisper_transcribe_py.api.streaming import SessionRevokedError, streaming_sessions
-from whisper_transcribe_py.db import build_database_writer, connect_to_database
+from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 from whisper_transcribe_py.audio_transcriber import pcm_s16le_to_float32
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,28 @@ def to_utc_isoformat(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat()
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events for the FastAPI application."""
+    # Startup: Initialize database schema (required for web server)
+    if not os.environ.get("DATABASE_URL"):
+        logger.error("DATABASE_URL not configured - web server requires database")
+        raise RuntimeError("DATABASE_URL environment variable is required for web server")
+
+    try:
+        with connect_to_database() as conn:
+            initialize_database_schema(conn)
+            logger.info("Database schema initialized successfully")
+    except Exception as exc:
+        logger.error("Failed to initialize database schema: %s", exc, exc_info=True)
+        raise RuntimeError("Failed to initialize database - web server cannot start") from exc
+
+    yield
+
+    # Shutdown: cleanup if needed
+    # (currently no cleanup needed)
+
+
 def create_app(dev_mode: bool = False) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -50,6 +73,7 @@ def create_app(dev_mode: bool = False) -> FastAPI:
         title="Whisper Transcribe API",
         description="AI-powered speech transcription with voice activity detection",
         version="0.1.0",
+        lifespan=lifespan,
     )
 
     # Configure persistence factory (database writes)
@@ -162,7 +186,7 @@ def create_app(dev_mode: bool = False) -> FastAPI:
 
                     cur.execute(
                         '''
-                        SELECT id, "timestamp", content
+                        SELECT id, start_timestamp, end_timestamp, content
                         FROM transcripts
                         WHERE show_name = %s AND id BETWEEN %s AND %s
                         ORDER BY id ASC
@@ -179,7 +203,12 @@ def create_app(dev_mode: bool = False) -> FastAPI:
             "latest_id": latest_id,
             "start_id": start_id,
             "transcripts": [
-                {"id": row[0], "timestamp": to_utc_isoformat(row[1]), "content": row[2]}
+                {
+                    "id": row[0],
+                    "start_timestamp": to_utc_isoformat(row[1]),
+                    "end_timestamp": to_utc_isoformat(row[2]),
+                    "content": row[3]
+                }
                 for row in rows
             ],
         }
@@ -209,11 +238,11 @@ def create_app(dev_mode: bool = False) -> FastAPI:
                         SELECT
                             show_name,
                             COUNT(*) as transcript_count,
-                            MAX("timestamp") as latest_timestamp,
-                            MIN("timestamp") as earliest_timestamp
+                            MAX(start_timestamp) as latest_timestamp,
+                            MIN(start_timestamp) as earliest_timestamp
                         FROM transcripts
                         GROUP BY show_name
-                        ORDER BY MAX("timestamp") DESC
+                        ORDER BY MAX(start_timestamp) DESC
                         '''
                     )
                     rows = cur.fetchall()
@@ -265,10 +294,10 @@ def create_app(dev_mode: bool = False) -> FastAPI:
                     # Fetch transcripts in reverse chronological order
                     cur.execute(
                         '''
-                        SELECT id, "timestamp", content
+                        SELECT id, start_timestamp, end_timestamp, content
                         FROM transcripts
                         WHERE show_name = %s
-                        ORDER BY "timestamp" DESC, id DESC
+                        ORDER BY start_timestamp DESC, id DESC
                         LIMIT %s OFFSET %s
                         ''',
                         (show_name, limit, offset)
@@ -284,7 +313,12 @@ def create_app(dev_mode: bool = False) -> FastAPI:
             "offset": offset,
             "limit": limit,
             "transcripts": [
-                {"id": row[0], "timestamp": to_utc_isoformat(row[1]), "content": row[2]}
+                {
+                    "id": row[0],
+                    "start_timestamp": to_utc_isoformat(row[1]),
+                    "end_timestamp": to_utc_isoformat(row[2]),
+                    "content": row[3]
+                }
                 for row in rows
             ],
         }

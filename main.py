@@ -14,7 +14,7 @@ from silero_vad import (load_silero_vad)
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter
 from whisper_transcribe_py.mic_recorder import MicRecorder
-from whisper_transcribe_py.db import build_database_writer, connect_to_database
+from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 
 
 class JsonTranscriptWriter:
@@ -192,21 +192,8 @@ if __name__ == '__main__':
 
         # Connect to an existing database
         with connect_to_database() as conn:
-
-            # Open a cursor to perform database operations
-            with conn.cursor() as cur:
-                # Execute a command: this creates a new table
-                cur.execute("""
-                CREATE TABLE IF NOT EXISTS transcripts (
-                id bigserial PRIMARY KEY,
-                show_name varchar(255) NOT NULL,
-                "timestamp" TIMESTAMP WITHOUT TIME ZONE NOT NULL,
-                content TEXT NOT NULL
-                );
-                    """)
-                cur.execute("""
-                create index if not exists transcript_show_name_idx ON transcripts (show_name);
-                """)
+            # Initialize database schema
+            initialize_database_schema(conn)
 
             audio_input_queue = queue.Queue()
             stop_event = threading.Event()
