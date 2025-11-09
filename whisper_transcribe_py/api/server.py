@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,12 +13,18 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 
-from whisper_transcribe_py.api.streaming import SessionRevokedError, streaming_sessions
+from whisper_transcribe_py.api.streaming import streaming_sessions
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 from whisper_transcribe_py.audio_transcriber import pcm_s16le_to_float32
 
 logger = logging.getLogger(__name__)
+
+
+class StartStreamSessionRequest(BaseModel):
+    language: str = "en"
+    sample_rate: int = Field(16000, gt=0)
 
 
 def to_utc_isoformat(dt: Optional[datetime]) -> Optional[str]:
@@ -104,6 +111,17 @@ def create_app(dev_mode: bool = False) -> FastAPI:
             detail="File transcription not yet implemented"
         )
 
+    @app.post("/api/transcribe/stream/session")
+    async def start_stream_session(payload: StartStreamSessionRequest):
+        """Allocate a new streaming session and close any previous one."""
+        session_id = str(uuid.uuid4())
+        streaming_sessions.start_new_session(
+            session_id=session_id,
+            language=payload.language,
+            sample_rate=payload.sample_rate,
+        )
+        return {"session_id": session_id}
+
     @app.post("/api/transcribe/stream")
     async def ingest_audio_chunk(
         request: Request,
@@ -122,14 +140,9 @@ def create_app(dev_mode: bool = False) -> FastAPI:
                 detail="Audio chunk length must align to 16-bit samples",
             )
 
-        try:
-            session = streaming_sessions.get_or_create(
-                session_id=session_id,
-                language=language,
-                sample_rate=sample_rate,
-            )
-        except SessionRevokedError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        session = streaming_sessions.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found or no longer active")
 
         audio = pcm_s16le_to_float32(payload)
         approx_reference = max(time.time() - max(start, 0.0), 0.0)

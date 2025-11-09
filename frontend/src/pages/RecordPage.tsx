@@ -29,6 +29,10 @@ type TranscriptRow = {
   content: string
 }
 
+type SessionResponse = {
+  session_id: string
+}
+
 const apiUrl = (path: string) => `${API_BASE}${path}`
 const SUPPORTED_LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -109,6 +113,29 @@ export default function RecordPage() {
     const timestamp = new Date().toLocaleTimeString()
     console.info(`[Whisper Transcribe ${timestamp}] ${message}`)
   }, [])
+
+  const createServerSession = useCallback(async (): Promise<string> => {
+    const response = await fetch(apiUrl('/api/transcribe/stream/session'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        language,
+        sample_rate: TARGET_SAMPLE_RATE,
+      }),
+    })
+    if (!response.ok) {
+      const detail = await response.text()
+      throw new Error(detail || `Server responded with ${response.status}`)
+    }
+    const data = (await response.json()) as SessionResponse
+    if (!data.session_id) {
+      throw new Error('Server did not return a session id')
+    }
+    logEvent(`Session ${data.session_id} prepared on server`)
+    return data.session_id
+  }, [language, logEvent])
 
   const cleanupAudioGraph = useCallback(() => {
     if (workletNodeRef.current) {
@@ -259,8 +286,18 @@ export default function RecordPage() {
       logEvent('Media devices API is not available in this browser')
       return
     }
-    setStatus('Requesting microphone…')
+    setStatus('Preparing session…')
+    let sessionId: string | null = null
     try {
+      sessionId = await createServerSession()
+      sessionIdRef.current = sessionId
+      setActiveSessionId(sessionId)
+      setTranscripts([])
+      setTranscriptError(null)
+      userScrolledUpRef.current = false
+      startTranscriptPolling()
+      setStatus('Requesting microphone…')
+
       // Request stereo audio if available
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -327,26 +364,20 @@ export default function RecordPage() {
       mediaStreamRef.current = stream
       chunkQueueRef.current = []
 
-      const sessionId = crypto.randomUUID()
-      sessionIdRef.current = sessionId
-      setActiveSessionId(sessionId)
-
       // Connect audio graph (no need to connect to destination)
       source.connect(workletNode)
 
       setIsRecording(true)
       setStatus('Streaming audio to backend')
-      logEvent(`Session ${sessionId} started`)
-      setTranscripts([])
-      setTranscriptError(null)
-      userScrolledUpRef.current = false
-      startTranscriptPolling()
+      if (sessionId) {
+        logEvent(`Session ${sessionId} started`)
+      }
     } catch (error) {
       await handleFatalError(
         error instanceof Error ? `Failed to start recording: ${error.message}` : 'Failed to start recording',
       )
     }
-  }, [logEvent, enqueueChunk, handleFatalError, isRecording, startTranscriptPolling])
+  }, [logEvent, enqueueChunk, handleFatalError, isRecording, startTranscriptPolling, createServerSession])
 
   const stopRecording = useCallback(async () => {
     if (!isRecording && !sessionIdRef.current) {

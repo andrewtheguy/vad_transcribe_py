@@ -162,36 +162,18 @@ class StreamingSessionManager:
         session.ensure_running()
         return session
 
-    def get_or_create(self, *, session_id: str, language: str, sample_rate: int) -> StreamingSession:
+    def start_new_session(self, *, session_id: str, language: str, sample_rate: int) -> StreamingSession:
+        previous_session: Optional[StreamingSession] = None
         with self._lock:
-            if self._active_session_id is None:
-                self._active_session_id = session_id
-                self._revoked_session_ids.discard(session_id)
-                return self._create_session(session_id=session_id, language=language, sample_rate=sample_rate)
-
-            if session_id == self._active_session_id:
-                session = self._sessions.get(session_id)
-                if session is None:
-                    session = self._create_session(session_id=session_id, language=language, sample_rate=sample_rate)
-                return session
-
-            if session_id in self._revoked_session_ids:
-                raise SessionRevokedError(f"Session '{session_id}' is no longer active")
-
-            # Accept the new session id and revoke the previous one.
-            previous_session_id = self._active_session_id
-            previous_session = self._sessions.pop(previous_session_id, None)
-            if previous_session is not None:
-                previous_session.close()
-            self._revoked_session_ids.add(previous_session_id)
-
-            # Avoid unbounded growth.
-            if len(self._revoked_session_ids) > 16:
-                self._revoked_session_ids.pop()
-
+            if self._active_session_id is not None and self._active_session_id in self._sessions:
+                previous_session = self._sessions.pop(self._active_session_id)
+                self._revoked_session_ids.add(self._active_session_id)
             self._active_session_id = session_id
             self._revoked_session_ids.discard(session_id)
-            return self._create_session(session_id=session_id, language=language, sample_rate=sample_rate)
+            session = self._create_session(session_id=session_id, language=language, sample_rate=sample_rate)
+        if previous_session is not None:
+            previous_session.close()
+        return session
 
     def stop(self, session_id: str) -> bool:
         with self._lock:
