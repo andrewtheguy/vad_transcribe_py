@@ -25,29 +25,9 @@ TARGET_SAMPLE_RATE = 16000
 
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
+# use ffmpeg to stream audio from url
 @contextmanager
 def stream_url(url):
-    '''
-
-    // Run ffmpeg to get raw PCM (s16le) data at 16kHz
-    let mut ffmpeg_process = Command::new("ffmpeg")
-        .args(&[
-            //-drop_pkts_on_overflow 1
-            "-i", input_url,      // Input url
-            "-attempt_recovery", "1",
-            "-hide_banner",
-            "-loglevel", "error",
-            "-recovery_wait_time", "1",
-            "-f", "s16le",         // Output format: raw PCM, signed 16-bit little-endian
-            "-acodec", "pcm_s16le",// Audio codec: PCM 16-bit signed little-endian
-            "-ac", "1",            // Number of audio channels (1 = mono)
-            "-ar", &format!("{}",target_sample_rate),        // Sample rate: 16 kHz
-            "-"                    // Output to stdout
-        ])
-        .stdout(Stdio::piped())
-        //.stderr(Stdio::null()) // Optional: Ignore stderr output
-        .spawn()?;
-    '''
 
     command = [
         "ffmpeg",
@@ -56,8 +36,8 @@ def stream_url(url):
         "-hide_banner",
         "-loglevel", "error",
         "-recovery_wait_time", "1",
-        "-f", "s16le",  # Output format
-        "-acodec", "pcm_s16le",  # Audio codec
+        "-f", "s16le",  # Output format: raw PCM, signed 16-bit little-endian
+        "-acodec", "pcm_s16le",  # Audio codec: PCM 16-bit signed little-endian
         "-ac", "1",  # Number of audio channels (1 = mono)
         "-ar", str(TARGET_SAMPLE_RATE),  # Sample rate: 16 kHz
         "pipe:"  # Output to stdout
@@ -78,6 +58,7 @@ def stream_url(url):
 
 
 # convert audio to 16 bit pcm with streaming output
+# not used by web streaming api
 @contextmanager
 def ffmpeg_get_16bit_pcm(full_audio_path,target_sample_rate=None,ac=None):
     # Construct the ffmpeg command
