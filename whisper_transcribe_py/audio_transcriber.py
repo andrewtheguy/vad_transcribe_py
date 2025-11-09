@@ -589,9 +589,10 @@ class AudioTranscriber:
         self.vad_model.reset_states()
 
     def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
-        ts_seconds = timestamp if timestamp is not None else self._last_transcript_wall_clock
-        if ts_seconds is None:
-            ts_seconds = time.time()
+        candidate = timestamp if timestamp is not None else time.time()
+        if self._last_transcript_wall_clock is not None:
+            candidate = max(candidate, self._last_transcript_wall_clock)
+        ts_seconds = candidate
         self.transcribe_queue.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
