@@ -14,14 +14,25 @@
 
 ## Quick Start
 
+### Database Setup (Required for most features)
+
+Most features (web interface, microphone recording, and stream processing) require a PostgreSQL database to store transcripts. Set this up first:
+
+```bash
+# Option 1: Create a .env file in the project root (Recommended)
+echo 'DATABASE_URL=postgresql://user:password@localhost/dbname' > .env
+
+# Option 2: Export as environment variable
+export DATABASE_URL="postgresql://user:password@localhost/dbname"
+```
+
+**Note**: The project uses python-dotenv to automatically load environment variables from a `.env` file in the project root. Only the `file` command works without a database.
+
 ### Web Interface
 
 The easiest way to use Whisper Transcribe is through the web interface:
 
 ```bash
-# Set up database connection (required)
-export DATABASE_URL="postgresql://user:password@localhost/dbname"
-
 # Development mode (hot reload, separate frontend dev server)
 uv run python main.py web --dev
 
@@ -77,6 +88,12 @@ uv run python main.py mic --lang en
 
 **Optional arguments:**
 - `--n-threads`: Number of threads for Whisper (default: 1)
+
+**Required environment variables:**
+- `DATABASE_URL`: PostgreSQL connection string (e.g., `postgresql://user:pass@localhost/db`)
+
+**Optional environment variables:**
+- `DATABASE_TIMEOUT`: Connection timeout in seconds (default: 10)
 
 ### 3. Transcribe from audio stream
 Stream audio from URL and save transcripts to database.
@@ -169,11 +186,23 @@ The web interface provides a modern, user-friendly way to interact with Whisper 
 
 ### Environment Variables
 
-The web server requires the following environment variables:
+**Required for: web, mic, and stream commands**
 
 - `DATABASE_URL` (required): PostgreSQL connection string
   - Example: `postgresql://user:password@localhost:5432/whisper_db`
+  - Used by: `web`, `mic`, and `stream` commands
+  - Not required for: `file` command (saves to JSON instead)
 - `DATABASE_TIMEOUT` (optional): Connection timeout in seconds (default: 10)
+
+You can set these in a `.env` file in the project root:
+
+```bash
+# .env
+DATABASE_URL=postgresql://user:password@localhost:5432/whisper_db
+DATABASE_TIMEOUT=10
+```
+
+The application will automatically load these values using python-dotenv.
 
 ### Running the Web Server
 

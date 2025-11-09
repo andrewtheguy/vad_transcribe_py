@@ -6,16 +6,26 @@ The web interface has been successfully integrated into your Whisper Transcribe 
 
 **Required Environment Variables**
 
-The web server requires a PostgreSQL database connection:
+The web server requires a PostgreSQL database connection. You can configure this in two ways:
+
+**Option 1: Using a .env file (Recommended)**
+
+Create a `.env` file in the project root:
+
+```bash
+# .env
+DATABASE_URL=postgresql://user:password@localhost:5432/whisper_db
+DATABASE_TIMEOUT=10  # Optional: Connection timeout in seconds (default: 10)
+```
+
+**Option 2: Export as environment variables**
 
 ```bash
 export DATABASE_URL="postgresql://user:password@localhost:5432/whisper_db"
+export DATABASE_TIMEOUT=10  # Optional
 ```
 
-Optional:
-```bash
-export DATABASE_TIMEOUT=10  # Connection timeout in seconds (default: 10)
-```
+The application uses python-dotenv to automatically load variables from the `.env` file, making configuration easier and more secure (you can add `.env` to `.gitignore` to avoid committing credentials).
 
 The database schema will be automatically initialized when the web server starts. The server will create a `transcripts` table if it doesn't already exist.
 
@@ -180,7 +190,13 @@ The web server **requires** a PostgreSQL database and will not start without it.
 RuntimeError: DATABASE_URL environment variable is required for web server
 ```
 
-Solution:
+Solution - Create a `.env` file in the project root:
+```bash
+# .env
+DATABASE_URL=postgresql://user:password@localhost:5432/dbname
+```
+
+Or export as an environment variable:
 ```bash
 export DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
 ```
