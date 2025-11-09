@@ -597,10 +597,11 @@ class AudioTranscriber:
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
+        now = time.time()
         if ts_seconds is None:
-            ts_seconds = time.time()
-        if self._last_transcript_wall_clock is not None:
-            ts_seconds = max(ts_seconds, self._last_transcript_wall_clock)
+            ts_seconds = now
+        if ts_seconds > now:
+            ts_seconds = now
         ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
         relative_time = 0.0
         if self.wall_clock_reference is not None:
@@ -672,8 +673,6 @@ class AudioTranscriber:
             backlog_wall_clock_start = None
             if self.queue_backlog_limiter and segment_duration is not None:
                 backlog_wall_clock_start = self.queue_backlog_limiter.pending_chunk_start_timestamp()
-            if backlog_wall_clock_start is not None and self._last_transcript_wall_clock is not None:
-                backlog_wall_clock_start = max(backlog_wall_clock_start, self._last_transcript_wall_clock)
             if backlog_wall_clock_start is not None:
                 segment_wall_clock_start = backlog_wall_clock_start
             if segment_wall_clock_start is None:
