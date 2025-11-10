@@ -22,10 +22,30 @@ dependencies = [
     "uvicorn[standard]>=0.32.0,<1",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0,<10",
+]
+
 [tool.uv]
 
 [tool.uv.sources]
 pywhispercpp = { git = "https://github.com/absadiki/pywhispercpp", tag = "v1.3.3" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+]
+filterwarnings = [
+    # Ignore deprecation warnings from third-party libraries
+    "ignore::DeprecationWarning:silero_vad.*",
+]
 
 [build-system]
 requires = ["hatchling"]
