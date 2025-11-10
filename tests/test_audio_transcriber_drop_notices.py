@@ -127,3 +127,47 @@ def test_drop_notice_timestamp_never_regresses(make_transcriber):
     notice = transcriber.transcribe_queue.get_nowait()
 
     assert notice.timestamp == pytest.approx(100.0)
+
+
+def test_multiple_drop_notices_release_in_order(make_transcriber):
+    transcriber = make_transcriber()
+    transcriber._handle_drop_notice(5.0)
+    transcriber._handle_drop_notice(8.0)
+
+    transcriber._release_ready_drop_notices(6.0)
+
+    first = transcriber.transcribe_queue.get_nowait()
+    assert first.timestamp == pytest.approx(5.0)
+    assert transcriber.transcribe_queue.empty()
+
+    transcriber._release_ready_drop_notices(9.0)
+    second = transcriber.transcribe_queue.get_nowait()
+    assert second.timestamp == pytest.approx(8.0)
+
+
+def test_segment_without_wall_clock_flushes_pending_notice(make_transcriber):
+    transcriber = make_transcriber()
+    transcriber._handle_drop_notice(12.0)
+
+    audio = np.zeros(160, dtype=np.float32)
+    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=0.01, wall_clock_start=None)
+
+    transcriber._handle_vad_segment(segment)
+
+    first = transcriber.transcribe_queue.get_nowait()
+    second = transcriber.transcribe_queue.get_nowait()
+
+    assert isinstance(first, audio_transcriber.TranscriptionNotice)
+    assert first.timestamp == pytest.approx(12.0)
+    assert second is segment
+
+
+def test_flush_pending_drop_notices_drains_queue(make_transcriber):
+    transcriber = make_transcriber()
+    transcriber._handle_drop_notice(3.0)
+    transcriber._handle_drop_notice(4.0)
+
+    transcriber._flush_pending_drop_notices()
+
+    timestamps = [transcriber.transcribe_queue.get_nowait().timestamp for _ in range(2)]
+    assert timestamps == pytest.approx([3.0, 4.0])
