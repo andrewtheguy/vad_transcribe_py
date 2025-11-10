@@ -752,12 +752,12 @@ def stream_url_thread(
         stop_event=None,
         queue_limiter: Optional["QueueBacklogLimiter"] = None,
 ):
-    ts = 0
-    # Capture stream start time as base wall clock timestamp
-    base_wall_clock = time.time()
     while True:
         if stop_event is not None and stop_event.is_set():
             break
+        # Reset timestamp tracking for each stream attempt (including retries)
+        ts = 0
+        base_wall_clock = time.time()
         try:
             with stream_url(url) as stdout:
                 while True:
