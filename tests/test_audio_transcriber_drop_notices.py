@@ -6,7 +6,7 @@ from typing import Callable, Optional
 import numpy as np
 import pytest
 
-
+# only relevant for converting Chinese simplified/traditional, not needed for tests
 if "zhconv_rs" not in sys.modules:
     stub_module = types.ModuleType("zhconv_rs")
 
