@@ -107,7 +107,7 @@ def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_
     audio_queue = queue.Queue()
     audio = np.zeros(1024, dtype=np.float32)
     duration = len(audio) / audio_transcriber.TARGET_SAMPLE_RATE
-    segment = AudioSegment(start=5.0, audio=audio, duration_seconds=duration)
+    segment = AudioSegment(start=5.0, audio=audio, wall_clock_start=1000.0, duration_seconds=duration)
     audio_queue.put(segment)
     audio_queue.put(None)
 
@@ -119,7 +119,7 @@ def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_
     first_ts, first_wall, first_len = calls[0]
     second_ts, _, _ = calls[1]
     assert first_ts == pytest.approx(5.0)
-    assert first_wall is None
+    assert first_wall == pytest.approx(1000.0)  # Now always provided
     assert first_len == 512
     assert second_ts == pytest.approx(5.0 + 512 / audio_transcriber.TARGET_SAMPLE_RATE)
 
@@ -127,7 +127,7 @@ def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_
 def test_drop_notice_waits_until_silence_release(monkeypatch, make_transcriber, recorded_transcribe):
     window_samples = audio_transcriber.get_window_size_samples()
     audio = np.zeros(window_samples * 3, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
+    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
 
     audio_queue = queue.Queue()
     audio_queue.put(segment)
@@ -225,7 +225,8 @@ def test_segments_after_drop_use_notice_timestamp(make_transcriber):
 
     window_samples = audio_transcriber.get_window_size_samples()
     audio = np.zeros(window_samples, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
+    # Use drop_ts as wall_clock_start to maintain test intent - segments now provide real timestamps
+    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=drop_ts, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
 
     audio_queue = transcriber.audio_input_queue
     audio_queue.put(segment)
@@ -252,7 +253,7 @@ def test_audio_segment_callback_invoked(make_transcriber):
 
     # Simulate VAD segment completion
     audio = np.ones(1600, dtype=np.float32)
-    segment = AudioSegment(start=10.5, audio=audio, duration_seconds=0.1)
+    segment = AudioSegment(start=10.5, audio=audio, wall_clock_start=1010.5, duration_seconds=0.1)
     transcriber._handle_vad_segment(segment)
 
     assert len(captured_audio) == 1
@@ -270,7 +271,7 @@ def test_handle_vad_segment_queues_for_transcription(make_transcriber, recorded_
 
     # Simulate VAD segment
     audio = np.ones(1600, dtype=np.float32)
-    segment = AudioSegment(start=5.0, audio=audio, duration_seconds=0.1)
+    segment = AudioSegment(start=5.0, audio=audio, wall_clock_start=1005.0, duration_seconds=0.1)
     transcriber._handle_vad_segment(segment)
 
     # Process input to trigger transcription thread
@@ -290,7 +291,7 @@ def test_process_input_with_resampling(make_transcriber, recorded_transcribe):
     input_sample_rate = 44100
     audio_44k = np.zeros(44100, dtype=np.float32)  # 1 second
     duration = len(audio_44k) / input_sample_rate
-    segment = AudioSegment(start=0.0, audio=audio_44k, duration_seconds=duration)
+    segment = AudioSegment(start=0.0, audio=audio_44k, wall_clock_start=1000.0, duration_seconds=duration)
     audio_queue.put(segment)
     audio_queue.put(None)
 
@@ -313,7 +314,7 @@ def test_process_input_respects_stop_event(make_transcriber):
 
     # Put audio in queue
     audio = np.zeros(1024, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=0.064)
+    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=0.064)
     audio_queue.put(segment)
 
     transcriber = make_transcriber(
@@ -473,7 +474,7 @@ def test_handle_vad_segment_consumes_silence_from_backlog(make_transcriber):
 
     # Trigger VAD segment
     audio = np.ones(1600, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=0.1)
+    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=0.1)
     transcriber._handle_vad_segment(segment)
 
     # Verify silence was consumed
@@ -486,7 +487,7 @@ def test_process_input_flushes_incomplete_segment(make_transcriber, recorded_tra
 
     # Add audio but end stream while speech might be in progress
     audio = np.zeros(1024, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=0.064)
+    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=0.064)
     audio_queue.put(segment)
     audio_queue.put(None)  # End marker
 
@@ -517,12 +518,12 @@ def test_timestamp_continuity_across_segments(make_transcriber, recorded_transcr
 
     # First segment at 0.0
     audio1 = np.zeros(512, dtype=np.float32)
-    seg1 = AudioSegment(start=0.0, audio=audio1, duration_seconds=0.032)
+    seg1 = AudioSegment(start=0.0, audio=audio1, wall_clock_start=1000.0, duration_seconds=0.032)
     audio_queue.put(seg1)
 
     # Second segment at 1.0
     audio2 = np.zeros(512, dtype=np.float32)
-    seg2 = AudioSegment(start=1.0, audio=audio2, duration_seconds=0.032)
+    seg2 = AudioSegment(start=1.0, audio=audio2, wall_clock_start=1001.0, duration_seconds=0.032)
     audio_queue.put(seg2)
 
     audio_queue.put(None)

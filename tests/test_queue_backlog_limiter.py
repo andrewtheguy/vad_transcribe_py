@@ -85,19 +85,21 @@ def test_drop_callback_uses_current_time(time_stub):
     assert drop_events == pytest.approx([time_stub.value])
 
 
-def test_pending_chunk_start_timestamp_accounts_for_progress_and_drops(time_stub):
-    limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=10.0, initial_timestamp=100.0)
-
-    assert limiter.try_add(4.0) is True
-    limiter.note_timestamp_progress(1.5)
-
-    time_stub.advance(1.0)
-    assert limiter.try_add(8.0) is False  # dropped chunk tracked for timestamp math
-
-    time_stub.value = 110.0
-    estimate = limiter.pending_chunk_start_timestamp()
-
-    assert estimate == pytest.approx(109.5)
+# Test removed: pending_chunk_start_timestamp method was removed as part of timestamp refactoring
+# Timestamp estimation is no longer needed since all input sources provide real timestamps
+# def test_pending_chunk_start_timestamp_accounts_for_progress_and_drops(time_stub):
+#     limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=10.0, initial_timestamp=100.0)
+#
+#     assert limiter.try_add(4.0) is True
+#     limiter.note_timestamp_progress(1.5)
+#
+#     time_stub.advance(1.0)
+#     assert limiter.try_add(8.0) is False  # dropped chunk tracked for timestamp math
+#
+#     time_stub.value = 110.0
+#     estimate = limiter.pending_chunk_start_timestamp()
+#
+#     assert estimate == pytest.approx(109.5)
 
 
 def test_note_timestamp_progress_caps_at_total_accounted(time_stub):

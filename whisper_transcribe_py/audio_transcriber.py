@@ -285,13 +285,6 @@ class QueueBacklogLimiter:
             file=sys.stderr,
         )
 
-    def _estimate_next_chunk_timestamp_locked(self) -> Optional[float]:
-        if self._initial_timestamp is None:
-            return None
-        processing_estimate = self._initial_timestamp + self._dropped_seconds + self._timestamp_consumed_seconds
-        live_estimate = time.time() - self.current_seconds
-        estimate = max(processing_estimate, live_estimate)
-        return min(estimate, time.time())
 
     def register_drop_callback(self, callback: Callable[[Optional[float]], None]) -> None:
         if callback is None:
@@ -360,15 +353,6 @@ class QueueBacklogLimiter:
                 self._drop_notice_active = False
             self._log_backlog_state_locked()
 
-    def pending_chunk_start_timestamp(self) -> Optional[float]:
-        """
-        Return the estimated wall-clock start time for the next chunk that will be
-        consumed. Includes previously dropped audio so timestamps stay aligned
-        with the live source even when backlog forces shedding.
-        """
-
-        with self._lock:
-            return self._estimate_next_chunk_timestamp_locked()
 
     @property
     def dropped_seconds(self) -> float:
@@ -536,13 +520,13 @@ class AudioTranscriber:
 
             self.current_audio_offset = segment_offset
 
-            wall_clock_start = getattr(queued_item, "wall_clock_start", None)
+            # Use real wall_clock_start from segment (no fallback/estimation)
+            # All input sources now provide wall_clock_start
             if self.timestamp_strategy == "wall_clock":
-                if wall_clock_start is not None:
-                    self.ts_transcribe_start = wall_clock_start
-                elif self.wall_clock_reference is not None:
-                    self.ts_transcribe_start = self.wall_clock_reference + segment_offset
+                if isinstance(queued_item, AudioSegment):
+                    self.ts_transcribe_start = queued_item.wall_clock_start
                 else:
+                    # Legacy fallback for non-AudioSegment items (shouldn't happen in practice)
                     self.ts_transcribe_start = time.time()
             else:
                 self.ts_transcribe_start = segment_offset
@@ -565,7 +549,8 @@ class AudioTranscriber:
         if self.audio_segment_callback is not None:
             self.audio_segment_callback(segment.audio, segment.start)
 
-        self._release_ready_drop_notices(getattr(segment, "wall_clock_start", None))
+        # wall_clock_start is now required for all AudioSegments
+        self._release_ready_drop_notices(segment.wall_clock_start)
         self.transcribe_queue.put(segment)
 
         # Consume silence from backlog limiter
@@ -670,21 +655,11 @@ class AudioTranscriber:
             segment_duration = segment.duration_seconds
             if segment_duration is None and segment.audio is not None:
                 segment_duration = len(segment.audio) / input_sample_rate
-            segment_wall_clock_start = getattr(segment, "wall_clock_start", None)
-            backlog_wall_clock_start = None
-            if self.queue_backlog_limiter and segment_duration is not None:
-                backlog_wall_clock_start = self.queue_backlog_limiter.pending_chunk_start_timestamp()
-                if (
-                        backlog_wall_clock_start is not None
-                        and self._last_transcript_wall_clock is not None
-                        and backlog_wall_clock_start < self._last_transcript_wall_clock
-                ):
-                    backlog_wall_clock_start = self._last_transcript_wall_clock
-            if backlog_wall_clock_start is not None:
-                segment_wall_clock_start = backlog_wall_clock_start
-            if segment_wall_clock_start is None:
-                segment_wall_clock_start = None
-            segment.wall_clock_start = segment_wall_clock_start
+
+            # Use the real wall_clock_start from segment (no estimation/calculation)
+            # wall_clock_start is now required, all input sources must provide it
+            segment_wall_clock_start = segment.wall_clock_start
+
             if self.queue_backlog_limiter and segment_duration is not None:
                 self.queue_backlog_limiter.note_timestamp_progress(segment_duration)
             if ts is None:
@@ -758,6 +733,8 @@ def stream_url_thread(
         queue_limiter: Optional["QueueBacklogLimiter"] = None,
 ):
     ts = 0
+    # Capture stream start time as base wall clock timestamp
+    base_wall_clock = time.time()
     while True:
         if stop_event is not None and stop_event.is_set():
             break
@@ -770,8 +747,6 @@ def stream_url_thread(
                     if not chunk:
                         break
                     audio = pcm_s16le_to_float32(chunk)
-                    # ts = time.time()
-                    # time.sleep(5)
                     # put audio into queue one by one
                     if stop_event is not None and stop_event.is_set():
                         break
@@ -779,8 +754,14 @@ def stream_url_thread(
                     if queue_limiter and not queue_limiter.try_add(duration_seconds):
                         ts += duration_seconds
                         continue
+                    # Use stream start time + relative position as wall clock timestamp
                     audio_input_queue.put(
-                        AudioSegment(audio=audio, start=ts, duration_seconds=duration_seconds)
+                        AudioSegment(
+                            audio=audio,
+                            start=ts,
+                            wall_clock_start=base_wall_clock + ts,
+                            duration_seconds=duration_seconds
+                        )
                     )
                     #print("audio_input_queue size", audio_input_queue.qsize())
                     ts += duration_seconds

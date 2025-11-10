@@ -148,6 +148,8 @@ if __name__ == '__main__':
                 thread_transcribe.start()
 
                 ts = 0
+                # For file-based transcription, use Unix epoch (0.0) as base timestamp
+                base_wall_clock = 0.0
                 interrupted = False
                 try:
                     with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
@@ -158,7 +160,12 @@ if __name__ == '__main__':
                             if not chunk:
                                 break
                             audio = pcm_s16le_to_float32(chunk)
-                            audio_input_queue.put(AudioSegment(audio=audio, start=ts))
+                            # Use epoch-based timestamp for files (base_wall_clock + relative ts)
+                            audio_input_queue.put(AudioSegment(
+                                audio=audio,
+                                start=ts,
+                                wall_clock_start=base_wall_clock + ts
+                            ))
                             ts += len(audio) / TARGET_SAMPLE_RATE
                 except KeyboardInterrupt:
                     interrupted = True

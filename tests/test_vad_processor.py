@@ -40,12 +40,12 @@ class TestAudioSegment:
     def test_creation_basic(self):
         """Test basic AudioSegment creation."""
         audio = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-        segment = AudioSegment(start=1.0, audio=audio)
+        segment = AudioSegment(start=1.0, audio=audio, wall_clock_start=1000.0)
 
         assert segment.start == 1.0
         assert np.array_equal(segment.audio, audio)
         assert segment.duration_seconds is None
-        assert segment.wall_clock_start is None
+        assert segment.wall_clock_start == 1000.0
 
     def test_creation_with_all_fields(self):
         """Test AudioSegment creation with all fields."""
@@ -65,7 +65,7 @@ class TestAudioSegment:
     def test_repr(self):
         """Test AudioSegment string representation."""
         audio = np.array([0.1, 0.2], dtype=np.float32)
-        segment = AudioSegment(start=1.0, audio=audio, duration_seconds=0.5)
+        segment = AudioSegment(start=1.0, audio=audio, wall_clock_start=2000.0, duration_seconds=0.5)
 
         repr_str = repr(segment)
         assert "AudioSegment" in repr_str
@@ -116,7 +116,7 @@ class TestSpeechDetector:
         wrong_size_audio = np.array([0.1, 0.2], dtype=np.float32)
 
         with pytest.raises(ValueError, match="Audio length.*does not match window size"):
-            detector.process_window(wrong_size_audio, 0.0)
+            detector.process_window(wrong_size_audio, 0.0, 1000.0 + 0.0)
 
     def test_single_silence_window(self, detector, mock_segment_callback):
         """Test processing a single silence window."""
@@ -124,7 +124,7 @@ class TestSpeechDetector:
 
         # Create silence (low amplitude)
         audio = self._create_audio_window(detector, value=0.0)
-        has_speech = detector.process_window(audio, 0.0)
+        has_speech = detector.process_window(audio, 0.0, 1000.0 + 0.0)
 
         assert has_speech is False
         assert detector.is_in_speech is False
@@ -136,20 +136,20 @@ class TestSpeechDetector:
 
         # First window: silence
         silence = self._create_audio_window(detector, value=0.0)
-        detector.process_window(silence, 0.0)
+        detector.process_window(silence, 0.0, 1000.0 + 0.0)
         assert detector.is_in_speech is False
 
         # Second window: speech (high amplitude triggers VAD)
         # Note: Actual VAD behavior depends on the model, this tests the state machine
         # We can't easily control VAD output without mocking, so we test state transitions
         speech = self._create_audio_window(detector, value=0.5)
-        detector.process_window(speech, 0.032)  # 0.032s = 512 samples @ 16kHz
+        detector.process_window(speech, 0.032, 1000.0 + 0.032)  # 0.032s = 512 samples @ 16kHz
 
     def test_reset(self, detector):
         """Test reset clears all state."""
         # Process some audio to create state
         audio = self._create_audio_window(detector, value=0.5)
-        detector.process_window(audio, 0.0)
+        detector.process_window(audio, 0.0, 1000.0 + 0.0)
 
         # Reset
         detector.reset()
@@ -253,6 +253,7 @@ class TestSpeechDetector:
         # Should not raise error even without callback
         detector._speech_section = [0.1] * 16000
         detector._has_speech_begin_timestamp = 1.0
+        detector._has_speech_begin_wall_clock = 123456789.0  # Required now
         detector._emit_segment()  # Should complete without error
 
     def test_multiple_flushes(self, detector, mock_segment_callback):
@@ -306,7 +307,7 @@ class TestSpeechDetectorIntegration:
         window = np.full(512, 0.5, dtype=np.float32)
         for i in range(10):
             timestamp = i * 0.032
-            detector.process_window(window, timestamp)
+            detector.process_window(window, timestamp, 1000.0 + timestamp)
 
         # Flush any remaining speech
         detector.flush()
@@ -326,6 +327,7 @@ class TestSpeechDetectorIntegration:
         # Manually create a segment
         detector._speech_section = [0.1] * 16000
         detector._has_speech_begin_timestamp = 1.0
+        detector._has_speech_begin_wall_clock = 123456789.0  # Required now
         detector._emit_segment()
 
         # Verify state was reset
@@ -335,6 +337,7 @@ class TestSpeechDetectorIntegration:
         # Create another segment
         detector._speech_section = [0.2] * 8000
         detector._has_speech_begin_timestamp = 3.0
+        detector._has_speech_begin_wall_clock = 123456792.0  # Required now
         detector._emit_segment()
 
         # Verify second segment was created
@@ -362,29 +365,29 @@ class TestMinDurationEnforcement:
 
             # Window 1: silence
             mock_vad.return_value = False
-            detector.process_window(window, 0.0)
+            detector.process_window(window, 0.0, 1000.0 + 0.0)
             assert detector.is_in_speech is False
 
             # Window 2: speech starts
             mock_vad.return_value = True
-            detector.process_window(window, 0.032)
+            detector.process_window(window, 0.032, 1000.0 + 0.032)
             assert detector.is_in_speech is True
             assert len(detector._speech_section) == 1024  # 512 (prev_slice) + 512 (current)
 
             # Window 3: VAD says no speech, but min duration forces continuation
             mock_vad.return_value = False
-            detector.process_window(window, 0.064)
+            detector.process_window(window, 0.064, 1000.0 + 0.064)
             assert detector.is_in_speech is True  # Forced to continue
             assert detector.current_segment_duration < 0.1  # Still below min
 
             # Window 4: Still below min, should continue
             mock_vad.return_value = False
-            detector.process_window(window, 0.096)
+            detector.process_window(window, 0.096, 1000.0 + 0.096)
             assert detector.is_in_speech is True  # Still forced to continue
 
             # Window 5: Now above min duration, can end
             mock_vad.return_value = False
-            detector.process_window(window, 0.128)
+            detector.process_window(window, 0.128, 1000.0 + 0.128)
             assert detector.is_in_speech is False  # Can end now
             assert len(segments) == 1
 
@@ -407,12 +410,12 @@ class TestMinDurationEnforcement:
 
             # Start speech
             mock_vad.return_value = True
-            detector.process_window(window, 0.0)
-            detector.process_window(window, 0.032)
+            detector.process_window(window, 0.0, 1000.0 + 0.0)
+            detector.process_window(window, 0.032, 1000.0 + 0.032)
 
             # At exactly min duration, VAD no speech should end it
             mock_vad.return_value = False
-            detector.process_window(window, 0.064)
+            detector.process_window(window, 0.064, 1000.0 + 0.064)
 
             assert len(segments) == 1
             assert segments[0].duration_seconds == pytest.approx(0.096, abs=0.001)  # 3 windows
@@ -440,7 +443,7 @@ class TestMaxDurationEnforcement:
             # Process enough windows to exceed max duration
             for i in range(8):
                 timestamp = i * 0.032
-                detector.process_window(window, timestamp)
+                detector.process_window(window, timestamp, 1000.0 + timestamp)
 
             # Should have forced a split
             assert len(segments) >= 1, "Should have split due to max duration"
@@ -466,12 +469,12 @@ class TestMaxDurationEnforcement:
             # Window 0-5: 0.192s (at max, but not > max)
             # Window 6: 0.224s (exceeds max, triggers split)
             for i in range(7):
-                detector.process_window(window, i * 0.032)
+                detector.process_window(window, i * 0.032, 1000.0 + i * 0.032)
 
             # Still in speech, so need to end it or check state
             # If no segment yet, we need one more window to trigger the check
             if len(segments) == 0:
-                detector.process_window(window, 7 * 0.032)
+                detector.process_window(window, 7 * 0.032, 1000.0 + 7 * 0.032)
 
             assert len(segments) >= 1
             # Segment should be around max duration
@@ -498,13 +501,13 @@ class TestLookBackBuffer:
 
             # Window 1: silence (should be saved as prev_slice)
             mock_vad.return_value = False
-            detector.process_window(silence_window, 0.0)
+            detector.process_window(silence_window, 0.0, 1000.0 + 0.0)
             assert detector._prev_slice is not None
             assert np.array_equal(detector._prev_slice, silence_window)
 
             # Window 2: speech starts (should include prev_slice)
             mock_vad.return_value = True
-            detector.process_window(speech_window, 0.032)
+            detector.process_window(speech_window, 0.032, 1000.0 + 0.032)
             assert detector._prev_slice is None  # Should be consumed
             # Speech section should have prev_slice + current
             assert len(detector._speech_section) == 1024  # 512 + 512
@@ -516,7 +519,7 @@ class TestLookBackBuffer:
 
             # End speech
             mock_vad.return_value = False
-            detector.process_window(silence_window, 0.064)
+            detector.process_window(silence_window, 0.064, 1000.0 + 0.064)
 
             # Verify segment includes look-back buffer
             assert len(segments) == 1
@@ -537,15 +540,15 @@ class TestLookBackBuffer:
 
             # First window is speech (no prev_slice available)
             mock_vad.return_value = True
-            detector.process_window(window, 0.0)
+            detector.process_window(window, 0.0, 1000.0 + 0.0)
             assert len(detector._speech_section) == 512  # Only current window
 
             # Continue to meet min duration
-            detector.process_window(window, 0.032)
+            detector.process_window(window, 0.032, 1000.0 + 0.032)
 
             # Now end
             mock_vad.return_value = False
-            detector.process_window(window, 0.064)
+            detector.process_window(window, 0.064, 1000.0 + 0.064)
 
             assert len(segments) == 1
             assert len(segments[0].audio) == 1536  # 3 speech windows
@@ -568,16 +571,16 @@ class TestLookBackBuffer:
 
             # Three silence windows
             mock_vad.return_value = False
-            detector.process_window(silence1, 0.0)
-            detector.process_window(silence2, 0.032)
-            detector.process_window(silence3, 0.064)
+            detector.process_window(silence1, 0.0, 1000.0 + 0.0)
+            detector.process_window(silence2, 0.032, 1000.0 + 0.032)
+            detector.process_window(silence3, 0.064, 1000.0 + 0.064)
 
             # Only silence3 should be in prev_slice
             assert detector._prev_slice[0] == pytest.approx(0.3, abs=0.01)
 
             # Speech starts
             mock_vad.return_value = True
-            detector.process_window(speech, 0.096)
+            detector.process_window(speech, 0.096, 1000.0 + 0.096)
 
             # First window in speech_section should be silence3
             assert detector._speech_section[0] == pytest.approx(0.3, abs=0.01)
@@ -603,12 +606,12 @@ class TestFinalWindowInclusion:
 
             # Two speech windows
             mock_vad.return_value = True
-            detector.process_window(speech_window, 0.0)
-            detector.process_window(speech_window, 0.032)
+            detector.process_window(speech_window, 0.0, 1000.0 + 0.0)
+            detector.process_window(speech_window, 0.032, 1000.0 + 0.032)
 
             # Final window that ends speech
             mock_vad.return_value = False
-            detector.process_window(final_window, 0.064)
+            detector.process_window(final_window, 0.064, 1000.0 + 0.064)
 
             # Segment should include all three windows
             assert len(segments) == 1
@@ -634,7 +637,7 @@ class TestFinalWindowInclusion:
 
             # Process 6 windows - should force split when exceeding max
             for i in range(6):
-                detector.process_window(window, i * 0.032)
+                detector.process_window(window, i * 0.032, 1000.0 + i * 0.032)
 
             assert len(segments) == 1
             # Should include enough windows to meet/exceed max
@@ -659,28 +662,28 @@ class TestMultiSegmentScenarios:
 
             # First segment: silence, speech, speech, silence
             mock_vad.return_value = False
-            detector.process_window(window, 0.0)
+            detector.process_window(window, 0.0, 1000.0 + 0.0)
 
             mock_vad.return_value = True
-            detector.process_window(window, 0.032)
-            detector.process_window(window, 0.064)
+            detector.process_window(window, 0.032, 1000.0 + 0.032)
+            detector.process_window(window, 0.064, 1000.0 + 0.064)
 
             mock_vad.return_value = False
-            detector.process_window(window, 0.096)
+            detector.process_window(window, 0.096, 1000.0 + 0.096)
 
             assert len(segments) == 1
 
             # Gap of silence
-            detector.process_window(window, 0.128)
-            detector.process_window(window, 0.160)
+            detector.process_window(window, 0.128, 1000.0 + 0.128)
+            detector.process_window(window, 0.160, 1000.0 + 0.160)
 
             # Second segment: speech, speech, silence
             mock_vad.return_value = True
-            detector.process_window(window, 0.192)
-            detector.process_window(window, 0.224)
+            detector.process_window(window, 0.192, 1000.0 + 0.192)
+            detector.process_window(window, 0.224, 1000.0 + 0.224)
 
             mock_vad.return_value = False
-            detector.process_window(window, 0.256)
+            detector.process_window(window, 0.256, 1000.0 + 0.256)
 
             assert len(segments) == 2
 
@@ -733,8 +736,8 @@ class TestEdgeCasesAndBoundaries:
 
             # Start speech but don't end it
             mock_vad.return_value = True
-            detector.process_window(window, 0.0)
-            detector.process_window(window, 0.032)
+            detector.process_window(window, 0.0, 1000.0 + 0.0)
+            detector.process_window(window, 0.032, 1000.0 + 0.032)
 
             # Flush should complete the segment
             detector.flush()
@@ -754,7 +757,7 @@ class TestEdgeCasesAndBoundaries:
 
             # Start speech
             mock_vad.return_value = True
-            detector.process_window(window, 0.0)
+            detector.process_window(window, 0.0, 1000.0 + 0.0)
 
             assert detector.is_in_speech is True
 
@@ -780,11 +783,11 @@ class TestEdgeCasesAndBoundaries:
 
             # Need multiple windows to meet min duration
             mock_vad.return_value = True
-            detector.process_window(window, 0.0)
-            detector.process_window(window, 0.032)
+            detector.process_window(window, 0.0, 1000.0 + 0.0)
+            detector.process_window(window, 0.032, 1000.0 + 0.032)
 
             mock_vad.return_value = False
-            detector.process_window(window, 0.064)
+            detector.process_window(window, 0.064, 1000.0 + 0.064)
 
             assert len(segments) == 1
             # 1536 samples @ 16000 Hz = 0.096 seconds
@@ -800,7 +803,7 @@ class TestEdgeCasesAndBoundaries:
 
             # Silence should track pending silence
             mock_vad.return_value = False
-            detector.process_window(window, 0.0)
+            detector.process_window(window, 0.0, 1000.0 + 0.0)
 
             assert detector.pending_silence_duration > 0
 

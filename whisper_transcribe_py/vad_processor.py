@@ -17,13 +17,20 @@ TARGET_SAMPLE_RATE = 16000
 
 
 class AudioSegment:
-    """Audio segment with timing information."""
+    """Audio segment with timing information.
+
+    Args:
+        start: Relative timestamp in seconds from stream/file beginning
+        audio: Audio samples as float32 array
+        duration_seconds: Optional duration in seconds
+        wall_clock_start: Real wall clock timestamp (required) - Unix timestamp for when this segment starts
+    """
     def __init__(
         self,
         start: float,
         audio: npt.NDArray[np.float32],
+        wall_clock_start: float,
         duration_seconds: Optional[float] = None,
-        wall_clock_start: Optional[float] = None,
     ):
         self.start = start
         self.audio = audio
@@ -226,6 +233,13 @@ class SpeechDetector:
         audio_array = np.asarray(self._speech_section)
         start_ts = self._has_speech_begin_timestamp if self._has_speech_begin_timestamp is not None else 0.0
         duration_seconds = len(audio_array) / self.sample_rate
+
+        # Fail fast if wall_clock_start is missing - all input sources must provide it
+        if self._has_speech_begin_wall_clock is None:
+            raise ValueError(
+                "wall_clock_start is required for all AudioSegments. "
+                "Input sources must provide wall_clock_timestamp to process_window()."
+            )
 
         segment = AudioSegment(
             audio=audio_array,

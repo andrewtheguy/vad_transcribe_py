@@ -73,9 +73,17 @@ class StreamingSession:
 
     def enqueue(self, audio: npt.NDArray, start_ts: float, approx_wall_clock: Optional[float]) -> None:
         self.last_activity = time.time()
-        if approx_wall_clock is not None and self.detector is not None and self.detector.wall_clock_reference is None:
+
+        # Fail fast if wall_clock is missing - all callers must provide it
+        if approx_wall_clock is None:
+            raise ValueError(
+                "approx_wall_clock is required for all audio segments. "
+                "All streaming API calls must provide wall clock timestamps."
+            )
+
+        if self.detector is not None and self.detector.wall_clock_reference is None:
             self.detector.wall_clock_reference = approx_wall_clock
-        elif approx_wall_clock is not None and self.detector is None:
+        elif self.detector is None:
             self.wall_clock_reference = approx_wall_clock
 
         duration_seconds = len(audio) / self.input_sample_rate if self.input_sample_rate else 0.0
