@@ -15,11 +15,11 @@ from typing import Callable, Optional
 import numpy.typing as npt
 import scipy
 import torch
-from silero_vad import load_silero_vad
 
 import soundfile as sf
 
 from zhconv_rs import zhconv
+from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment
 
 TARGET_SAMPLE_RATE = 16000
 
@@ -185,26 +185,6 @@ def get_window_size_samples():
 #     # print indexes of speech_probs where probability is greater than 0.5
 #     seconds = [i / TARGET_SAMPLE_RATE for i, prob in speech_probs if prob > 0.5]
 #     print(seconds)
-
-class AudioSegment:
-    def __init__(
-            self,
-            start: float,
-            audio: npt.NDArray[np.float32],
-            duration_seconds: Optional[float] = None,
-            wall_clock_start: Optional[float] = None,
-    ):
-        self.start = start
-        self.audio = audio
-        self.duration_seconds = duration_seconds
-        self.wall_clock_start = wall_clock_start
-
-    def __repr__(self):
-        return (
-            f"AudioSegment(start={self.start}, duration={self.duration_seconds}, "
-            f"wall_clock_start={self.wall_clock_start})"
-        )
-
 
 @dataclass
 class TranscriptionNotice:
@@ -443,7 +423,6 @@ class AudioTranscriber:
             wall_clock_reference: Optional[float] = None,
             queue_backlog_limiter: Optional["QueueBacklogLimiter"] = None,
     ):
-        self.vad_model = load_silero_vad()
         self.transcribe_queue = queue.Queue()
         self._pending_drop_notices: queue.Queue[TranscriptionNotice] = queue.Queue()
         self.audio_input_queue = audio_input_queue
@@ -460,8 +439,14 @@ class AudioTranscriber:
         self.stop_event = stop_event
         self.wall_clock_reference = wall_clock_reference
         self.queue_backlog_limiter = queue_backlog_limiter
-        self._pending_silence_seconds = 0.0
         self._last_transcript_wall_clock: Optional[float] = None
+
+        # Initialize speech detector with callback
+        self.speech_detector = SpeechDetector(
+            sample_rate=TARGET_SAMPLE_RATE,
+            on_segment_complete=self._handle_vad_segment,
+        )
+
         if self.queue_backlog_limiter is not None:
             self.queue_backlog_limiter.register_drop_callback(self._handle_drop_notice)
         #if transcribe_backend == "faster-whisper":
@@ -489,23 +474,6 @@ class AudioTranscriber:
         print(self.whisper_cpp_model.get_params())
         print(self.whisper_cpp_model.system_info())
 
-    def process_silero(self, audio):
-        #return True
-        vad_model = self.vad_model
-        window_size_samples = get_window_size_samples()
-
-        if len(audio) != window_size_samples:
-            raise ValueError(f"Audio length {len(audio)} does not match window size {window_size_samples}")
-
-        # print(audio)
-
-        # Convert to PyTorch tensor and reshape to (1, num_samples)
-        # Silero typically expects a single-channel tensor with shape (1, samples)
-        audio_tensor = torch.from_numpy(audio)
-        speech_prob = vad_model(audio_tensor, TARGET_SAMPLE_RATE).item()
-        #print(speech_prob)
-        return speech_prob > 0.5
-        #    print("Speech detected")
 
     def _transcribe(self):
         self._transcribe_whisper_cpp()
@@ -591,25 +559,19 @@ class AudioTranscriber:
             ):
                 self.queue_backlog_limiter.consume(segment_duration_seconds)
 
-    def _process_end_of_speech(self, speech_section, last_has_speech_ts, wall_clock_start):
-        s = np.asarray(speech_section)
-        start_ts = last_has_speech_ts if last_has_speech_ts is not None else 0.0
-
+    def _handle_vad_segment(self, segment: AudioSegment) -> None:
+        """Callback from SpeechDetector when speech segment completes."""
         if self.audio_segment_callback is not None:
-            self.audio_segment_callback(s, start_ts)
+            self.audio_segment_callback(segment.audio, segment.start)
 
-        segment_duration_seconds = len(s) / TARGET_SAMPLE_RATE
-
-        self.transcribe_queue.put(
-            AudioSegment(
-                audio=s,
-                start=start_ts,
-                wall_clock_start=wall_clock_start,
-                duration_seconds=segment_duration_seconds,
-            )
-        )
-        self.vad_model.reset_states()
+        self.transcribe_queue.put(segment)
         self._flush_pending_drop_notices()
+
+        # Consume silence from backlog limiter
+        if self.queue_backlog_limiter:
+            silence = self.speech_detector.consume_silence()
+            if silence > 0:
+                self.queue_backlog_limiter.consume(silence)
 
     def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
         """
@@ -672,20 +634,7 @@ class AudioTranscriber:
         transcribing_thread = threading.Thread(target=self._transcribe)
         transcribing_thread.start()
 
-        prev_has_speech = False
-
-        #has_speech_begin_timestamp = None
-        speech_section = []
-
-        min_speech_seconds = 3
-        max_speech_seconds = 60
-        has_speech_begin_timestamp = None
-        has_speech_begin_wall_clock = None
-
         ts = None
-
-        prev_slice = None
-
         buffer = []
         ts_wall_clock = None
         stop_requested = False
@@ -737,65 +686,23 @@ class AudioTranscriber:
             else:
                 data_q = segment.audio
             buffer.extend(data_q)
-            #print("buffer size",len(buffer))
-            #print("speech_section size",len(speech_section))
-            #print("prev_slice size",len(prev_slice) if prev_slice is not None else 0)
-            #gc.collect()
+
             while len(buffer) >= window_size_samples:
                 arr = buffer[:window_size_samples]
                 buffer = buffer[window_size_samples:]
                 data_slice = np.asarray(arr)
-                #ts += window_size_samples / TARGET_SAMPLE_RATE
-                #if len(data_slice) != window_size_samples:
-                #    raise ValueError(f"Audio length {len(data_slice)} does not match window size {window_size_samples}")
-                seconds = len(speech_section) / TARGET_SAMPLE_RATE
-                has_speech = self.process_silero(data_slice)
-                if not prev_has_speech:
-                    if has_speech:
-                        #print("Transitioning from no speech to speech",file=sys.stderr)
-                        has_speech_begin_timestamp = ts
-                        has_speech_begin_wall_clock = ts_wall_clock
-                        if prev_slice is not None:
-                            speech_section.extend(prev_slice)
-                            prev_slice = None
-                            self._pending_silence_seconds = 0.0
-                        speech_section.extend(data_slice)
-                    else:
-                        #print("still no speech",ts,file=sys.stderr)
-                        if self.queue_backlog_limiter is not None:
-                            if self._pending_silence_seconds > 0:
-                                self.queue_backlog_limiter.consume(self._pending_silence_seconds)
-                            self._pending_silence_seconds = window_seconds
-                        else:
-                            self._pending_silence_seconds = window_seconds
-                        prev_slice = data_slice
-                else:
-                    if seconds > max_speech_seconds:
-                        #print("override to no speech because seconds > max_seconds",seconds,file=sys.stderr)
-                        has_speech = False
-                    elif seconds < min_speech_seconds and not has_speech:
-                        #print("override to speech because seconds < min_seconds",seconds,file=sys.stderr)
-                        has_speech = True
-                    if has_speech:
-                        #print("still in speech",ts,file=sys.stderr)
-                        speech_section.extend(data_slice)
-                    else:
-                        #print("Transitioning from speech to no speech",file=sys.stderr)
-                        speech_section.extend(data_slice)
-                        self._process_end_of_speech(
-                            speech_section,
-                            has_speech_begin_timestamp,
-                            has_speech_begin_wall_clock,
-                        )
-                        speech_section = []
-                        has_speech_begin_timestamp = None
-                        has_speech_begin_wall_clock = None
-                        prev_slice = None
 
-                prev_has_speech = has_speech
+                # Process window through speech detector
+                has_speech = self.speech_detector.process_window(data_slice, ts, ts_wall_clock)
 
-                if not prev_has_speech and len(speech_section) == 0:
+                # Handle backlog for silence (when not in speech and no accumulated segment)
+                if not has_speech and not self.speech_detector.is_in_speech:
                     self._flush_pending_drop_notices()
+                    # Consume pending silence from backlog
+                    if self.queue_backlog_limiter is not None:
+                        pending_silence = self.speech_detector.pending_silence_duration
+                        if pending_silence > 0:
+                            self.queue_backlog_limiter.consume(pending_silence)
 
                 if ts is not None:
                     ts += window_seconds
@@ -804,12 +711,15 @@ class AudioTranscriber:
 
         print("finished processing audio",ts,file=sys.stderr)
 
-        if len(speech_section) > 0 and not stop_requested:
-            self._process_end_of_speech(speech_section, has_speech_begin_timestamp, has_speech_begin_wall_clock)
+        # Flush any incomplete speech segment
+        if not stop_requested:
+            self.speech_detector.flush()
 
-        if self.queue_backlog_limiter and self._pending_silence_seconds > 0:
-            self.queue_backlog_limiter.consume(self._pending_silence_seconds)
-            self._pending_silence_seconds = 0.0
+        # Consume any remaining silence
+        if self.queue_backlog_limiter:
+            remaining_silence = self.speech_detector.consume_silence()
+            if remaining_silence > 0:
+                self.queue_backlog_limiter.consume(remaining_silence)
 
         if stop_requested:
             # Drop any queued-but-unprocessed transcribe work so shutdown is fast
