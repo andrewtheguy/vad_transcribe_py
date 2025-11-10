@@ -26,6 +26,7 @@ TARGET_SAMPLE_RATE = 16000
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
 QUEUE_TIME_LIMIT_SECONDS = 60.0
+# don't make it too low otherwise it will be stuck in drop mode
 QUEUE_RESUME_LIMIT_SECONDS = 15.0
 
 # use ffmpeg to stream audio from url
