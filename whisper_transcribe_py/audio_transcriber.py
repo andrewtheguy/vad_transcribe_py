@@ -487,8 +487,15 @@ class AudioTranscriber:
         ts_end_dt = None
 
         if self.timestamp_strategy == "wall_clock":
-            ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
-            ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
+            raw_start = self.ts_transcribe_start + segment.t0 / 1000
+            raw_end = self.ts_transcribe_start + segment.t1 / 1000
+            min_allowed = self._last_transcript_wall_clock if self._last_transcript_wall_clock is not None else raw_start
+            if raw_start < min_allowed:
+                shift = min_allowed - raw_start
+                raw_start += shift
+                raw_end += shift
+            ts_start_dt = datetime.fromtimestamp(raw_start, timezone.utc)
+            ts_end_dt = datetime.fromtimestamp(raw_end, timezone.utc)
             print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
         else:
             print("[%.2fs -> %.2fs] %s" % (relative_start, relative_end, segment.text))
