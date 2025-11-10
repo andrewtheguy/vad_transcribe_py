@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -423,7 +424,8 @@ class AudioTranscriber:
             queue_backlog_limiter: Optional["QueueBacklogLimiter"] = None,
     ):
         self.transcribe_queue = queue.Queue()
-        self._pending_drop_notices: queue.Queue[TranscriptionNotice] = queue.Queue()
+        self._pending_drop_notices: deque[TranscriptionNotice] = deque()
+        self._drop_notice_lock = threading.Lock()
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.audio_segment_callback = audio_segment_callback
@@ -563,8 +565,8 @@ class AudioTranscriber:
         if self.audio_segment_callback is not None:
             self.audio_segment_callback(segment.audio, segment.start)
 
+        self._release_ready_drop_notices(getattr(segment, "wall_clock_start", None))
         self.transcribe_queue.put(segment)
-        self._flush_pending_drop_notices()
 
         # Consume silence from backlog limiter
         if self.queue_backlog_limiter:
@@ -587,7 +589,9 @@ class AudioTranscriber:
         if not ts_candidates:
             ts_candidates.append(time.time())
         ts_seconds = max(ts_candidates)
-        self._pending_drop_notices.put(TranscriptionNotice("(transcript temporarily dropped)", ts_seconds))
+        notice = TranscriptionNotice("(transcript temporarily dropped)", ts_seconds)
+        with self._drop_notice_lock:
+            self._pending_drop_notices.append(notice)
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
@@ -617,13 +621,22 @@ class AudioTranscriber:
     def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
         self._emit_notice("(transcript temporarily dropped)", wall_clock_ts)
 
-    def _flush_pending_drop_notices(self) -> None:
-        while True:
-            try:
-                notice = self._pending_drop_notices.get_nowait()
-            except queue.Empty:
-                break
+    def _release_ready_drop_notices(self, up_to_wall_clock: Optional[float]) -> None:
+        if up_to_wall_clock is None:
+            up_to_wall_clock = float("inf")
+        ready: list[TranscriptionNotice] = []
+        with self._drop_notice_lock:
+            while self._pending_drop_notices:
+                notice = self._pending_drop_notices[0]
+                notice_ts = notice.timestamp if notice.timestamp is not None else float("-inf")
+                if notice_ts > up_to_wall_clock:
+                    break
+                ready.append(self._pending_drop_notices.popleft())
+        for notice in ready:
             self.transcribe_queue.put(notice)
+
+    def _flush_pending_drop_notices(self) -> None:
+        self._release_ready_drop_notices(None)
 
     def process_input(self,input_sample_rate):
 
@@ -696,7 +709,7 @@ class AudioTranscriber:
 
                 # Handle backlog for silence (when not in speech and no accumulated segment)
                 if not has_speech and not self.speech_detector.is_in_speech:
-                    self._flush_pending_drop_notices()
+                    self._release_ready_drop_notices(ts_wall_clock)
                     # Consume pending silence from backlog
                     if self.queue_backlog_limiter is not None:
                         pending_silence = self.speech_detector.pending_silence_duration
