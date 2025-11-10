@@ -37,7 +37,7 @@ def test_try_add_exceeding_limit_triggers_drop_callback_once(time_stub):
     drop_events: list[float] = []
     limiter.register_drop_callback(lambda ts: drop_events.append(ts))
 
-    first_drop = limiter.try_add(6.0)
+    first_drop = limiter.try_add(6.0, chunk_wall_clock=100.0)
 
     assert first_drop is False
     assert drop_events == pytest.approx([100.0])
@@ -45,7 +45,7 @@ def test_try_add_exceeding_limit_triggers_drop_callback_once(time_stub):
     assert limiter._drop_notice_active is True  # type: ignore[attr-defined]
 
     time_stub.advance(1.0)
-    second_attempt = limiter.try_add(1.0)
+    second_attempt = limiter.try_add(1.0, chunk_wall_clock=101.0)
 
     assert second_attempt is True
     assert drop_events == pytest.approx([100.0])
@@ -57,19 +57,19 @@ def test_drop_mode_clears_after_consuming_below_resume(time_stub):
     drop_events: list[float] = []
     limiter.register_drop_callback(lambda ts: drop_events.append(ts))
 
-    assert limiter.try_add(6.0) is True
+    assert limiter.try_add(6.0, chunk_wall_clock=100.0) is True
     time_stub.advance(1.0)
-    assert limiter.try_add(6.0) is False  # enters drop mode while backlog>resume
+    assert limiter.try_add(6.0, chunk_wall_clock=101.0) is False  # enters drop mode while backlog>resume
     assert drop_events == pytest.approx([101.0])
 
     time_stub.advance(1.0)
-    assert limiter.try_add(1.0) is False  # still dropping because backlog>resume
+    assert limiter.try_add(1.0, chunk_wall_clock=102.0) is False  # still dropping because backlog>resume
     assert drop_events == pytest.approx([101.0])
 
     limiter.consume(3.5)  # backlog now below resume threshold
     assert limiter.current_seconds == pytest.approx(2.5)
 
-    assert limiter.try_add(2.0) is True
+    assert limiter.try_add(2.0, chunk_wall_clock=103.0) is True
     assert drop_events == pytest.approx([101.0])
 
 
@@ -78,9 +78,10 @@ def test_drop_callback_uses_current_time(time_stub):
     drop_events: list[float] = []
     limiter.register_drop_callback(lambda ts: drop_events.append(ts))
 
-    assert limiter.try_add(4.0) is True
+    assert limiter.try_add(4.0, chunk_wall_clock=100.0) is True
     time_stub.advance(2.0)
-    assert limiter.try_add(4.0) is False
+    # Pass the chunk's wall clock timestamp (which matches time_stub.value after advance)
+    assert limiter.try_add(4.0, chunk_wall_clock=time_stub.value) is False
 
     assert drop_events == pytest.approx([time_stub.value])
 

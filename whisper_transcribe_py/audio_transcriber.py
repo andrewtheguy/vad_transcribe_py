@@ -315,8 +315,8 @@ class QueueBacklogLimiter:
 
         Args:
             duration_seconds: Duration of the audio chunk in seconds
-            chunk_wall_clock: Wall clock timestamp of the audio chunk being checked.
-                            If not provided, time.time() will be used as fallback.
+            chunk_wall_clock: Wall clock timestamp of the audio chunk being checked (required).
+                            All callers must provide this timestamp.
         """
         if duration_seconds <= 0:
             return True
@@ -340,10 +340,15 @@ class QueueBacklogLimiter:
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
                 if not self._drop_mode or not self._drop_notice_active:
-                    # Use the audio chunk's wall clock timestamp for drop notice
-                    # Fallback to current time only if chunk timestamp not provided
-                    drop_notice_timestamp = chunk_wall_clock if chunk_wall_clock is not None else time.time()
                     callbacks_to_notify = list(self._drop_callbacks)
+                    # Fail fast if chunk_wall_clock is missing when drop callbacks are registered
+                    if callbacks_to_notify and chunk_wall_clock is None:
+                        raise ValueError(
+                            f"chunk_wall_clock is required when QueueBacklogLimiter has drop callbacks. "
+                            f"All callers must provide real wall clock timestamps for audio chunks. "
+                            f"Source: {self.source_label}"
+                        )
+                    drop_notice_timestamp = chunk_wall_clock if callbacks_to_notify else None
                     self._drop_notice_active = True
                 self._drop_mode = True
                 self._dropped_seconds += duration_seconds
@@ -534,8 +539,11 @@ class AudioTranscriber:
             if isinstance(queued_item, AudioSegment):
                 self.ts_transcribe_start = queued_item.wall_clock_start
             else:
-                # Legacy fallback for non-AudioSegment items (shouldn't happen in practice)
-                self.ts_transcribe_start = time.time()
+                # Fail fast - all audio items must be AudioSegment with wall_clock_start
+                raise TypeError(
+                    f"Expected AudioSegment but got {type(queued_item).__name__}. "
+                    f"All audio items in transcribe_queue must be AudioSegment instances with wall_clock_start."
+                )
 
             self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
             segment_duration_seconds = None
@@ -591,7 +599,11 @@ class AudioTranscriber:
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
         if ts_seconds is None:
-            ts_seconds = time.time()
+            raise ValueError(
+                f"Cannot emit notice '{text}' without a timestamp. "
+                f"wall_clock_ts is None and no previous transcript timestamp available. "
+                f"All TranscriptionNotice instances must have valid wall clock timestamps."
+            )
         ts_dt = datetime.fromtimestamp(ts_seconds, timezone.utc)
         relative_time = 0.0
         if self.wall_clock_reference is not None:

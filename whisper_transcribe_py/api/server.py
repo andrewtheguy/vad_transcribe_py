@@ -184,7 +184,9 @@ def create_app(
             raise HTTPException(status_code=404, detail="Session not found or no longer active")
 
         audio = pcm_s16le_to_float32(payload)
-        approx_reference = max(time.time() - max(start, 0.0), 0.0)
+        # Use current time as wall clock timestamp when chunk is received
+        # The first chunk's timestamp becomes the session's wall_clock_reference
+        approx_reference = time.time()
         session.enqueue(audio=audio, start_ts=start, approx_wall_clock=approx_reference)
 
         return {
