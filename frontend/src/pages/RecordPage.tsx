@@ -87,6 +87,7 @@ export default function RecordPage() {
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
   const [transcriptionEnabled, setTranscriptionEnabled] = useState<boolean | null>(null)
   const [alternateApiUrl, setAlternateApiUrl] = useState<string | null>(null)
+  const [recordingError, setRecordingError] = useState<string | null>(null)
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const workletNodeRef = useRef<AudioWorkletNode | null>(null)
@@ -150,8 +151,21 @@ export default function RecordPage() {
       }),
     })
     if (!response.ok) {
-      const detail = await response.text()
-      throw new Error(detail || `Server responded with ${response.status}`)
+      // Try to parse JSON error response first
+      let errorMessage = `Server responded with ${response.status}`
+      try {
+        const errorData = await response.json()
+        if (errorData.detail) {
+          errorMessage = errorData.detail
+        }
+      } catch {
+        // If JSON parsing fails, try text
+        const textError = await response.text()
+        if (textError) {
+          errorMessage = textError
+        }
+      }
+      throw new Error(errorMessage)
     }
     const data = (await response.json()) as SessionResponse
     if (!data.session_id) {
@@ -246,6 +260,7 @@ export default function RecordPage() {
       clearTranscriptPolling()
       setIsRecording(false)
       setStatus('Idle')
+      setRecordingError(message)
       await finalizeSession()
     },
     [logEvent, cleanupAudioGraph, clearTranscriptPolling, finalizeSession],
@@ -311,6 +326,7 @@ export default function RecordPage() {
       return
     }
     setStatus('Preparing session…')
+    setRecordingError(null) // Clear any previous errors
     let sessionId: string | null = null
     try {
       sessionId = await createServerSession()
@@ -551,6 +567,11 @@ export default function RecordPage() {
               </Button>
               <div className="text-sm text-slate-500 dark:text-slate-400 text-center">
                 Status: <span className="font-medium">{status}</span>
+                {recordingError && (
+                  <div className="mt-2 text-rose-600 dark:text-rose-400 font-medium max-w-md mx-auto">
+                    {recordingError}
+                  </div>
+                )}
                 <div className="mt-2 flex items-center gap-2 justify-center">
                   <label className="text-xs uppercase tracking-wide text-slate-400">
                     Language
