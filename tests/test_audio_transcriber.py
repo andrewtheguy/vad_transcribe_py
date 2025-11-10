@@ -42,6 +42,23 @@ class TrackingSpeechDetector:
         self._script_index = 0
 
 
+class StaticTimestampLimiter:
+    def __init__(self, pending_timestamp: float):
+        self.pending_timestamp = pending_timestamp
+
+    def pending_chunk_start_timestamp(self):
+        return self.pending_timestamp
+
+    def note_timestamp_progress(self, _duration):
+        pass
+
+    def consume(self, _duration):
+        pass
+
+    def register_drop_callback(self, _callback):
+        pass
+
+
 @pytest.fixture(autouse=True)
 def stub_dependencies(monkeypatch):
     monkeypatch.setattr(audio_transcriber.AudioTranscriber, "_load_whisper_cpp", lambda self: None)
@@ -198,6 +215,27 @@ def test_drop_notice_positions_between_segments(make_transcriber, recorded_trans
     early_index = next(i for i, item in enumerate(recorded_transcribe) if item is seg_early)
     late_index = next(i for i, item in enumerate(recorded_transcribe) if item is seg_late)
     assert early_index < notice_index < late_index
+
+
+def test_segments_after_drop_use_notice_timestamp(make_transcriber):
+    drop_ts = 200.0
+    limiter = StaticTimestampLimiter(pending_timestamp=drop_ts - 30.0)
+    transcriber = make_transcriber(language="en", queue_backlog_limiter=limiter, wall_clock_reference=0.0)
+    transcriber._handle_drop_notice(drop_ts)
+
+    window_samples = audio_transcriber.get_window_size_samples()
+    audio = np.zeros(window_samples, dtype=np.float32)
+    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
+
+    audio_queue = transcriber.audio_input_queue
+    audio_queue.put(segment)
+    audio_queue.put(None)
+
+    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+
+    assert transcriber.speech_detector.calls, "expected windows"
+    _, wall_clock, _ = transcriber.speech_detector.calls[0]
+    assert wall_clock == pytest.approx(drop_ts)
 
 
 def test_audio_segment_callback_invoked(make_transcriber):

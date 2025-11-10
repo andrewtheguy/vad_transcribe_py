@@ -592,6 +592,8 @@ class AudioTranscriber:
         notice = TranscriptionNotice("(transcript temporarily dropped)", ts_seconds)
         with self._drop_notice_lock:
             self._pending_drop_notices.append(notice)
+        # Fast-forward downstream timestamps so future segments align with the drop point
+        self._last_transcript_wall_clock = ts_seconds
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
