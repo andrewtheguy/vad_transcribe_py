@@ -87,7 +87,7 @@ class StreamingSession:
 
         duration_seconds = len(audio) / self.input_sample_rate if self.input_sample_rate else 0.0
         if self.queue_limiter and duration_seconds > 0:
-            if not self.queue_limiter.try_add(duration_seconds):
+            if not self.queue_limiter.try_add(duration_seconds, chunk_wall_clock=approx_wall_clock):
                 logger.warning(
                     "Dropped %.2fs chunk for session %s because backlog exceeded %.0fs cap",
                     duration_seconds,

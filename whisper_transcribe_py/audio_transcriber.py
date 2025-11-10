@@ -310,8 +310,14 @@ class QueueBacklogLimiter:
             except Exception:
                 logging.exception("Drop notice callback failed for %s", self.source_label)
 
-    def try_add(self, duration_seconds: float) -> bool:
-        """Return True and account for the chunk if it fits under the cap."""
+    def try_add(self, duration_seconds: float, chunk_wall_clock: Optional[float] = None) -> bool:
+        """Return True and account for the chunk if it fits under the cap.
+
+        Args:
+            duration_seconds: Duration of the audio chunk in seconds
+            chunk_wall_clock: Wall clock timestamp of the audio chunk being checked.
+                            If not provided, time.time() will be used as fallback.
+        """
         if duration_seconds <= 0:
             return True
         callbacks_to_notify: list[Callable[[float], None]] = []
@@ -334,8 +340,9 @@ class QueueBacklogLimiter:
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
                 if not self._drop_mode or not self._drop_notice_active:
-                    # Capture real timestamp when drop is detected
-                    drop_notice_timestamp = time.time()
+                    # Use the audio chunk's wall clock timestamp for drop notice
+                    # Fallback to current time only if chunk timestamp not provided
+                    drop_notice_timestamp = chunk_wall_clock if chunk_wall_clock is not None else time.time()
                     callbacks_to_notify = list(self._drop_callbacks)
                     self._drop_notice_active = True
                 self._drop_mode = True
@@ -752,7 +759,9 @@ def stream_url_thread(
                     if stop_event is not None and stop_event.is_set():
                         break
                     duration_seconds = len(audio) / TARGET_SAMPLE_RATE
-                    if queue_limiter and not queue_limiter.try_add(duration_seconds):
+                    # Calculate wall clock timestamp for this chunk
+                    chunk_wall_clock = base_wall_clock + ts
+                    if queue_limiter and not queue_limiter.try_add(duration_seconds, chunk_wall_clock=chunk_wall_clock):
                         ts += duration_seconds
                         continue
                     # Use stream start time + relative position as wall clock timestamp
@@ -760,7 +769,7 @@ def stream_url_thread(
                         AudioSegment(
                             audio=audio,
                             start=ts,
-                            wall_clock_start=base_wall_clock + ts,
+                            wall_clock_start=chunk_wall_clock,
                             duration_seconds=duration_seconds
                         )
                     )
