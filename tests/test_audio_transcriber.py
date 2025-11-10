@@ -15,9 +15,20 @@ class TrackingSpeechDetector:
         self.calls: list[tuple[float, float | None, int]] = []
         self.pending_silence_duration = 0.0
         self.is_in_speech = False
+        self._script: list[tuple[bool, bool]] = []
+        self._script_index = 0
 
     def process_window(self, audio_window, timestamp, wall_clock_timestamp):
         self.calls.append((timestamp, wall_clock_timestamp, len(audio_window)))
+        if self._script_index < len(self._script):
+            has_speech, in_speech = self._script[self._script_index]
+            self._script_index += 1
+            self.is_in_speech = in_speech
+            if not has_speech and not in_speech:
+                self.pending_silence_duration = len(audio_window) / self.sample_rate
+            else:
+                self.pending_silence_duration = 0.0
+            return has_speech
         return False
 
     def flush(self):
@@ -25,6 +36,10 @@ class TrackingSpeechDetector:
 
     def consume_silence(self) -> float:
         return 0.0
+
+    def set_script(self, script: list[tuple[bool, bool]]) -> None:
+        self._script = script
+        self._script_index = 0
 
 
 @pytest.fixture(autouse=True)
@@ -92,6 +107,42 @@ def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_
     assert second_ts == pytest.approx(5.0 + 512 / audio_transcriber.TARGET_SAMPLE_RATE)
 
 
+def test_drop_notice_waits_until_silence_release(monkeypatch, make_transcriber, recorded_transcribe):
+    window_samples = audio_transcriber.get_window_size_samples()
+    audio = np.zeros(window_samples * 3, dtype=np.float32)
+    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
+
+    audio_queue = queue.Queue()
+    audio_queue.put(segment)
+    audio_queue.put(None)
+
+    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
+    transcriber.speech_detector.set_script([
+        (True, True),
+        (False, True),
+        (False, False),
+    ])
+    transcriber._handle_drop_notice(5.0)
+
+    release_calls = []
+    original_release = audio_transcriber.AudioTranscriber._release_ready_drop_notices
+
+    def recording_release(self, ts):
+        release_calls.append((len(self.speech_detector.calls), ts, self.speech_detector.is_in_speech))
+        return original_release(self, ts)
+
+    monkeypatch.setattr(audio_transcriber.AudioTranscriber, "_release_ready_drop_notices", recording_release)
+
+    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+
+    assert release_calls, "expected drop release attempts"
+    first_call = release_calls[0]
+    assert first_call[0] == 3  # release occurs after three windows processed
+    assert first_call[2] is False
+    notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]
+    assert len(notices) == 1
+
+
 def test_new_segment_callback_emits_callbacks(make_transcriber):
     captured_segments: list[dict] = []
     captured_payloads: list = []
@@ -122,6 +173,31 @@ def test_new_segment_callback_emits_callbacks(make_transcriber):
     assert payload.start_timestamp.timestamp() == pytest.approx(200.0)
     assert payload.end_timestamp.timestamp() == pytest.approx(201.5)
     assert transcriber._last_transcript_wall_clock == pytest.approx(201.5)
+
+
+def test_drop_notice_positions_between_segments(make_transcriber, recorded_transcribe):
+    audio_queue = queue.Queue()
+    audio_queue.put(None)
+
+    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
+    transcriber._handle_drop_notice(25.0)
+
+    early_audio = np.ones(1600, dtype=np.float32)
+    late_audio = np.ones(1600, dtype=np.float32)
+    seg_early = AudioSegment(start=0.0, audio=early_audio, duration_seconds=0.1, wall_clock_start=20.0)
+    seg_late = AudioSegment(start=5.0, audio=late_audio, duration_seconds=0.1, wall_clock_start=30.0)
+
+    transcriber._handle_vad_segment(seg_early)
+    transcriber._handle_vad_segment(seg_late)
+
+    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+
+    queue_order = [type(item) for item in recorded_transcribe[:-1]]  # drop final sentinel
+    assert queue_order.count(AudioSegment) == 2
+    notice_index = next(i for i, item in enumerate(recorded_transcribe) if isinstance(item, audio_transcriber.TranscriptionNotice))
+    early_index = next(i for i, item in enumerate(recorded_transcribe) if item is seg_early)
+    late_index = next(i for i, item in enumerate(recorded_transcribe) if item is seg_late)
+    assert early_index < notice_index < late_index
 
 
 def test_audio_segment_callback_invoked(make_transcriber):
