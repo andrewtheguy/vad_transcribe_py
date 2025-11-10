@@ -60,17 +60,30 @@ def test_drop_mode_clears_after_consuming_below_resume(time_stub):
     assert limiter.try_add(6.0) is True
     time_stub.advance(1.0)
     assert limiter.try_add(6.0) is False  # enters drop mode while backlog>resume
-    assert drop_events == pytest.approx([101.0])
+    assert drop_events == pytest.approx([100.0])
 
     time_stub.advance(1.0)
     assert limiter.try_add(1.0) is False  # still dropping because backlog>resume
-    assert drop_events == pytest.approx([101.0])
+    assert drop_events == pytest.approx([100.0])
 
     limiter.consume(3.5)  # backlog now below resume threshold
     assert limiter.current_seconds == pytest.approx(2.5)
 
     assert limiter.try_add(2.0) is True
-    assert drop_events == pytest.approx([101.0])
+    assert drop_events == pytest.approx([100.0])
+
+
+def test_drop_callback_uses_backlog_adjusted_timestamp(time_stub):
+    limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=5.0, initial_timestamp=90.0)
+    drop_events: list[float] = []
+    limiter.register_drop_callback(lambda ts: drop_events.append(ts))
+
+    assert limiter.try_add(4.0) is True
+    time_stub.advance(2.0)
+    assert limiter.try_add(4.0) is False
+
+    # Backlog was 4s when drop happened, so timestamp reflects approx now - backlog
+    assert drop_events == pytest.approx([98.0])
 
 
 def test_pending_chunk_start_timestamp_accounts_for_progress_and_drops(time_stub):

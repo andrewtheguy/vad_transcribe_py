@@ -331,7 +331,9 @@ class QueueBacklogLimiter:
             if self.current_seconds + duration_seconds > self.max_seconds:
                 if not self._drop_mode or not self._drop_notice_active:
                     callbacks_to_notify = list(self._drop_callbacks)
-                    drop_notice_timestamp = time.time()
+                    drop_notice_timestamp = self._estimate_next_chunk_timestamp_locked()
+                    if drop_notice_timestamp is None:
+                        drop_notice_timestamp = time.time()
                     self._drop_notice_active = True
                 self._drop_mode = True
                 self._dropped_seconds += duration_seconds
