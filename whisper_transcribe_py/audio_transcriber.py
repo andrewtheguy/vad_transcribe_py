@@ -793,7 +793,10 @@ def stream_url_thread(
             logging.warning("ffmpeg stream exited unexpectedly (%s); retrying shortly.", exc)
         if stop_event is not None and stop_event.is_set():
             break
-        audio_input_queue.put(TranscriptionNotice("(transcript source temporary error)", time.time()))
+        # Use the wall clock timestamp of where the stream ended (last audio position)
+        # not the current time when the error was detected
+        error_wall_clock = base_wall_clock + ts
+        audio_input_queue.put(TranscriptionNotice("(transcript source temporary error)", error_wall_clock))
         print("stream_stopped, restarting", file=sys.stderr)
         sleep(0.5)
     print("stream_url_thread exiting", file=sys.stderr)
