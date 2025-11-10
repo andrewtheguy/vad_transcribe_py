@@ -424,3 +424,405 @@ def test_timestamp_continuity_across_segments(make_transcriber, recorded_transcr
 
     assert ts1 == pytest.approx(0.0)
     assert ts2 == pytest.approx(1.0)
+
+
+# ============================================================================
+# Tests for stream_url_thread
+# ============================================================================
+
+
+def test_stream_url_thread_basic_operation(monkeypatch):
+    """Test basic streaming and queuing of audio chunks."""
+    import threading
+    from unittest.mock import Mock, MagicMock
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    # Create fake PCM data (1 second worth)
+    fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
+
+    # Mock stream_url context manager
+    mock_stdout = MagicMock()
+    read_sequence = [fake_pcm, fake_pcm]  # Two chunks
+    read_count = [0]
+
+    def mock_read(size):
+        if read_count[0] < len(read_sequence):
+            result = read_sequence[read_count[0]]
+            read_count[0] += 1
+            return result
+        return b''  # EOF after sequence
+
+    mock_stdout.read.side_effect = mock_read
+
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = Mock(return_value=mock_stdout)
+    mock_stream.__exit__ = Mock(return_value=False)
+
+    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
+
+    # Run in thread with timeout
+    thread = threading.Thread(
+        target=audio_transcriber.stream_url_thread,
+        args=("fake://url", audio_queue),
+        kwargs={"stop_event": stop_event}
+    )
+    thread.start()
+
+    # Wait for EOF and retry, then stop
+    import time
+    time.sleep(0.5)
+    stop_event.set()
+    thread.join(timeout=2.0)
+
+    # Verify chunks were queued
+    assert audio_queue.qsize() >= 2
+    segment = audio_queue.get()
+    assert isinstance(segment, AudioSegment)
+    assert segment.start == 0.0
+    assert segment.duration_seconds == pytest.approx(1.0)
+
+    # Second segment should have incremented timestamp
+    segment2 = audio_queue.get()
+    assert segment2.start == pytest.approx(1.0)
+
+
+def test_stream_url_thread_stop_event(monkeypatch):
+    """Test that stop_event terminates the thread."""
+    import threading
+    import time
+    from unittest.mock import Mock, MagicMock
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    # Mock to keep streaming indefinitely
+    mock_stdout = MagicMock()
+    fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
+
+    def blocking_read(size):
+        # Check stop event during read
+        if stop_event.is_set():
+            return b''
+        time.sleep(0.05)  # Small delay to simulate streaming
+        return fake_pcm
+
+    mock_stdout.read.side_effect = blocking_read
+
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = Mock(return_value=mock_stdout)
+    mock_stream.__exit__ = Mock(return_value=False)
+
+    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
+
+    thread = threading.Thread(
+        target=audio_transcriber.stream_url_thread,
+        args=("fake://url", audio_queue),
+        kwargs={"stop_event": stop_event}
+    )
+    thread.start()
+
+    # Let it run briefly then stop
+    time.sleep(0.1)
+    stop_event.set()
+    thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+
+
+def test_stream_url_thread_queue_limiter_drops(monkeypatch):
+    """Test that queue limiter drops chunks when backlog exceeds limit."""
+    import threading
+    import time
+    from unittest.mock import Mock, MagicMock
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+    limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=0.5, source_label="test")
+
+    # Fill limiter to trigger drops (set high backlog)
+    limiter.try_add(1.0)  # Over limit of 0.5
+
+    fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
+    mock_stdout = MagicMock()
+    read_sequence = [fake_pcm, fake_pcm, fake_pcm]  # 3 chunks to ensure some are dropped
+    read_count = [0]
+
+    def mock_read(size):
+        if read_count[0] < len(read_sequence):
+            result = read_sequence[read_count[0]]
+            read_count[0] += 1
+            return result
+        return b''  # EOF after sequence
+
+    mock_stdout.read.side_effect = mock_read
+
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = Mock(return_value=mock_stdout)
+    mock_stream.__exit__ = Mock(return_value=False)
+
+    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
+
+    initial_dropped = limiter.dropped_seconds
+
+    thread = threading.Thread(
+        target=audio_transcriber.stream_url_thread,
+        args=("fake://url", audio_queue),
+        kwargs={"stop_event": stop_event, "queue_limiter": limiter}
+    )
+    thread.start()
+    time.sleep(0.3)
+    stop_event.set()
+    thread.join(timeout=2.0)
+
+    # Some chunks should be dropped (limiter tracks dropped seconds)
+    assert limiter.dropped_seconds > initial_dropped
+
+
+def test_stream_url_thread_queue_limiter_accepts_when_below_limit(monkeypatch):
+    """Test that queue limiter accepts chunks when under limit."""
+    import threading
+    import time
+    from unittest.mock import Mock, MagicMock
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+    limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=10.0, source_label="test")
+
+    fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
+    mock_stdout = MagicMock()
+    read_sequence = [fake_pcm, fake_pcm]
+    read_count = [0]
+
+    def mock_read(size):
+        if read_count[0] < len(read_sequence):
+            result = read_sequence[read_count[0]]
+            read_count[0] += 1
+            return result
+        return b''  # EOF after sequence
+
+    mock_stdout.read.side_effect = mock_read
+
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = Mock(return_value=mock_stdout)
+    mock_stream.__exit__ = Mock(return_value=False)
+
+    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
+
+    thread = threading.Thread(
+        target=audio_transcriber.stream_url_thread,
+        args=("fake://url", audio_queue),
+        kwargs={"stop_event": stop_event, "queue_limiter": limiter}
+    )
+    thread.start()
+    time.sleep(0.5)
+    stop_event.set()
+    thread.join(timeout=2.0)
+
+    # Both audio chunks should be queued (may also have error notices from retry)
+    items = []
+    while not audio_queue.empty():
+        items.append(audio_queue.get())
+
+    audio_segments = [item for item in items if isinstance(item, AudioSegment)]
+    assert len(audio_segments) == 2
+    assert limiter.dropped_seconds == 0
+
+
+def test_stream_url_thread_retry_on_error(monkeypatch):
+    """Test retry logic when stream fails."""
+    import threading
+    import time
+    from unittest.mock import Mock, MagicMock
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    call_count = [0]
+
+    def mock_stream_url_failing(url):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # First call fails
+            raise ValueError("Stream error")
+        else:
+            # Second call succeeds then EOF
+            mock_stdout = MagicMock()
+            mock_stdout.read.return_value = b''
+            mock_stream = MagicMock()
+            mock_stream.__enter__ = Mock(return_value=mock_stdout)
+            mock_stream.__exit__ = Mock(return_value=False)
+            return mock_stream
+
+    monkeypatch.setattr(audio_transcriber, "stream_url", mock_stream_url_failing)
+
+    thread = threading.Thread(
+        target=audio_transcriber.stream_url_thread,
+        args=("fake://url", audio_queue),
+        kwargs={"stop_event": stop_event}
+    )
+    thread.start()
+
+    # Wait for retry
+    time.sleep(1.0)
+    stop_event.set()
+    thread.join(timeout=2.0)
+
+    # Should have retried after error
+    assert call_count[0] >= 2
+    # Should have queued error notice
+    items = []
+    while not audio_queue.empty():
+        items.append(audio_queue.get())
+    assert any(isinstance(item, audio_transcriber.TranscriptionNotice) for item in items)
+
+
+def test_stream_url_thread_timestamp_continuity(monkeypatch):
+    """Test that timestamps increment correctly across chunks."""
+    import threading
+    import time
+    from unittest.mock import Mock, MagicMock
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    # Create chunks of different sizes
+    chunk1 = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()  # 1.0 sec
+    chunk2 = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE * 2, dtype=np.int16).tobytes()  # 2.0 sec
+
+    mock_stdout = MagicMock()
+    read_sequence = [chunk1, chunk2]
+    read_count = [0]
+
+    def mock_read(size):
+        if read_count[0] < len(read_sequence):
+            result = read_sequence[read_count[0]]
+            read_count[0] += 1
+            return result
+        return b''  # EOF after sequence
+
+    mock_stdout.read.side_effect = mock_read
+
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = Mock(return_value=mock_stdout)
+    mock_stream.__exit__ = Mock(return_value=False)
+
+    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
+
+    thread = threading.Thread(
+        target=audio_transcriber.stream_url_thread,
+        args=("fake://url", audio_queue),
+        kwargs={"stop_event": stop_event}
+    )
+    thread.start()
+    time.sleep(0.5)
+    stop_event.set()
+    thread.join(timeout=2.0)
+
+    # Verify timestamp progression
+    seg1 = audio_queue.get()
+    seg2 = audio_queue.get()
+
+    assert seg1.start == pytest.approx(0.0)
+    assert seg1.duration_seconds == pytest.approx(1.0)
+
+    assert seg2.start == pytest.approx(1.0)  # Continues from previous
+    assert seg2.duration_seconds == pytest.approx(2.0)
+
+
+def test_stream_url_thread_eof_handling(monkeypatch):
+    """Test that EOF properly terminates the stream and triggers retry."""
+    import threading
+    import time
+    from unittest.mock import Mock, MagicMock
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    call_count = [0]
+
+    def mock_stream_url_with_eof(url):
+        call_count[0] += 1
+        mock_stdout = MagicMock()
+        if call_count[0] == 1:
+            # First stream: one chunk then EOF
+            fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
+            read_count = [0]
+            read_sequence = [fake_pcm]
+
+            def mock_read(size):
+                if read_count[0] < len(read_sequence):
+                    result = read_sequence[read_count[0]]
+                    read_count[0] += 1
+                    return result
+                return b''
+
+            mock_stdout.read.side_effect = mock_read
+        else:
+            # Second stream: immediate EOF (will stop with stop_event)
+            mock_stdout.read.return_value = b''
+
+        mock_stream = MagicMock()
+        mock_stream.__enter__ = Mock(return_value=mock_stdout)
+        mock_stream.__exit__ = Mock(return_value=False)
+        return mock_stream
+
+    monkeypatch.setattr(audio_transcriber, "stream_url", mock_stream_url_with_eof)
+
+    thread = threading.Thread(
+        target=audio_transcriber.stream_url_thread,
+        args=("fake://url", audio_queue),
+        kwargs={"stop_event": stop_event}
+    )
+    thread.start()
+
+    # Wait for first stream to complete and retry
+    time.sleep(1.0)
+    stop_event.set()
+    thread.join(timeout=2.0)
+
+    # Should have attempted retry after EOF
+    assert call_count[0] >= 2
+
+
+def test_stream_url_thread_stop_during_retry_wait(monkeypatch):
+    """Test that stop_event is checked during retry sleep."""
+    import threading
+    import time
+    from unittest.mock import Mock, MagicMock, patch
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    # Always raise error to trigger retry
+    def mock_stream_url_error(url):
+        raise ValueError("Persistent error")
+
+    monkeypatch.setattr(audio_transcriber, "stream_url", mock_stream_url_error)
+
+    # Mock sleep to track if it's called
+    sleep_called = [False]
+    original_sleep = time.sleep
+
+    def tracked_sleep(duration):
+        sleep_called[0] = True
+        # Use shorter sleep for testing
+        original_sleep(0.1)
+
+    with patch('whisper_transcribe_py.audio_transcriber.sleep', tracked_sleep):
+        thread = threading.Thread(
+            target=audio_transcriber.stream_url_thread,
+            args=("fake://url", audio_queue),
+            kwargs={"stop_event": stop_event}
+        )
+        thread.start()
+
+        # Let it fail and start retry
+        time.sleep(0.2)
+        stop_event.set()
+        thread.join(timeout=2.0)
+
+        # Should have entered retry logic
+        assert sleep_called[0]
+        assert not thread.is_alive()
