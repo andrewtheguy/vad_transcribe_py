@@ -41,7 +41,7 @@ class JsonTranscriptWriter:
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
                   transcript_persistence_callback=None,model='large-v3-turbo',segment_callback=None,
-                  timestamp_strategy='wall_clock',n_threads=1, stop_event=None,
+                  n_threads=1, stop_event=None,
                   queue_backlog_limiter: Optional[QueueBacklogLimiter] = None):
     print("process_queue")
     if save_audio and audio_segment_callback is None:
@@ -54,7 +54,6 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                      audio_segment_callback=audio_segment_callback,
                      transcript_persistence_callback=transcript_persistence_callback,
                      segment_callback=segment_callback,
-                     timestamp_strategy=timestamp_strategy,
                      n_threads=n_threads,
                      stop_event=stop_event,
                      queue_backlog_limiter=queue_backlog_limiter,
@@ -138,7 +137,6 @@ if __name__ == '__main__':
                     'q': audio_input_queue,
                     'language': args.lang,
                     'segment_callback': transcript_writer.add_segment,
-                    'timestamp_strategy': 'relative',
                     'model': args.model if args.model is not None else 'large-v3-turbo',
                     'n_threads': args.n_threads if args.n_threads is not None else 1,
                     'stop_event': stop_event,

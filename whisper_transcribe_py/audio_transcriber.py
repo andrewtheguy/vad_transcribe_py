@@ -286,13 +286,24 @@ class QueueBacklogLimiter:
         )
 
 
-    def register_drop_callback(self, callback: Callable[[Optional[float]], None]) -> None:
+    def register_drop_callback(self, callback: Callable[[float], None]) -> None:
+        """Register a callback to be invoked when dropping audio due to backlog.
+
+        The callback will be called with a real wall clock timestamp (float) indicating
+        when the drop occurred. All callbacks must accept a float timestamp.
+        """
         if callback is None:
             return
         with self._lock:
             self._drop_callbacks.append(callback)
 
-    def _notify_drop_start(self, timestamp: Optional[float], callbacks: list[Callable[[Optional[float]], None]]) -> None:
+    def _notify_drop_start(self, timestamp: float, callbacks: list[Callable[[float], None]]) -> None:
+        """Notify all registered callbacks of a drop event with the real timestamp.
+
+        Args:
+            timestamp: Real wall clock timestamp when the drop occurred (required)
+            callbacks: List of callbacks to invoke with the timestamp
+        """
         for callback in callbacks:
             try:
                 callback(timestamp)
@@ -303,8 +314,8 @@ class QueueBacklogLimiter:
         """Return True and account for the chunk if it fits under the cap."""
         if duration_seconds <= 0:
             return True
-        callbacks_to_notify: list[Callable[[Optional[float]], None]] = []
-        drop_notice_timestamp: Optional[float] = None
+        callbacks_to_notify: list[Callable[[float], None]] = []
+        drop_notice_timestamp: float | None = None
         with self._lock:
             if self._initial_timestamp is None:
                 self._initial_timestamp = time.time()
@@ -323,8 +334,9 @@ class QueueBacklogLimiter:
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
                 if not self._drop_mode or not self._drop_notice_active:
-                    callbacks_to_notify = list(self._drop_callbacks)
+                    # Capture real timestamp when drop is detected
                     drop_notice_timestamp = time.time()
+                    callbacks_to_notify = list(self._drop_callbacks)
                     self._drop_notice_active = True
                 self._drop_mode = True
                 self._dropped_seconds += duration_seconds
@@ -334,7 +346,9 @@ class QueueBacklogLimiter:
                 self._total_accounted_seconds += duration_seconds
                 self._log_backlog_state_locked()
                 return True
+        # Callbacks are only populated when drop_notice_timestamp is set (both happen together)
         if callbacks_to_notify:
+            assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when callbacks are populated"
             self._notify_drop_start(drop_notice_timestamp, callbacks_to_notify)
         return False
 
@@ -401,7 +415,6 @@ class AudioTranscriber:
             audio_segment_callback: Optional[AudioSegmentCallback] = None,
             transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
             segment_callback: Optional[Callable[..., None]] = None,
-            timestamp_strategy: str = "wall_clock",
             n_threads: int = 1,
             stop_event: Optional[threading.Event] = None,
             wall_clock_reference: Optional[float] = None,
@@ -418,7 +431,6 @@ class AudioTranscriber:
         self.show_name = show_name
         self.model = model
         self.segment_callback = segment_callback
-        self.timestamp_strategy = timestamp_strategy
         self.current_audio_offset = 0.0
         self.n_threads = n_threads
         self.stop_event = stop_event
@@ -467,20 +479,12 @@ class AudioTranscriber:
         relative_start = self.current_audio_offset + segment.t0 / 1000
         relative_end = self.current_audio_offset + segment.t1 / 1000
 
-        ts_start_dt = None
-        ts_end_dt = None
-
-        if self.timestamp_strategy == "wall_clock":
-            ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
-            ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
-            print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
-        else:
-            print("[%.2fs -> %.2fs] %s" % (relative_start, relative_end, segment.text))
+        # Always use wall clock timestamps
+        ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
+        ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
+        print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
 
         text_for_storage = zhconv(segment.text, DEFAULT_CHINESE_LOCALE) if self.language in ['yue', 'zh'] else segment.text
-
-        if self.transcript_persistence_callback is not None and ts_start_dt is None:
-            raise ValueError("Transcript persistence callback requires wall clock timestamps.")
 
         if self.transcript_persistence_callback is not None:
             segment_payload = TranscribedSegment(
@@ -497,10 +501,8 @@ class AudioTranscriber:
         if self.segment_callback is not None:
             self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
 
-        if self.timestamp_strategy == "wall_clock" and ts_end_dt is not None:
-            self._last_transcript_wall_clock = ts_end_dt.timestamp()
-        else:
-            self._last_transcript_wall_clock = time.time()
+        # Update last transcript wall clock time
+        self._last_transcript_wall_clock = ts_end_dt.timestamp()
 
     def _transcribe_whisper_cpp(self):
         while True:
@@ -520,16 +522,13 @@ class AudioTranscriber:
 
             self.current_audio_offset = segment_offset
 
-            # Use real wall_clock_start from segment (no fallback/estimation)
+            # Always use real wall_clock_start from segment
             # All input sources now provide wall_clock_start
-            if self.timestamp_strategy == "wall_clock":
-                if isinstance(queued_item, AudioSegment):
-                    self.ts_transcribe_start = queued_item.wall_clock_start
-                else:
-                    # Legacy fallback for non-AudioSegment items (shouldn't happen in practice)
-                    self.ts_transcribe_start = time.time()
+            if isinstance(queued_item, AudioSegment):
+                self.ts_transcribe_start = queued_item.wall_clock_start
             else:
-                self.ts_transcribe_start = segment_offset
+                # Legacy fallback for non-AudioSegment items (shouldn't happen in practice)
+                self.ts_transcribe_start = time.time()
 
             self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
             segment_duration_seconds = None
@@ -559,21 +558,23 @@ class AudioTranscriber:
             if silence > 0:
                 self.queue_backlog_limiter.consume(silence)
 
-    def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
+    def _handle_drop_notice(self, timestamp: float) -> None:
         """
         Emit a placeholder segment when backlog forces audio shedding.
-        Prefer the provided drop timestamp so the notice aligns with the actual
-        drop event, but never move backwards relative to the last transcript.
+
+        Args:
+            timestamp: Real wall clock timestamp when the drop occurred (required).
+                      This must be a real timestamp from the source, not estimated.
+
+        The timestamp will be adjusted if necessary to maintain monotonicity with
+        previously emitted segments (never goes backwards).
         """
-        ts_candidates: list[float] = []
-        if timestamp is not None:
-            ts_candidates.append(timestamp)
+        # Ensure timestamps are monotonic - use max of drop timestamp and last transcript
         if self._last_transcript_wall_clock is not None:
-            # Keep timestamps monotonic if we already emitted segments.
-            ts_candidates.append(self._last_transcript_wall_clock)
-        if not ts_candidates:
-            ts_candidates.append(time.time())
-        ts_seconds = max(ts_candidates)
+            ts_seconds = max(timestamp, self._last_transcript_wall_clock)
+        else:
+            ts_seconds = timestamp
+
         notice = TranscriptionNotice("(transcript temporarily dropped)", ts_seconds)
         with self._drop_notice_lock:
             self._pending_drop_notices.append(notice)

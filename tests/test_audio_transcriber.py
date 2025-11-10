@@ -395,14 +395,14 @@ def test_new_segment_callback_relative_timestamps(make_transcriber):
     transcriber = make_transcriber(
         language="en",
         segment_callback=segment_callback,
-        timestamp_strategy="relative",
     )
     transcriber.current_audio_offset = 100.0
-    transcriber.ts_transcribe_start = 100.0
+    transcriber.ts_transcribe_start = 100.0  # Wall clock timestamp
 
     fake_segment = types.SimpleNamespace(t0=0, t1=2000, text="Test")
     transcriber._new_segment_callback(fake_segment)
 
+    # Relative times are still passed to segment callback
     assert captured_segments[0]["start"] == pytest.approx(100.0)
     assert captured_segments[0]["end"] == pytest.approx(102.0)
 
@@ -431,7 +431,6 @@ def test_initialization_with_all_params(make_transcriber):
         audio_segment_callback=audio_cb,
         transcript_persistence_callback=persist_cb,
         segment_callback=segment_cb,
-        timestamp_strategy="wall_clock",
         n_threads=4,
         stop_event=stop_event,
         wall_clock_reference=1234567890.0,
@@ -441,7 +440,6 @@ def test_initialization_with_all_params(make_transcriber):
     assert transcriber.language == "en"
     assert transcriber.show_name == "test_show"
     assert transcriber.model == "large-v3-turbo"
-    assert transcriber.timestamp_strategy == "wall_clock"
     assert transcriber.n_threads == 4
     assert transcriber.stop_event is stop_event
     assert transcriber.wall_clock_reference == 1234567890.0
