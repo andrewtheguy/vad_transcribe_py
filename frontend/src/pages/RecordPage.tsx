@@ -85,6 +85,8 @@ export default function RecordPage() {
   const [language, setLanguage] = useState<string>(() => getStoredLanguage())
   const [transcripts, setTranscripts] = useState<TranscriptRow[]>([])
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
+  const [transcriptionEnabled, setTranscriptionEnabled] = useState<boolean | null>(null)
+  const [alternateApiUrl, setAlternateApiUrl] = useState<string | null>(null)
 
   const audioContextRef = useRef<AudioContext | null>(null)
   const workletNodeRef = useRef<AudioWorkletNode | null>(null)
@@ -108,6 +110,28 @@ export default function RecordPage() {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language)
     }
   }, [language])
+
+  // Check transcription config on mount
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/transcribe/config'))
+        if (response.ok) {
+          const data = await response.json()
+          setTranscriptionEnabled(data.transcription_enabled ?? true)
+          setAlternateApiUrl(data.alternate_api_url ?? null)
+        } else {
+          // If endpoint doesn't exist, assume transcription is enabled (for backwards compatibility)
+          setTranscriptionEnabled(true)
+        }
+      } catch (error) {
+        console.error('Failed to fetch transcription config:', error)
+        // Default to enabled on error
+        setTranscriptionEnabled(true)
+      }
+    }
+    void fetchConfig()
+  }, [])
 
   const logEvent = useCallback((message: string) => {
     const timestamp = new Date().toLocaleTimeString()
@@ -429,6 +453,56 @@ export default function RecordPage() {
     const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50
     userScrolledUpRef.current = !isNearBottom
   }, [])
+
+  // Show loading state while checking config
+  if (transcriptionEnabled === null) {
+    return (
+      <Card>
+        <CardContent className="py-12">
+          <p className="text-center text-slate-500 dark:text-slate-400">
+            Loading...
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Show disabled message if transcription is not enabled
+  if (transcriptionEnabled === false) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 justify-center">
+            <Mic className="w-6 h-6" />
+            Microphone Recording
+          </CardTitle>
+          <CardDescription className="text-center">
+            Transcription is currently disabled
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center py-8">
+            <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-slate-100 dark:bg-slate-800 mb-6">
+              <Mic className="w-12 h-12 text-slate-400 dark:text-slate-600" />
+            </div>
+            <p className="text-slate-600 dark:text-slate-400 mb-4 max-w-md mx-auto">
+              This server is running in view-only mode. Transcription functionality is disabled.
+            </p>
+            <p className="text-sm text-slate-500 dark:text-slate-500 max-w-md mx-auto">
+              You can view historical transcripts on the History page, but cannot create new recordings.
+              {alternateApiUrl && (
+                <>
+                  <br />
+                  <br />
+                  Alternate API URL is configured: <code className="font-mono text-xs">{alternateApiUrl}</code>
+                </>
+              )}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <>

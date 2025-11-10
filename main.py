@@ -109,6 +109,8 @@ if __name__ == '__main__':
     argparse.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
     argparse.add_argument('--port', type=int, required=False, default=5002, help='Port to bind web server to (default: 5002)')
     argparse.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
+    argparse.add_argument('--no-transcribe', action='store_true', help='Disable built-in transcription (view-only mode for web server)')
+    argparse.add_argument('--transcribe-api-url', type=str, required=False, help='Alternate transcribe API endpoint URL (for future use)')
     args = argparse.parse_args()
 
     if args.action == 'file':
@@ -293,9 +295,19 @@ if __name__ == '__main__':
                 if args.dev:
                     print("Development mode enabled - CORS and hot reload active")
                     print("Frontend dev server: http://localhost:5173")
+                if args.no_transcribe:
+                    print("Transcription disabled - running in view-only mode")
+                if args.transcribe_api_url:
+                    print(f"Alternate transcribe API URL: {args.transcribe_api_url}")
                 print(f"API server: http://{args.host}:{args.port}")
 
-                run_server(host=args.host, port=args.port, dev=args.dev)
+                run_server(
+                    host=args.host,
+                    port=args.port,
+                    dev=args.dev,
+                    no_transcribe=args.no_transcribe,
+                    transcribe_api_url=args.transcribe_api_url,
+                )
         except LockError as e:
             print(str(e), file=sys.stderr)
             exit(1)

@@ -63,18 +63,28 @@ async def lifespan(app: FastAPI):
     # (currently no cleanup needed)
 
 
-def create_app(dev_mode: bool = False) -> FastAPI:
+def create_app(
+    dev_mode: bool = False,
+    no_transcribe: bool = False,
+    transcribe_api_url: Optional[str] = None,
+) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
         dev_mode: If True, enables CORS for development with Vite dev server
+        no_transcribe: If True, disables built-in transcription endpoints
+        transcribe_api_url: Alternate transcribe API endpoint URL (for future use)
 
     Returns:
         Configured FastAPI application
     """
-    # Check environment variable for dev mode (used when factory=True in uvicorn)
+    # Check environment variables (used when factory=True in uvicorn for dev mode)
     if not dev_mode:
         dev_mode = os.environ.get("WHISPER_DEV_MODE", "").lower() == "true"
+    if not no_transcribe:
+        no_transcribe = os.environ.get("WHISPER_NO_TRANSCRIBE", "").lower() == "true"
+    if transcribe_api_url is None:
+        transcribe_api_url = os.environ.get("WHISPER_TRANSCRIBE_API_URL")
 
     app = FastAPI(
         title="Whisper Transcribe API",
@@ -83,8 +93,13 @@ def create_app(dev_mode: bool = False) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Configure persistence factory (database writes)
-    streaming_sessions.set_persistence_factory(_build_persistence_factory())
+    # Store config in app state for endpoints to access
+    app.state.no_transcribe = no_transcribe
+    app.state.transcribe_api_url = transcribe_api_url
+
+    # Configure persistence factory (database writes) - skip if transcription disabled
+    if not no_transcribe:
+        streaming_sessions.set_persistence_factory(_build_persistence_factory())
 
     # CORS middleware for development
     if dev_mode:
@@ -102,18 +117,37 @@ def create_app(dev_mode: bool = False) -> FastAPI:
         """Health check endpoint."""
         return {"status": "ok", "service": "whisper-transcribe"}
 
+    # Transcription configuration endpoint
+    @app.get("/api/transcribe/config")
+    async def get_transcribe_config(request: Request):
+        """Get transcription configuration for this server."""
+        return {
+            "transcription_enabled": not request.app.state.no_transcribe,
+            "alternate_api_url": request.app.state.transcribe_api_url,
+        }
+
     # Placeholder API endpoints for future implementation
     @app.post("/api/transcribe/file")
-    async def transcribe_file():
+    async def transcribe_file(request: Request):
         """Placeholder: Upload and transcribe audio file."""
+        if request.app.state.no_transcribe:
+            raise HTTPException(
+                status_code=503,
+                detail="Transcription is disabled on this server (running in view-only mode)"
+            )
         raise HTTPException(
             status_code=501,
             detail="File transcription not yet implemented"
         )
 
     @app.post("/api/transcribe/stream/session")
-    async def start_stream_session(payload: StartStreamSessionRequest):
+    async def start_stream_session(request: Request, payload: StartStreamSessionRequest):
         """Allocate a new streaming session and close any previous one."""
+        if request.app.state.no_transcribe:
+            raise HTTPException(
+                status_code=503,
+                detail="Transcription is disabled on this server (running in view-only mode)"
+            )
         session_id = str(uuid.uuid4())
         streaming_sessions.start_new_session(
             session_id=session_id,
@@ -131,6 +165,11 @@ def create_app(dev_mode: bool = False) -> FastAPI:
         language: str = Query("en", description="Language code for transcription"),
     ):
         """Accept a small PCM chunk and enqueue it for transcription."""
+        if request.app.state.no_transcribe:
+            raise HTTPException(
+                status_code=503,
+                detail="Transcription is disabled on this server (running in view-only mode)"
+            )
         payload = await request.body()
         if not payload:
             raise HTTPException(status_code=400, detail="Audio chunk is empty")
@@ -155,18 +194,29 @@ def create_app(dev_mode: bool = False) -> FastAPI:
         }
 
     @app.delete("/api/transcribe/stream/{session_id}")
-    async def stop_stream(session_id: str):
+    async def stop_stream(request: Request, session_id: str):
         """Stop an active streaming transcription session."""
+        if request.app.state.no_transcribe:
+            raise HTTPException(
+                status_code=503,
+                detail="Transcription is disabled on this server (running in view-only mode)"
+            )
         if not streaming_sessions.stop(session_id):
             raise HTTPException(status_code=404, detail="Session not found")
         return {"status": "stopped", "session_id": session_id}
 
     @app.get("/api/transcribe/stream/{session_id}/transcripts")
     async def fetch_transcripts(
+        request: Request,
         session_id: str,
         limit: int = Query(1000, ge=1, le=2000, description="Max number of transcripts to return"),
     ):
         """Return up to `limit` transcripts; if more exist, return the latest ones for the session."""
+        if request.app.state.no_transcribe:
+            raise HTTPException(
+                status_code=503,
+                detail="Transcription is disabled on this server (running in view-only mode)"
+            )
         session = streaming_sessions.get_session(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found or no longer active")
@@ -380,15 +430,29 @@ def create_app(dev_mode: bool = False) -> FastAPI:
     return app
 
 
-def run_server(host: str = "0.0.0.0", port: int = 5002, dev: bool = False):
+def run_server(
+    host: str = "0.0.0.0",
+    port: int = 5002,
+    dev: bool = False,
+    no_transcribe: bool = False,
+    transcribe_api_url: Optional[str] = None,
+):
     """Run the FastAPI server with uvicorn.
 
     Args:
         host: Host to bind to
         port: Port to bind to
         dev: Enable development mode with hot reload and CORS
+        no_transcribe: Disable built-in transcription (view-only mode)
+        transcribe_api_url: Alternate transcribe API endpoint URL (for future use)
     """
     import uvicorn
+
+    # Set environment variables for transcription config
+    if no_transcribe:
+        os.environ["WHISPER_NO_TRANSCRIBE"] = "true"
+    if transcribe_api_url:
+        os.environ["WHISPER_TRANSCRIBE_API_URL"] = transcribe_api_url
 
     if dev:
         # Set environment variable so create_app knows we're in dev mode
@@ -405,7 +469,11 @@ def run_server(host: str = "0.0.0.0", port: int = 5002, dev: bool = False):
         )
     else:
         # Production mode: create app directly
-        app = create_app(dev_mode=False)
+        app = create_app(
+            dev_mode=False,
+            no_transcribe=no_transcribe,
+            transcribe_api_url=transcribe_api_url,
+        )
         uvicorn.run(
             app,
             host=host,
