@@ -21,14 +21,12 @@ def time_stub(monkeypatch):
     return stub
 
 
-def test_try_add_under_limit_sets_initial_timestamp(time_stub):
+def test_try_add_under_limit_accounts_for_duration(time_stub):
     limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=10.0)
 
-    assert limiter.initial_timestamp is None
-    accepted = limiter.try_add(5.0)
+    accepted = limiter.try_add(5.0, chunk_wall_clock=time_stub.value)
 
     assert accepted is True
-    assert limiter.initial_timestamp == pytest.approx(time_stub.value)
     assert limiter.current_seconds == pytest.approx(5.0)
 
 
@@ -73,17 +71,18 @@ def test_drop_mode_clears_after_consuming_below_resume(time_stub):
     assert drop_events == pytest.approx([101.0])
 
 
-def test_drop_callback_uses_current_time(time_stub):
-    limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=5.0, initial_timestamp=90.0)
+def test_drop_callback_uses_chunk_timestamp(time_stub):
+    limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=5.0)
     drop_events: list[float] = []
     limiter.register_drop_callback(lambda ts: drop_events.append(ts))
 
     assert limiter.try_add(4.0, chunk_wall_clock=100.0) is True
     time_stub.advance(2.0)
-    # Pass the chunk's wall clock timestamp (which matches time_stub.value after advance)
-    assert limiter.try_add(4.0, chunk_wall_clock=time_stub.value) is False
+    # Pass the chunk's wall clock timestamp - this is what should be in the drop event
+    chunk_timestamp = 102.0
+    assert limiter.try_add(4.0, chunk_wall_clock=chunk_timestamp) is False
 
-    assert drop_events == pytest.approx([time_stub.value])
+    assert drop_events == pytest.approx([chunk_timestamp])
 
 
 # Test removed: pending_chunk_start_timestamp method was removed as part of timestamp refactoring

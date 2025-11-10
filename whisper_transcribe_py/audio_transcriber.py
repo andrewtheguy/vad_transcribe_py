@@ -232,13 +232,11 @@ class QueueBacklogLimiter:
             self,
             max_seconds: Optional[float],
             source_label: str = "audio input",
-            initial_timestamp: Optional[float] = None,
             resume_seconds: Optional[float] = None,
     ):
         self.max_seconds = max_seconds
         self.source_label = source_label
         self.current_seconds = 0.0
-        self._initial_timestamp = initial_timestamp
         self._total_accounted_seconds = 0.0
         self._dropped_seconds = 0.0
         self._lock = threading.Lock()
@@ -323,8 +321,6 @@ class QueueBacklogLimiter:
         callbacks_to_notify: list[Callable[[float], None]] = []
         drop_notice_timestamp: float | None = None
         with self._lock:
-            if self._initial_timestamp is None:
-                self._initial_timestamp = time.time()
             resume_threshold = self.resume_seconds if self.resume_seconds else 0.0
             if resume_threshold > 0 and self._drop_mode and self.current_seconds > resume_threshold:
                 self._dropped_seconds += duration_seconds
@@ -384,11 +380,6 @@ class QueueBacklogLimiter:
     def dropped_seconds(self) -> float:
         with self._lock:
             return self._dropped_seconds
-
-    @property
-    def initial_timestamp(self) -> Optional[float]:
-        with self._lock:
-            return self._initial_timestamp
 
     def note_timestamp_progress(self, duration_seconds: float) -> None:
         if duration_seconds <= 0:
