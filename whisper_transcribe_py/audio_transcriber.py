@@ -285,33 +285,43 @@ class QueueBacklogLimiter:
             file=sys.stderr,
         )
 
-    def _estimate_next_chunk_timestamp_locked(self) -> Optional[float]:
-        if self._initial_timestamp is None:
-            return None
-        processing_estimate = self._initial_timestamp + self._dropped_seconds + self._timestamp_consumed_seconds
-        live_estimate = time.time() - self.current_seconds
-        estimate = max(processing_estimate, live_estimate)
-        return min(estimate, time.time())
 
-    def register_drop_callback(self, callback: Callable[[Optional[float]], None]) -> None:
+    def register_drop_callback(self, callback: Callable[[float], None]) -> None:
+        """Register a callback to be invoked when dropping audio due to backlog.
+
+        The callback will be called with a real wall clock timestamp (float) indicating
+        when the drop occurred. All callbacks must accept a float timestamp.
+        """
         if callback is None:
             return
         with self._lock:
             self._drop_callbacks.append(callback)
 
-    def _notify_drop_start(self, timestamp: Optional[float], callbacks: list[Callable[[Optional[float]], None]]) -> None:
+    def _notify_drop_start(self, timestamp: float, callbacks: list[Callable[[float], None]]) -> None:
+        """Notify all registered callbacks of a drop event with the real timestamp.
+
+        Args:
+            timestamp: Real wall clock timestamp when the drop occurred (required)
+            callbacks: List of callbacks to invoke with the timestamp
+        """
         for callback in callbacks:
             try:
                 callback(timestamp)
             except Exception:
                 logging.exception("Drop notice callback failed for %s", self.source_label)
 
-    def try_add(self, duration_seconds: float) -> bool:
-        """Return True and account for the chunk if it fits under the cap."""
+    def try_add(self, duration_seconds: float, chunk_wall_clock: Optional[float] = None) -> bool:
+        """Return True and account for the chunk if it fits under the cap.
+
+        Args:
+            duration_seconds: Duration of the audio chunk in seconds
+            chunk_wall_clock: Wall clock timestamp of the audio chunk being checked.
+                            If not provided, time.time() will be used as fallback.
+        """
         if duration_seconds <= 0:
             return True
-        callbacks_to_notify: list[Callable[[Optional[float]], None]] = []
-        drop_notice_timestamp: Optional[float] = None
+        callbacks_to_notify: list[Callable[[float], None]] = []
+        drop_notice_timestamp: float | None = None
         with self._lock:
             if self._initial_timestamp is None:
                 self._initial_timestamp = time.time()
@@ -330,8 +340,10 @@ class QueueBacklogLimiter:
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
                 if not self._drop_mode or not self._drop_notice_active:
+                    # Use the audio chunk's wall clock timestamp for drop notice
+                    # Fallback to current time only if chunk timestamp not provided
+                    drop_notice_timestamp = chunk_wall_clock if chunk_wall_clock is not None else time.time()
                     callbacks_to_notify = list(self._drop_callbacks)
-                    drop_notice_timestamp = time.time()
                     self._drop_notice_active = True
                 self._drop_mode = True
                 self._dropped_seconds += duration_seconds
@@ -341,7 +353,9 @@ class QueueBacklogLimiter:
                 self._total_accounted_seconds += duration_seconds
                 self._log_backlog_state_locked()
                 return True
+        # Callbacks are only populated when drop_notice_timestamp is set (both happen together)
         if callbacks_to_notify:
+            assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when callbacks are populated"
             self._notify_drop_start(drop_notice_timestamp, callbacks_to_notify)
         return False
 
@@ -360,15 +374,6 @@ class QueueBacklogLimiter:
                 self._drop_notice_active = False
             self._log_backlog_state_locked()
 
-    def pending_chunk_start_timestamp(self) -> Optional[float]:
-        """
-        Return the estimated wall-clock start time for the next chunk that will be
-        consumed. Includes previously dropped audio so timestamps stay aligned
-        with the live source even when backlog forces shedding.
-        """
-
-        with self._lock:
-            return self._estimate_next_chunk_timestamp_locked()
 
     @property
     def dropped_seconds(self) -> float:
@@ -417,7 +422,6 @@ class AudioTranscriber:
             audio_segment_callback: Optional[AudioSegmentCallback] = None,
             transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
             segment_callback: Optional[Callable[..., None]] = None,
-            timestamp_strategy: str = "wall_clock",
             n_threads: int = 1,
             stop_event: Optional[threading.Event] = None,
             wall_clock_reference: Optional[float] = None,
@@ -434,7 +438,6 @@ class AudioTranscriber:
         self.show_name = show_name
         self.model = model
         self.segment_callback = segment_callback
-        self.timestamp_strategy = timestamp_strategy
         self.current_audio_offset = 0.0
         self.n_threads = n_threads
         self.stop_event = stop_event
@@ -483,20 +486,12 @@ class AudioTranscriber:
         relative_start = self.current_audio_offset + segment.t0 / 1000
         relative_end = self.current_audio_offset + segment.t1 / 1000
 
-        ts_start_dt = None
-        ts_end_dt = None
-
-        if self.timestamp_strategy == "wall_clock":
-            ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
-            ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
-            print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
-        else:
-            print("[%.2fs -> %.2fs] %s" % (relative_start, relative_end, segment.text))
+        # Always use wall clock timestamps
+        ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
+        ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
+        print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
 
         text_for_storage = zhconv(segment.text, DEFAULT_CHINESE_LOCALE) if self.language in ['yue', 'zh'] else segment.text
-
-        if self.transcript_persistence_callback is not None and ts_start_dt is None:
-            raise ValueError("Transcript persistence callback requires wall clock timestamps.")
 
         if self.transcript_persistence_callback is not None:
             segment_payload = TranscribedSegment(
@@ -513,10 +508,8 @@ class AudioTranscriber:
         if self.segment_callback is not None:
             self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
 
-        if self.timestamp_strategy == "wall_clock" and ts_end_dt is not None:
-            self._last_transcript_wall_clock = ts_end_dt.timestamp()
-        else:
-            self._last_transcript_wall_clock = time.time()
+        # Update last transcript wall clock time
+        self._last_transcript_wall_clock = ts_end_dt.timestamp()
 
     def _transcribe_whisper_cpp(self):
         while True:
@@ -536,16 +529,13 @@ class AudioTranscriber:
 
             self.current_audio_offset = segment_offset
 
-            wall_clock_start = getattr(queued_item, "wall_clock_start", None)
-            if self.timestamp_strategy == "wall_clock":
-                if wall_clock_start is not None:
-                    self.ts_transcribe_start = wall_clock_start
-                elif self.wall_clock_reference is not None:
-                    self.ts_transcribe_start = self.wall_clock_reference + segment_offset
-                else:
-                    self.ts_transcribe_start = time.time()
+            # Always use real wall_clock_start from segment
+            # All input sources now provide wall_clock_start
+            if isinstance(queued_item, AudioSegment):
+                self.ts_transcribe_start = queued_item.wall_clock_start
             else:
-                self.ts_transcribe_start = segment_offset
+                # Legacy fallback for non-AudioSegment items (shouldn't happen in practice)
+                self.ts_transcribe_start = time.time()
 
             self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
             segment_duration_seconds = None
@@ -565,7 +555,8 @@ class AudioTranscriber:
         if self.audio_segment_callback is not None:
             self.audio_segment_callback(segment.audio, segment.start)
 
-        self._release_ready_drop_notices(getattr(segment, "wall_clock_start", None))
+        # wall_clock_start is now required for all AudioSegments
+        self._release_ready_drop_notices(segment.wall_clock_start)
         self.transcribe_queue.put(segment)
 
         # Consume silence from backlog limiter
@@ -574,21 +565,23 @@ class AudioTranscriber:
             if silence > 0:
                 self.queue_backlog_limiter.consume(silence)
 
-    def _handle_drop_notice(self, timestamp: Optional[float]) -> None:
+    def _handle_drop_notice(self, timestamp: float) -> None:
         """
         Emit a placeholder segment when backlog forces audio shedding.
-        Prefer the provided drop timestamp so the notice aligns with the actual
-        drop event, but never move backwards relative to the last transcript.
+
+        Args:
+            timestamp: Real wall clock timestamp when the drop occurred (required).
+                      This must be a real timestamp from the source, not estimated.
+
+        The timestamp will be adjusted if necessary to maintain monotonicity with
+        previously emitted segments (never goes backwards).
         """
-        ts_candidates: list[float] = []
-        if timestamp is not None:
-            ts_candidates.append(timestamp)
+        # Ensure timestamps are monotonic - use max of drop timestamp and last transcript
         if self._last_transcript_wall_clock is not None:
-            # Keep timestamps monotonic if we already emitted segments.
-            ts_candidates.append(self._last_transcript_wall_clock)
-        if not ts_candidates:
-            ts_candidates.append(time.time())
-        ts_seconds = max(ts_candidates)
+            ts_seconds = max(timestamp, self._last_transcript_wall_clock)
+        else:
+            ts_seconds = timestamp
+
         notice = TranscriptionNotice("(transcript temporarily dropped)", ts_seconds)
         with self._drop_notice_lock:
             self._pending_drop_notices.append(notice)
@@ -670,21 +663,11 @@ class AudioTranscriber:
             segment_duration = segment.duration_seconds
             if segment_duration is None and segment.audio is not None:
                 segment_duration = len(segment.audio) / input_sample_rate
-            segment_wall_clock_start = getattr(segment, "wall_clock_start", None)
-            backlog_wall_clock_start = None
-            if self.queue_backlog_limiter and segment_duration is not None:
-                backlog_wall_clock_start = self.queue_backlog_limiter.pending_chunk_start_timestamp()
-                if (
-                        backlog_wall_clock_start is not None
-                        and self._last_transcript_wall_clock is not None
-                        and backlog_wall_clock_start < self._last_transcript_wall_clock
-                ):
-                    backlog_wall_clock_start = self._last_transcript_wall_clock
-            if backlog_wall_clock_start is not None:
-                segment_wall_clock_start = backlog_wall_clock_start
-            if segment_wall_clock_start is None:
-                segment_wall_clock_start = None
-            segment.wall_clock_start = segment_wall_clock_start
+
+            # Use the real wall_clock_start from segment (no estimation/calculation)
+            # wall_clock_start is now required, all input sources must provide it
+            segment_wall_clock_start = segment.wall_clock_start
+
             if self.queue_backlog_limiter and segment_duration is not None:
                 self.queue_backlog_limiter.note_timestamp_progress(segment_duration)
             if ts is None:
@@ -758,6 +741,8 @@ def stream_url_thread(
         queue_limiter: Optional["QueueBacklogLimiter"] = None,
 ):
     ts = 0
+    # Capture stream start time as base wall clock timestamp
+    base_wall_clock = time.time()
     while True:
         if stop_event is not None and stop_event.is_set():
             break
@@ -770,17 +755,23 @@ def stream_url_thread(
                     if not chunk:
                         break
                     audio = pcm_s16le_to_float32(chunk)
-                    # ts = time.time()
-                    # time.sleep(5)
                     # put audio into queue one by one
                     if stop_event is not None and stop_event.is_set():
                         break
                     duration_seconds = len(audio) / TARGET_SAMPLE_RATE
-                    if queue_limiter and not queue_limiter.try_add(duration_seconds):
+                    # Calculate wall clock timestamp for this chunk
+                    chunk_wall_clock = base_wall_clock + ts
+                    if queue_limiter and not queue_limiter.try_add(duration_seconds, chunk_wall_clock=chunk_wall_clock):
                         ts += duration_seconds
                         continue
+                    # Use stream start time + relative position as wall clock timestamp
                     audio_input_queue.put(
-                        AudioSegment(audio=audio, start=ts, duration_seconds=duration_seconds)
+                        AudioSegment(
+                            audio=audio,
+                            start=ts,
+                            wall_clock_start=chunk_wall_clock,
+                            duration_seconds=duration_seconds
+                        )
                     )
                     #print("audio_input_queue size", audio_input_queue.qsize())
                     ts += duration_seconds

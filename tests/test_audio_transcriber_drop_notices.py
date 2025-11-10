@@ -109,7 +109,8 @@ def test_segment_without_wall_clock_flushes_pending_notice(make_transcriber):
     transcriber._handle_drop_notice(12.0)
 
     audio = np.zeros(160, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=0.01, wall_clock_start=None)
+    # wall_clock_start is now required for all segments
+    segment = AudioSegment(start=0.0, audio=audio, duration_seconds=0.01, wall_clock_start=1000.0)
 
     transcriber._handle_vad_segment(segment)
 

@@ -57,7 +57,6 @@ class StreamingSession:
         self.detector = AudioTranscriber(
             audio_input_queue=self.queue,
             language=self.language,
-            timestamp_strategy="wall_clock",
             stop_event=self.stop_event,
             wall_clock_reference=self.wall_clock_reference,
             transcript_persistence_callback=self.transcript_persistence_callback,
@@ -73,14 +72,22 @@ class StreamingSession:
 
     def enqueue(self, audio: npt.NDArray, start_ts: float, approx_wall_clock: Optional[float]) -> None:
         self.last_activity = time.time()
-        if approx_wall_clock is not None and self.detector is not None and self.detector.wall_clock_reference is None:
+
+        # Fail fast if wall_clock is missing - all callers must provide it
+        if approx_wall_clock is None:
+            raise ValueError(
+                "approx_wall_clock is required for all audio segments. "
+                "All streaming API calls must provide wall clock timestamps."
+            )
+
+        if self.detector is not None and self.detector.wall_clock_reference is None:
             self.detector.wall_clock_reference = approx_wall_clock
-        elif approx_wall_clock is not None and self.detector is None:
+        elif self.detector is None:
             self.wall_clock_reference = approx_wall_clock
 
         duration_seconds = len(audio) / self.input_sample_rate if self.input_sample_rate else 0.0
         if self.queue_limiter and duration_seconds > 0:
-            if not self.queue_limiter.try_add(duration_seconds):
+            if not self.queue_limiter.try_add(duration_seconds, chunk_wall_clock=approx_wall_clock):
                 logger.warning(
                     "Dropped %.2fs chunk for session %s because backlog exceeded %.0fs cap",
                     duration_seconds,

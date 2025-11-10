@@ -44,10 +44,11 @@ class MicRecorder:
         # print("indata length",len(indata))
         duration_seconds = len(data_flattened) / self.approx_input_sample_rate if self.approx_input_sample_rate else 0
 
-        if self.queue_limiter and not self.queue_limiter.try_add(duration_seconds):
+        # Capture timestamp before try_add so drop notices use correct timestamp
+        start_ts = time.time()
+        if self.queue_limiter and not self.queue_limiter.try_add(duration_seconds, chunk_wall_clock=start_ts):
             return
 
-        start_ts = time.time()
         # Fancy indexing with mapping creates a (necessary!) copy:
         self.audio_input_queue.put(
             AudioSegment(
