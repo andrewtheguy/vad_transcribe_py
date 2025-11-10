@@ -14,7 +14,6 @@ from typing import Callable, Optional
 
 import numpy.typing as npt
 import scipy
-import torch
 
 import soundfile as sf
 

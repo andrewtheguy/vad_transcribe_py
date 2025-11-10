@@ -12,7 +12,9 @@
       "Bash(git clone:*)",
       "Bash(cat:*)",
       "Bash(make:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run pytest:*)"
     ],
     "deny": [],
     "ask": []
