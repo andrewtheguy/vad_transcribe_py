@@ -23,13 +23,14 @@ class AudioSegment:
         start: Relative timestamp in seconds from stream/file beginning
         audio: Audio samples as float32 array
         duration_seconds: Optional duration in seconds
-        wall_clock_start: Real wall clock timestamp (required) - Unix timestamp for when this segment starts
+        wall_clock_start: Optional real wall clock timestamp - Unix timestamp for when this segment starts.
+                         Required for livestream mode, None for file mode.
     """
     def __init__(
         self,
         start: float,
         audio: npt.NDArray[np.float32],
-        wall_clock_start: float,
+        wall_clock_start: Optional[float] = None,
         duration_seconds: Optional[float] = None,
     ):
         self.start = start
@@ -38,9 +39,10 @@ class AudioSegment:
         self.wall_clock_start = wall_clock_start
 
     def __repr__(self):
+        wall_clock_str = f"wall_clock_start={self.wall_clock_start}" if self.wall_clock_start is not None else "file_mode"
         return (
             f"AudioSegment(start={self.start}, duration={self.duration_seconds}, "
-            f"wall_clock_start={self.wall_clock_start})"
+            f"{wall_clock_str})"
         )
 
 
@@ -234,13 +236,7 @@ class SpeechDetector:
         start_ts = self._has_speech_begin_timestamp if self._has_speech_begin_timestamp is not None else 0.0
         duration_seconds = len(audio_array) / self.sample_rate
 
-        # Fail fast if wall_clock_start is missing - all input sources must provide it
-        if self._has_speech_begin_wall_clock is None:
-            raise ValueError(
-                "wall_clock_start is required for all AudioSegments. "
-                "Input sources must provide wall_clock_timestamp to process_window()."
-            )
-
+        # wall_clock_start is optional - None for file mode, timestamp for livestream mode
         segment = AudioSegment(
             audio=audio_array,
             start=start_ts,

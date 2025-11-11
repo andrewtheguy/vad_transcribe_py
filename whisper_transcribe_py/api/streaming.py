@@ -57,6 +57,7 @@ class StreamingSession:
         self.detector = AudioTranscriber(
             audio_input_queue=self.queue,
             language=self.language,
+            mode='livestream',  # Web API uses livestream mode
             stop_event=self.stop_event,
             wall_clock_reference=self.wall_clock_reference,
             transcript_persistence_callback=self.transcript_persistence_callback,

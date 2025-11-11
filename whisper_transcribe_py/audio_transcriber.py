@@ -6,12 +6,11 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import sleep
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 import numpy.typing as npt
 import scipy
@@ -243,7 +242,7 @@ class QueueBacklogLimiter:
         self._last_logged_backlog_bucket: Optional[int] = None
         self._last_backlog_log_time = 0.0
         self._timestamp_consumed_seconds = 0.0
-        self._drop_callbacks: list[Callable[[Optional[float]], None]] = []
+        self._drop_callback: Optional[Callable[[float], None]] = None
         self._drop_notice_active = False
         if resume_seconds is not None:
             self.resume_seconds = max(0.0, resume_seconds)
@@ -288,25 +287,10 @@ class QueueBacklogLimiter:
         """Register a callback to be invoked when dropping audio due to backlog.
 
         The callback will be called with a real wall clock timestamp (float) indicating
-        when the drop occurred. All callbacks must accept a float timestamp.
+        when the drop occurred. The callback must accept a float timestamp.
         """
-        if callback is None:
-            return
         with self._lock:
-            self._drop_callbacks.append(callback)
-
-    def _notify_drop_start(self, timestamp: float, callbacks: list[Callable[[float], None]]) -> None:
-        """Notify all registered callbacks of a drop event with the real timestamp.
-
-        Args:
-            timestamp: Real wall clock timestamp when the drop occurred (required)
-            callbacks: List of callbacks to invoke with the timestamp
-        """
-        for callback in callbacks:
-            try:
-                callback(timestamp)
-            except Exception:
-                logging.exception("Drop notice callback failed for %s", self.source_label)
+            self._drop_callback = callback
 
     def try_add(self, duration_seconds: float, chunk_wall_clock: Optional[float] = None) -> bool:
         """Return True and account for the chunk if it fits under the cap.
@@ -318,7 +302,7 @@ class QueueBacklogLimiter:
         """
         if duration_seconds <= 0:
             return True
-        callbacks_to_notify: list[Callable[[float], None]] = []
+        callback_to_notify: Optional[Callable[[float], None]] = None
         drop_notice_timestamp: float | None = None
         with self._lock:
             resume_threshold = self.resume_seconds if self.resume_seconds else 0.0
@@ -336,15 +320,15 @@ class QueueBacklogLimiter:
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
                 if not self._drop_mode or not self._drop_notice_active:
-                    callbacks_to_notify = list(self._drop_callbacks)
-                    # Fail fast if chunk_wall_clock is missing when drop callbacks are registered
-                    if callbacks_to_notify and chunk_wall_clock is None:
+                    callback_to_notify = self._drop_callback
+                    # Fail fast if chunk_wall_clock is missing when drop callback is registered
+                    if callback_to_notify is not None and chunk_wall_clock is None:
                         raise ValueError(
-                            f"chunk_wall_clock is required when QueueBacklogLimiter has drop callbacks. "
+                            f"chunk_wall_clock is required when QueueBacklogLimiter has drop callback. "
                             f"All callers must provide real wall clock timestamps for audio chunks. "
                             f"Source: {self.source_label}"
                         )
-                    drop_notice_timestamp = chunk_wall_clock if callbacks_to_notify else None
+                    drop_notice_timestamp = chunk_wall_clock if callback_to_notify else None
                     self._drop_notice_active = True
                 self._drop_mode = True
                 self._dropped_seconds += duration_seconds
@@ -354,10 +338,13 @@ class QueueBacklogLimiter:
                 self._total_accounted_seconds += duration_seconds
                 self._log_backlog_state_locked()
                 return True
-        # Callbacks are only populated when drop_notice_timestamp is set (both happen together)
-        if callbacks_to_notify:
-            assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when callbacks are populated"
-            self._notify_drop_start(drop_notice_timestamp, callbacks_to_notify)
+        # Invoke callback outside of lock if needed
+        if callback_to_notify is not None:
+            assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when callback is invoked"
+            try:
+                callback_to_notify(drop_notice_timestamp)
+            except Exception:
+                logging.exception("Drop notice callback failed for %s", self.source_label)
         return False
 
     def consume(self, duration_seconds: float) -> None:
@@ -413,6 +400,7 @@ class AudioTranscriber:
             self,
             audio_input_queue: queue.Queue[AudioSegment],
             language: str,
+            mode: Literal['file', 'livestream'] = 'livestream',
             show_name="unknown",
             model="large-v3-turbo",
             audio_segment_callback: Optional[AudioSegmentCallback] = None,
@@ -423,9 +411,8 @@ class AudioTranscriber:
             wall_clock_reference: Optional[float] = None,
             queue_backlog_limiter: Optional["QueueBacklogLimiter"] = None,
     ):
+        self.mode = mode
         self.transcribe_queue = queue.Queue()
-        self._pending_drop_notices: deque[TranscriptionNotice] = deque()
-        self._drop_notice_lock = threading.Lock()
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.audio_segment_callback = audio_segment_callback
@@ -437,9 +424,16 @@ class AudioTranscriber:
         self.current_audio_offset = 0.0
         self.n_threads = n_threads
         self.stop_event = stop_event
-        self.wall_clock_reference = wall_clock_reference
-        self.queue_backlog_limiter = queue_backlog_limiter
-        self._last_transcript_wall_clock: Optional[float] = None
+
+        # Mode-specific initialization
+        if mode == 'livestream':
+            self.wall_clock_reference = wall_clock_reference
+            self.queue_backlog_limiter = queue_backlog_limiter
+            self._last_transcript_wall_clock: Optional[float] = None
+        else:  # file mode
+            self.wall_clock_reference = None
+            self.queue_backlog_limiter = None
+            self._last_transcript_wall_clock = None
 
         # Initialize speech detector with callback
         self.speech_detector = SpeechDetector(
@@ -447,16 +441,10 @@ class AudioTranscriber:
             on_segment_complete=self._handle_vad_segment,
         )
 
-        if self.queue_backlog_limiter is not None:
+        if mode == 'livestream' and self.queue_backlog_limiter is not None:
             self.queue_backlog_limiter.register_drop_callback(self._handle_drop_notice)
-        #if transcribe_backend == "faster-whisper":
-        #    raise NotImplementedError("faster-whisper is not supported with the recent updates yet")
-        #    #self._load_faster_whisper()
-        #elif transcribe_backend == "whispercpp":
+
         self._load_whisper_cpp()
-        #else:
-        #    raise ValueError(f"Unsupported transcribe backend {transcribe_backend}")
-        #self.transcribe_backend = transcribe_backend
 
     def _load_whisper_cpp(self):
         from pywhispercpp.model import Model
@@ -482,30 +470,50 @@ class AudioTranscriber:
         relative_start = self.current_audio_offset + segment.t0 / 1000
         relative_end = self.current_audio_offset + segment.t1 / 1000
 
-        # Always use wall clock timestamps
-        ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
-        ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
-        print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
-
         text_for_storage = zhconv(segment.text, DEFAULT_CHINESE_LOCALE) if self.language in ['yue', 'zh'] else segment.text
 
-        if self.transcript_persistence_callback is not None:
-            segment_payload = TranscribedSegment(
-                show_name=self.show_name,
-                language=self.language,
-                text=text_for_storage,
-                relative_start=relative_start,
-                relative_end=relative_end,
-                start_timestamp=ts_start_dt,
-                end_timestamp=ts_end_dt,
-            )
-            self.transcript_persistence_callback(segment_payload)
+        # File mode: only relative timestamps, no wall_clock
+        if self.mode == 'file':
+            print("[%.2f -> %.2f] %s" % (relative_start, relative_end, segment.text))
 
-        if self.segment_callback is not None:
-            self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
+            if self.transcript_persistence_callback is not None:
+                segment_payload = TranscribedSegment(
+                    show_name=self.show_name,
+                    language=self.language,
+                    text=text_for_storage,
+                    relative_start=relative_start,
+                    relative_end=relative_end,
+                    start_timestamp=None,
+                    end_timestamp=None,
+                )
+                self.transcript_persistence_callback(segment_payload)
 
-        # Update last transcript wall clock time
-        self._last_transcript_wall_clock = ts_end_dt.timestamp()
+            if self.segment_callback is not None:
+                self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
+
+        # Livestream mode: use wall clock timestamps
+        else:
+            ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
+            ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
+            print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
+
+            if self.transcript_persistence_callback is not None:
+                segment_payload = TranscribedSegment(
+                    show_name=self.show_name,
+                    language=self.language,
+                    text=text_for_storage,
+                    relative_start=relative_start,
+                    relative_end=relative_end,
+                    start_timestamp=ts_start_dt,
+                    end_timestamp=ts_end_dt,
+                )
+                self.transcript_persistence_callback(segment_payload)
+
+            if self.segment_callback is not None:
+                self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
+
+            # Update last transcript wall clock time
+            self._last_transcript_wall_clock = ts_end_dt.timestamp()
 
     def _transcribe_whisper_cpp(self):
         while True:
@@ -514,27 +522,36 @@ class AudioTranscriber:
                 #print("finished transcribing audio",file=sys.stderr)
                 break
             if isinstance(queued_item, TranscriptionNotice):
-                self._emit_notice(queued_item.text, queued_item.timestamp)
+                # Livestream mode only
+                if self.mode == 'livestream':
+                    self._emit_notice(queued_item.text, queued_item.timestamp)
+                    # Reset full transcription context after processing TranscriptionNotice
+                    self._reset_transcription_context()
                 continue
             if isinstance(queued_item, AudioSegment):
                 audio = queued_item.audio
                 segment_offset = queued_item.start
             else:
-                audio = queued_item
-                segment_offset = 0.0
+                # All audio items must be AudioSegment
+                raise TypeError(
+                    f"Expected AudioSegment but got {type(queued_item).__name__}. "
+                    f"All audio items in transcribe_queue must be AudioSegment instances."
+                )
 
             self.current_audio_offset = segment_offset
 
-            # Always use real wall_clock_start from segment
-            # All input sources now provide wall_clock_start
-            if isinstance(queued_item, AudioSegment):
+            # File mode: wall_clock_start will be None
+            # Livestream mode: wall_clock_start is required
+            if self.mode == 'livestream':
+                if queued_item.wall_clock_start is None:
+                    raise ValueError(
+                        "wall_clock_start is required for AudioSegment in livestream mode. "
+                        "All input sources must provide wall_clock_timestamp."
+                    )
                 self.ts_transcribe_start = queued_item.wall_clock_start
             else:
-                # Fail fast - all audio items must be AudioSegment with wall_clock_start
-                raise TypeError(
-                    f"Expected AudioSegment but got {type(queued_item).__name__}. "
-                    f"All audio items in transcribe_queue must be AudioSegment instances with wall_clock_start."
-                )
+                # File mode doesn't use wall_clock_start
+                self.ts_transcribe_start = None
 
             self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
             segment_duration_seconds = None
@@ -554,8 +571,7 @@ class AudioTranscriber:
         if self.audio_segment_callback is not None:
             self.audio_segment_callback(segment.audio, segment.start)
 
-        # wall_clock_start is now required for all AudioSegments
-        self._release_ready_drop_notices(segment.wall_clock_start)
+        # Queue the segment for transcription
         self.transcribe_queue.put(segment)
 
         # Consume silence from backlog limiter
@@ -566,7 +582,7 @@ class AudioTranscriber:
 
     def _handle_drop_notice(self, timestamp: float) -> None:
         """
-        Emit a placeholder segment when backlog forces audio shedding.
+        Put a drop notice directly into the audio input queue.
 
         Args:
             timestamp: Real wall clock timestamp when the drop occurred (required).
@@ -582,8 +598,8 @@ class AudioTranscriber:
             ts_seconds = timestamp
 
         notice = TranscriptionNotice("(transcript temporarily dropped)", ts_seconds)
-        with self._drop_notice_lock:
-            self._pending_drop_notices.append(notice)
+        # Put notice directly into audio input queue
+        self.audio_input_queue.put(notice)
         # Fast-forward downstream timestamps so future segments align with the drop point
         self._last_transcript_wall_clock = ts_seconds
 
@@ -619,70 +635,172 @@ class AudioTranscriber:
     def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
         self._emit_notice("(transcript temporarily dropped)", wall_clock_ts)
 
-    def _release_ready_drop_notices(self, up_to_wall_clock: Optional[float]) -> None:
-        if up_to_wall_clock is None:
-            up_to_wall_clock = float("inf")
-        ready: list[TranscriptionNotice] = []
-        with self._drop_notice_lock:
-            while self._pending_drop_notices:
-                notice = self._pending_drop_notices[0]
-                notice_ts = notice.timestamp if notice.timestamp is not None else float("-inf")
-                if notice_ts > up_to_wall_clock:
-                    break
-                ready.append(self._pending_drop_notices.popleft())
-        for notice in ready:
-            self.transcribe_queue.put(notice)
+    def _reset_transcription_context(self) -> None:
+        """
+        Reset full transcription context (livestream mode only).
 
-    def _flush_pending_drop_notices(self) -> None:
-        self._release_ready_drop_notices(None)
+        Called when TranscriptionNotice is processed in the transcription pipeline.
+        Resets everything as if starting over: SpeechDetector state, timestamps, and context.
+        """
+        if self.mode != 'livestream':
+            return
 
-    def process_input(self,input_sample_rate):
+        # Reset SpeechDetector internal state
+        self.speech_detector.reset()
 
+        # Reset timestamp tracking
+        self.current_audio_offset = 0.0
+        self.ts_transcribe_start = None
+
+        # Note: _last_transcript_wall_clock is intentionally NOT reset here
+        # because it's used for maintaining monotonicity of future timestamps
+
+    def _reset_processing_state(self) -> None:
+        """
+        Reset processing state when TranscriptionNotice is encountered in input queue.
+
+        Called in the processing loop when a TranscriptionNotice is dequeued.
+        Clears buffer, resets SpeechDetector, as if starting fresh.
+        """
+        # Reset SpeechDetector state
+        self.speech_detector.reset()
+
+        # Note: buffer will be cleared by returning from the TranscriptionNotice handler
+        # Note: timestamps will be re-initialized from next segment
+
+    def _process_input_file(self, input_sample_rate: int) -> None:
+        """
+        Process audio input in file mode (no wall_clock timestamps, no backlog limiting).
+
+        Simple flow: VAD speech detection → transcribe → output to JSON
+        """
         window_size_samples = get_window_size_samples()
         window_seconds = window_size_samples / TARGET_SAMPLE_RATE
 
         transcribing_thread = threading.Thread(target=self._transcribe)
         transcribing_thread.start()
 
-        ts = None
+        ts = None  # Relative timestamp only
         buffer = []
-        ts_wall_clock = None
         stop_requested = False
 
         while True:
             if self.stop_event is not None and self.stop_event.is_set():
                 stop_requested = True
                 break
-            try:
-                segment = self.audio_input_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
+            segment = self.audio_input_queue.get()  # blocking
             if segment is None:
-                print("end of audio",ts,file=sys.stderr)
+                print("end of audio", ts, file=sys.stderr)
+                break
+
+            # File mode doesn't handle TranscriptionNotice
+            if isinstance(segment, TranscriptionNotice):
+                continue
+
+            # Initialize timestamp from first segment
+            if ts is None:
+                ts = segment.start
+            elif len(buffer) == 0:
+                logging.debug(f"queue is empty, reset ts {ts}, to new_ts {segment.start}")
+                ts = segment.start
+
+            # Resample if needed
+            if input_sample_rate != TARGET_SAMPLE_RATE:
+                data_q = scipy.signal.resample(
+                    segment.audio,
+                    int(len(segment.audio) * TARGET_SAMPLE_RATE / input_sample_rate)
+                )
+            else:
+                data_q = segment.audio
+            buffer.extend(data_q)
+
+            # Process windows through VAD
+            while len(buffer) >= window_size_samples:
+                arr = buffer[:window_size_samples]
+                buffer = buffer[window_size_samples:]
+                data_slice = np.asarray(arr)
+
+                # Process window through speech detector (no wall_clock_timestamp for file mode)
+                self.speech_detector.process_window(data_slice, ts, wall_clock_timestamp=None)
+
+                # Advance timestamp
+                if ts is not None:
+                    ts += window_seconds
+
+        print("finished processing audio", ts, file=sys.stderr)
+
+        # Flush any incomplete speech segment
+        if not stop_requested:
+            self.speech_detector.flush()
+
+        if stop_requested:
+            # Drop any queued-but-unprocessed transcribe work so shutdown is fast
+            while True:
+                try:
+                    item = self.transcribe_queue.get_nowait()
+                    if item is None:
+                        continue
+                except queue.Empty:
+                    break
+
+        self.transcribe_queue.put(None)
+        transcribing_thread.join()
+
+    def _process_input_livestream(self, input_sample_rate: int) -> None:
+        """
+        Process audio input in livestream mode (with wall_clock timestamps and backlog limiting).
+
+        Flow: VAD speech detection → transcribe → emit TranscriptionNotice immediately after segment_complete
+        """
+        window_size_samples = get_window_size_samples()
+        window_seconds = window_size_samples / TARGET_SAMPLE_RATE
+
+        transcribing_thread = threading.Thread(target=self._transcribe)
+        transcribing_thread.start()
+
+        ts_wall_clock = None  # Wall clock timestamp only (no dual tracking)
+        buffer = []
+        stop_requested = False
+
+        while True:
+            if self.stop_event is not None and self.stop_event.is_set():
+                stop_requested = True
+                break
+            segment = self.audio_input_queue.get()  # blocking
+            if segment is None:
+                print("end of audio", ts_wall_clock, file=sys.stderr)
                 break
             if isinstance(segment, TranscriptionNotice):
+                # Reset processing state: clear buffer, reset SpeechDetector
+                self._reset_processing_state()
+                buffer.clear()
+                ts_wall_clock = None  # Reset timestamp tracking
+
+                # Emit the notice to transcribe queue
                 self.transcribe_queue.put(segment)
                 continue
             segment_duration = segment.duration_seconds
             if segment_duration is None and segment.audio is not None:
                 segment_duration = len(segment.audio) / input_sample_rate
 
-            # Use the real wall_clock_start from segment (no estimation/calculation)
-            # wall_clock_start is now required, all input sources must provide it
-            segment_wall_clock_start = segment.wall_clock_start
-
             if self.queue_backlog_limiter and segment_duration is not None:
                 self.queue_backlog_limiter.note_timestamp_progress(segment_duration)
-            if ts is None:
-                ts = segment.start
+
+            # Use wall clock timestamp from input source directly
+            if ts_wall_clock is None or len(buffer) == 0:
                 ts_wall_clock = segment.wall_clock_start
-            elif len(buffer) == 0:
-                logging.debug(f"queue is empty, reset ts {ts},to new_ts {segment.start}")
-                ts = segment.start
-                ts_wall_clock = segment.wall_clock_start
+                if ts_wall_clock is None:
+                    raise ValueError(
+                        "wall_clock_start is required in livestream mode. "
+                        "All input sources must provide wall_clock_timestamp."
+                    )
+
+            # Resample if needed
             if input_sample_rate != TARGET_SAMPLE_RATE:
-                #print("resampling audio")
-                data_q = scipy.signal.resample(segment.audio, int(len(segment.audio) * TARGET_SAMPLE_RATE / input_sample_rate))
+                data_q = scipy.signal.resample(
+                    segment.audio,
+                    int(len(segment.audio) * TARGET_SAMPLE_RATE / input_sample_rate)
+                )
             else:
                 data_q = segment.audio
             buffer.extend(data_q)
@@ -693,23 +811,23 @@ class AudioTranscriber:
                 data_slice = np.asarray(arr)
 
                 # Process window through speech detector
-                has_speech = self.speech_detector.process_window(data_slice, ts, ts_wall_clock)
+                # Use relative timestamp calculated from wall_clock
+                ts_relative = ts_wall_clock - (segment.wall_clock_start - segment.start) if segment.wall_clock_start and segment.start is not None else 0.0
+                has_speech = self.speech_detector.process_window(data_slice, ts_relative, ts_wall_clock)
 
                 # Handle backlog for silence (when not in speech and no accumulated segment)
                 if not has_speech and not self.speech_detector.is_in_speech:
-                    self._release_ready_drop_notices(ts_wall_clock)
                     # Consume pending silence from backlog
                     if self.queue_backlog_limiter is not None:
                         pending_silence = self.speech_detector.pending_silence_duration
                         if pending_silence > 0:
                             self.queue_backlog_limiter.consume(pending_silence)
 
-                if ts is not None:
-                    ts += window_seconds
+                # Advance wall clock timestamp
                 if ts_wall_clock is not None:
                     ts_wall_clock += window_seconds
 
-        print("finished processing audio",ts,file=sys.stderr)
+        print("finished processing audio", ts_wall_clock, file=sys.stderr)
 
         # Flush any incomplete speech segment
         if not stop_requested:
@@ -732,9 +850,17 @@ class AudioTranscriber:
                 except queue.Empty:
                     break
 
-        self._flush_pending_drop_notices()
         self.transcribe_queue.put(None)
         transcribing_thread.join()
+
+    def process_input(self, input_sample_rate: int) -> None:
+        """
+        Dispatch to mode-specific process_input method.
+        """
+        if self.mode == 'file':
+            self._process_input_file(input_sample_rate)
+        else:  # livestream
+            self._process_input_livestream(input_sample_rate)
 
 
 def stream_url_thread(
