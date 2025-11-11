@@ -376,7 +376,10 @@ class QueueBacklogLimiter:
                     # Invoke stuck callback to clear queue and emit stuck-specific notice
                     stuck_callback_to_notify = self._stuck_callback
                     drop_notice_timestamp = stuck_timestamp
-                return False
+                    # Don't return here - fall through to invoke callback outside lock
+                else:
+                    # Not stuck, just normal drop
+                    return False
             if self._drop_mode and self.current_seconds <= resume_threshold:
                 self._drop_mode = False
                 self._drop_notice_active = False
@@ -406,10 +409,12 @@ class QueueBacklogLimiter:
                 self._dropped_seconds += duration_seconds
                 self._log_drop(duration_seconds)
             else:
-                self.current_seconds += duration_seconds
-                self._total_accounted_seconds += duration_seconds
-                self._log_backlog_state_locked()
-                return True
+                # Only accept chunk if no callbacks are pending (not stuck, not dropping)
+                if stuck_callback_to_notify is None and callback_to_notify is None:
+                    self.current_seconds += duration_seconds
+                    self._total_accounted_seconds += duration_seconds
+                    self._log_backlog_state_locked()
+                    return True
         # Invoke callbacks outside of lock if needed
         if stuck_callback_to_notify is not None:
             assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when stuck callback is invoked"
