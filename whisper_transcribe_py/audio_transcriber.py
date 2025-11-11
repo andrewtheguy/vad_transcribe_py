@@ -687,7 +687,7 @@ class AudioTranscriber:
 
     def _handle_stuck_queue(self, timestamp: float) -> None:
         """
-        Handle stuck queue situation by clearing the queue and emitting a stuck notice.
+        Handle stuck queue situation by clearing both queues and emitting a stuck notice.
 
         This is called when the backlog has not made sufficient progress while in
         drop mode, indicating a deadlock or stuck state that requires recovery.
@@ -697,21 +697,38 @@ class AudioTranscriber:
             timestamp: Wall clock timestamp when stuck was detected.
         """
         # Clear the audio input queue - all pending items are lost
-        cleared_count = 0
+        audio_cleared = 0
         try:
             while True:
                 self.audio_input_queue.get_nowait()
-                cleared_count += 1
+                audio_cleared += 1
+        except queue.Empty:
+            pass
+
+        # Also clear the transcribe queue - this is where the actual backlog likely is
+        transcribe_cleared = 0
+        try:
+            while True:
+                self.transcribe_queue.get_nowait()
+                transcribe_cleared += 1
         except queue.Empty:
             pass
 
         print(
-            f"Cleared {cleared_count} items from stuck queue for {self.show_name}",
+            f"Cleared {audio_cleared} items from audio_input_queue and {transcribe_cleared} items from transcribe_queue for {self.show_name}",
             file=sys.stderr,
         )
 
-        # Emit a stuck-specific drop notice to trigger full reset
-        self._handle_drop_notice(timestamp, "(transcript reset due to stuck queue)")
+        # Put TranscriptionNotice directly into transcribe_queue for immediate processing
+        # Bypassing audio_input_queue since processing thread might be blocked
+        if self._last_transcript_wall_clock is not None:
+            ts_seconds = max(timestamp, self._last_transcript_wall_clock)
+        else:
+            ts_seconds = timestamp
+
+        notice = TranscriptionNotice("(transcript reset due to stuck queue)", ts_seconds)
+        self.transcribe_queue.put(notice)
+        self._last_transcript_wall_clock = ts_seconds
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
