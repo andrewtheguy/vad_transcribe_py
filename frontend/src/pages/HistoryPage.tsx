@@ -88,6 +88,7 @@ export default function HistoryPage() {
   const shouldScrollToBottomRef = useRef(false)
   const followPollerRef = useRef<number | null>(null)
   const latestIdRef = useRef<number | null>(null)
+  const scrollAnchorRef = useRef<{ id: number; offset: number } | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
   // Fetch shows on mount
@@ -143,9 +144,32 @@ export default function HistoryPage() {
         const newTranscripts = [...(data.transcripts ?? [])].reverse()
 
         if (isLoadingMore) {
-          // When loading more (scrolling up), prepend older transcripts at the top
+          // When loading more (scrolling up), capture current top transcript to keep it anchored
           const container = transcriptContainerRef.current
-          const prevScrollHeight = container?.scrollHeight ?? 0
+          if (container) {
+            const transcriptElements = Array.from(
+              container.querySelectorAll<HTMLElement>('[data-transcript-id]'),
+            )
+
+            if (transcriptElements.length > 0) {
+              const containerRect = container.getBoundingClientRect()
+              const anchorElement =
+                transcriptElements.find(
+                  (el) => el.getBoundingClientRect().bottom > containerRect.top,
+                ) ?? transcriptElements[transcriptElements.length - 1]
+
+              if (anchorElement) {
+                const idAttr = anchorElement.dataset.transcriptId
+                const id = idAttr ? Number(idAttr) : null
+                if (id !== null && !Number.isNaN(id)) {
+                  scrollAnchorRef.current = {
+                    id,
+                    offset: anchorElement.getBoundingClientRect().top - containerRect.top,
+                  }
+                }
+              }
+            }
+          }
 
           setTranscripts((prev) => {
             // Deduplicate by ID to avoid duplicate keys
@@ -153,14 +177,6 @@ export default function HistoryPage() {
             const uniqueNew = newTranscripts.filter(t => !existingIds.has(t.id))
             return [...uniqueNew, ...prev]
           })
-
-          // Restore scroll position after prepending
-          setTimeout(() => {
-            if (container) {
-              const newScrollHeight = container.scrollHeight
-              container.scrollTop = newScrollHeight - prevScrollHeight + container.scrollTop
-            }
-          }, 0)
         } else {
           // Initial load - scroll to bottom after render
           setTranscripts(newTranscripts)
@@ -242,9 +258,31 @@ export default function HistoryPage() {
 
   // Scroll to bottom after initial load or when following
   useEffect(() => {
-    if (shouldScrollToBottomRef.current && transcriptContainerRef.current) {
-      transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight
+    const container = transcriptContainerRef.current
+    if (!container) {
+      scrollAnchorRef.current = null
+      return
+    }
+
+    if (shouldScrollToBottomRef.current) {
+      container.scrollTop = container.scrollHeight
       shouldScrollToBottomRef.current = false
+      scrollAnchorRef.current = null
+      return
+    }
+
+    if (scrollAnchorRef.current) {
+      const anchorInfo = scrollAnchorRef.current
+      const anchorElement = container.querySelector<HTMLElement>(
+        `[data-transcript-id="${anchorInfo.id}"]`,
+      )
+      if (anchorElement) {
+        const containerRect = container.getBoundingClientRect()
+        const anchorRect = anchorElement.getBoundingClientRect()
+        const currentOffset = anchorRect.top - containerRect.top
+        container.scrollTop += currentOffset - anchorInfo.offset
+      }
+      scrollAnchorRef.current = null
     }
   }, [transcripts])
 
@@ -489,6 +527,7 @@ export default function HistoryPage() {
                       {transcripts.map((row) => (
                         <li
                           key={row.id}
+                          data-transcript-id={row.id}
                           className="rounded border border-slate-200 bg-white/80 px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-800/80"
                         >
                           <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
