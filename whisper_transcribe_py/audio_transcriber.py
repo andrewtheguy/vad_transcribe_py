@@ -298,12 +298,12 @@ class QueueBacklogLimiter:
         with self._lock:
             self._drop_callback = callback
 
-    def register_stuck_callback(self, callback: Callable[[], None]) -> None:
+    def register_stuck_callback(self, callback: Callable[[float], None]) -> None:
         """Register a callback to be invoked when backlog is stuck (deadlock detected).
 
-        The callback will be called when the backlog has not made sufficient progress
-        (< 0.5s in 70 seconds) while in drop mode, indicating a stuck state that
-        requires clearing the queue and resetting.
+        The callback will be called with a timestamp when the backlog has not made
+        sufficient progress (< 0.5s in 70 seconds) while in drop mode, indicating
+        a stuck state that requires clearing the queue and resetting.
         """
         with self._lock:
             self._stuck_callback = callback
@@ -362,7 +362,7 @@ class QueueBacklogLimiter:
         if duration_seconds <= 0:
             return True
         callback_to_notify: Optional[Callable[[float], None]] = None
-        stuck_callback_to_notify: Optional[Callable[[], None]] = None
+        stuck_callback_to_notify: Optional[Callable[[float], None]] = None
         drop_notice_timestamp: float | None = None
         with self._lock:
             resume_threshold = self.resume_seconds if self.resume_seconds else 0.0
@@ -373,9 +373,8 @@ class QueueBacklogLimiter:
                 is_stuck, stuck_timestamp = self._check_stuck_state_locked()
                 if is_stuck:
                     # Stuck detected - limiter state already reset
-                    # Clear queue via stuck callback, then emit drop notice to reset everything
+                    # Invoke stuck callback to clear queue and emit stuck-specific notice
                     stuck_callback_to_notify = self._stuck_callback
-                    callback_to_notify = self._drop_callback
                     drop_notice_timestamp = stuck_timestamp
                 return False
             if self._drop_mode and self.current_seconds <= resume_threshold:
@@ -413,11 +412,12 @@ class QueueBacklogLimiter:
                 return True
         # Invoke callbacks outside of lock if needed
         if stuck_callback_to_notify is not None:
+            assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when stuck callback is invoked"
             try:
-                stuck_callback_to_notify()
+                stuck_callback_to_notify(drop_notice_timestamp)
             except Exception:
                 logging.exception("Stuck callback failed for %s", self.source_label)
-        if callback_to_notify is not None:
+        elif callback_to_notify is not None:
             assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when callback is invoked"
             try:
                 callback_to_notify(drop_notice_timestamp)
@@ -661,13 +661,14 @@ class AudioTranscriber:
             if silence > 0:
                 self.queue_backlog_limiter.consume(silence)
 
-    def _handle_drop_notice(self, timestamp: float) -> None:
+    def _handle_drop_notice(self, timestamp: float, message: str = "(transcript temporarily dropped)") -> None:
         """
         Put a drop notice directly into the audio input queue.
 
         Args:
             timestamp: Real wall clock timestamp when the drop occurred (required).
                       This must be a real timestamp from the source, not estimated.
+            message: Custom message for the notice. Defaults to "(transcript temporarily dropped)".
 
         The timestamp will be adjusted if necessary to maintain monotonicity with
         previously emitted segments (never goes backwards).
@@ -678,19 +679,22 @@ class AudioTranscriber:
         else:
             ts_seconds = timestamp
 
-        notice = TranscriptionNotice("(transcript temporarily dropped)", ts_seconds)
+        notice = TranscriptionNotice(message, ts_seconds)
         # Put notice directly into audio input queue
         self.audio_input_queue.put(notice)
         # Fast-forward downstream timestamps so future segments align with the drop point
         self._last_transcript_wall_clock = ts_seconds
 
-    def _handle_stuck_queue(self) -> None:
+    def _handle_stuck_queue(self, timestamp: float) -> None:
         """
-        Handle stuck queue situation by clearing the queue.
+        Handle stuck queue situation by clearing the queue and emitting a stuck notice.
 
         This is called when the backlog has not made sufficient progress while in
         drop mode, indicating a deadlock or stuck state that requires recovery.
         The limiter state is already reset by the time this is called.
+
+        Args:
+            timestamp: Wall clock timestamp when stuck was detected.
         """
         # Clear the audio input queue - all pending items are lost
         cleared_count = 0
@@ -705,6 +709,9 @@ class AudioTranscriber:
             f"Cleared {cleared_count} items from stuck queue for {self.show_name}",
             file=sys.stderr,
         )
+
+        # Emit a stuck-specific drop notice to trigger full reset
+        self._handle_drop_notice(timestamp, "(transcript reset due to stuck queue)")
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
