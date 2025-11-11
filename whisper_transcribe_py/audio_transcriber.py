@@ -242,7 +242,7 @@ class QueueBacklogLimiter:
         self._last_logged_backlog_bucket: Optional[int] = None
         self._last_backlog_log_time = 0.0
         self._timestamp_consumed_seconds = 0.0
-        self._drop_callbacks: list[Callable[[Optional[float]], None]] = []
+        self._drop_callback: Optional[Callable[[float], None]] = None
         self._drop_notice_active = False
         if resume_seconds is not None:
             self.resume_seconds = max(0.0, resume_seconds)
@@ -287,25 +287,10 @@ class QueueBacklogLimiter:
         """Register a callback to be invoked when dropping audio due to backlog.
 
         The callback will be called with a real wall clock timestamp (float) indicating
-        when the drop occurred. All callbacks must accept a float timestamp.
+        when the drop occurred. The callback must accept a float timestamp.
         """
-        if callback is None:
-            return
         with self._lock:
-            self._drop_callbacks.append(callback)
-
-    def _notify_drop_start(self, timestamp: float, callbacks: list[Callable[[float], None]]) -> None:
-        """Notify all registered callbacks of a drop event with the real timestamp.
-
-        Args:
-            timestamp: Real wall clock timestamp when the drop occurred (required)
-            callbacks: List of callbacks to invoke with the timestamp
-        """
-        for callback in callbacks:
-            try:
-                callback(timestamp)
-            except Exception:
-                logging.exception("Drop notice callback failed for %s", self.source_label)
+            self._drop_callback = callback
 
     def try_add(self, duration_seconds: float, chunk_wall_clock: Optional[float] = None) -> bool:
         """Return True and account for the chunk if it fits under the cap.
@@ -317,7 +302,7 @@ class QueueBacklogLimiter:
         """
         if duration_seconds <= 0:
             return True
-        callbacks_to_notify: list[Callable[[float], None]] = []
+        callback_to_notify: Optional[Callable[[float], None]] = None
         drop_notice_timestamp: float | None = None
         with self._lock:
             resume_threshold = self.resume_seconds if self.resume_seconds else 0.0
@@ -335,15 +320,15 @@ class QueueBacklogLimiter:
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
                 if not self._drop_mode or not self._drop_notice_active:
-                    callbacks_to_notify = list(self._drop_callbacks)
-                    # Fail fast if chunk_wall_clock is missing when drop callbacks are registered
-                    if callbacks_to_notify and chunk_wall_clock is None:
+                    callback_to_notify = self._drop_callback
+                    # Fail fast if chunk_wall_clock is missing when drop callback is registered
+                    if callback_to_notify is not None and chunk_wall_clock is None:
                         raise ValueError(
-                            f"chunk_wall_clock is required when QueueBacklogLimiter has drop callbacks. "
+                            f"chunk_wall_clock is required when QueueBacklogLimiter has drop callback. "
                             f"All callers must provide real wall clock timestamps for audio chunks. "
                             f"Source: {self.source_label}"
                         )
-                    drop_notice_timestamp = chunk_wall_clock if callbacks_to_notify else None
+                    drop_notice_timestamp = chunk_wall_clock if callback_to_notify else None
                     self._drop_notice_active = True
                 self._drop_mode = True
                 self._dropped_seconds += duration_seconds
@@ -353,10 +338,13 @@ class QueueBacklogLimiter:
                 self._total_accounted_seconds += duration_seconds
                 self._log_backlog_state_locked()
                 return True
-        # Callbacks are only populated when drop_notice_timestamp is set (both happen together)
-        if callbacks_to_notify:
-            assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when callbacks are populated"
-            self._notify_drop_start(drop_notice_timestamp, callbacks_to_notify)
+        # Invoke callback outside of lock if needed
+        if callback_to_notify is not None:
+            assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when callback is invoked"
+            try:
+                callback_to_notify(drop_notice_timestamp)
+            except Exception:
+                logging.exception("Drop notice callback failed for %s", self.source_label)
         return False
 
     def consume(self, duration_seconds: float) -> None:
