@@ -243,6 +243,7 @@ class QueueBacklogLimiter:
         self._last_backlog_log_time = 0.0
         self._timestamp_consumed_seconds = 0.0
         self._drop_callback: Optional[Callable[[float], None]] = None
+        self._stuck_callback: Optional[Callable[[], None]] = None
         self._drop_notice_active = False
         if resume_seconds is not None:
             self.resume_seconds = max(0.0, resume_seconds)
@@ -251,6 +252,11 @@ class QueueBacklogLimiter:
         else:
             self.resume_seconds = 0.0
         self._drop_mode = False
+        # Deadlock detection: track backlog progress
+        self._stuck_check_interval = 70.0  # Check every 70 seconds
+        self._stuck_progress_threshold = 0.5  # Must make at least 0.5s progress
+        self._last_stuck_check_time = time.time()
+        self._last_stuck_check_backlog = 0.0
 
     def _log_backlog_state_locked(self) -> None:
         if self.max_seconds is None or self.max_seconds <= 0:
@@ -292,6 +298,48 @@ class QueueBacklogLimiter:
         with self._lock:
             self._drop_callback = callback
 
+    def register_stuck_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback to be invoked when backlog is stuck (deadlock detected).
+
+        The callback will be called when the backlog has not made sufficient progress
+        (< 0.5s in 70 seconds) while in drop mode, indicating a stuck state that
+        requires clearing the queue and resetting.
+        """
+        with self._lock:
+            self._stuck_callback = callback
+
+    def _check_stuck_state_locked(self) -> bool:
+        """Check if backlog is stuck and hasn't made progress. Must be called with lock held.
+
+        Returns True if stuck callback was invoked.
+        """
+        if not self._drop_mode or self._stuck_callback is None:
+            return False
+
+        now = time.time()
+        elapsed = now - self._last_stuck_check_time
+
+        if elapsed < self._stuck_check_interval:
+            return False
+
+        # Check if backlog has decreased by at least the threshold
+        progress = self._last_stuck_check_backlog - self.current_seconds
+
+        if progress < self._stuck_progress_threshold:
+            # Stuck detected - backlog hasn't decreased enough
+            print(
+                f"ERROR: Backlog stuck for {self.source_label}! "
+                f"Only {progress:.2f}s progress in {elapsed:.1f}s (threshold: {self._stuck_progress_threshold}s). "
+                f"Current backlog: {self.current_seconds:.1f}s. Clearing queue...",
+                file=sys.stderr,
+            )
+            return True
+
+        # Update checkpoint for next check
+        self._last_stuck_check_time = now
+        self._last_stuck_check_backlog = self.current_seconds
+        return False
+
     def try_add(self, duration_seconds: float, chunk_wall_clock: Optional[float] = None) -> bool:
         """Return True and account for the chunk if it fits under the cap.
 
@@ -303,12 +351,16 @@ class QueueBacklogLimiter:
         if duration_seconds <= 0:
             return True
         callback_to_notify: Optional[Callable[[float], None]] = None
+        stuck_callback_to_notify: Optional[Callable[[], None]] = None
         drop_notice_timestamp: float | None = None
         with self._lock:
             resume_threshold = self.resume_seconds if self.resume_seconds else 0.0
             if resume_threshold > 0 and self._drop_mode and self.current_seconds > resume_threshold:
                 self._dropped_seconds += duration_seconds
                 self._log_drop(duration_seconds)
+                # Check for stuck state while in drop mode
+                if self._check_stuck_state_locked():
+                    stuck_callback_to_notify = self._stuck_callback
                 return False
             if self._drop_mode and self.current_seconds <= resume_threshold:
                 self._drop_mode = False
@@ -319,6 +371,7 @@ class QueueBacklogLimiter:
                 self._log_backlog_state_locked()
                 return True
             if self.current_seconds + duration_seconds > self.max_seconds:
+                was_in_drop_mode = self._drop_mode
                 if not self._drop_mode or not self._drop_notice_active:
                     callback_to_notify = self._drop_callback
                     # Fail fast if chunk_wall_clock is missing when drop callback is registered
@@ -331,6 +384,10 @@ class QueueBacklogLimiter:
                     drop_notice_timestamp = chunk_wall_clock if callback_to_notify else None
                     self._drop_notice_active = True
                 self._drop_mode = True
+                # Initialize stuck detection checkpoint when first entering drop mode
+                if not was_in_drop_mode:
+                    self._last_stuck_check_time = time.time()
+                    self._last_stuck_check_backlog = self.current_seconds
                 self._dropped_seconds += duration_seconds
                 self._log_drop(duration_seconds)
             else:
@@ -338,7 +395,12 @@ class QueueBacklogLimiter:
                 self._total_accounted_seconds += duration_seconds
                 self._log_backlog_state_locked()
                 return True
-        # Invoke callback outside of lock if needed
+        # Invoke callbacks outside of lock if needed
+        if stuck_callback_to_notify is not None:
+            try:
+                stuck_callback_to_notify()
+            except Exception:
+                logging.exception("Stuck callback failed for %s", self.source_label)
         if callback_to_notify is not None:
             assert drop_notice_timestamp is not None, "drop_notice_timestamp must be set when callback is invoked"
             try:
@@ -443,6 +505,9 @@ class AudioTranscriber:
 
         if mode == 'livestream' and self.queue_backlog_limiter is not None:
             self.queue_backlog_limiter.register_drop_callback(self._handle_drop_notice)
+            # Register stuck callback if available (not all limiters may have this)
+            if hasattr(self.queue_backlog_limiter, 'register_stuck_callback'):
+                self.queue_backlog_limiter.register_stuck_callback(self._handle_stuck_queue)
 
         self._load_whisper_cpp()
 
@@ -602,6 +667,42 @@ class AudioTranscriber:
         self.audio_input_queue.put(notice)
         # Fast-forward downstream timestamps so future segments align with the drop point
         self._last_transcript_wall_clock = ts_seconds
+
+    def _handle_stuck_queue(self) -> None:
+        """
+        Handle stuck queue situation by clearing the queue and resetting state.
+
+        This is called when the backlog has not made sufficient progress while in
+        drop mode, indicating a deadlock or stuck state that requires recovery.
+        """
+        # Clear the audio input queue
+        cleared_count = 0
+        try:
+            while True:
+                self.audio_input_queue.get_nowait()
+                cleared_count += 1
+        except queue.Empty:
+            pass
+
+        print(
+            f"Cleared {cleared_count} items from stuck queue for {self.show_name}",
+            file=sys.stderr,
+        )
+
+        # Reset the backlog limiter state
+        if self.queue_backlog_limiter is not None:
+            with self.queue_backlog_limiter._lock:
+                self.queue_backlog_limiter.current_seconds = 0.0
+                self.queue_backlog_limiter._drop_mode = False
+                self.queue_backlog_limiter._drop_notice_active = False
+                self.queue_backlog_limiter._last_stuck_check_time = time.time()
+                self.queue_backlog_limiter._last_stuck_check_backlog = 0.0
+
+        # Put a TranscriptionNotice to trigger full processing reset
+        timestamp = self._last_transcript_wall_clock or time.time()
+        notice = TranscriptionNotice("(transcript reset due to stuck queue)", timestamp)
+        self.audio_input_queue.put(notice)
+        self._last_transcript_wall_clock = timestamp
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
