@@ -700,10 +700,7 @@ class AudioTranscriber:
             if self.stop_event is not None and self.stop_event.is_set():
                 stop_requested = True
                 break
-            try:
-                segment = self.audio_input_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
+            segment = self.audio_input_queue.get()  # blocking
             if segment is None:
                 print("end of audio", ts, file=sys.stderr)
                 break
@@ -781,10 +778,7 @@ class AudioTranscriber:
             if self.stop_event is not None and self.stop_event.is_set():
                 stop_requested = True
                 break
-            try:
-                segment = self.audio_input_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
+            segment = self.audio_input_queue.get()  # blocking
             if segment is None:
                 print("end of audio", ts_wall_clock, file=sys.stderr)
                 break
