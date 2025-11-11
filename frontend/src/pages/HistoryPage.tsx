@@ -88,12 +88,7 @@ export default function HistoryPage() {
   const shouldScrollToBottomRef = useRef(false)
   const followPollerRef = useRef<number | null>(null)
   const latestIdRef = useRef<number | null>(null)
-
-  // Pull to refresh state
-  const [isPulling, setIsPulling] = useState(false)
-  const [pullDistance, setPullDistance] = useState(0)
-  const touchStartY = useRef<number | null>(null)
-  const isAtBottom = useRef(false)
+  const [refreshing, setRefreshing] = useState(false)
 
   // Fetch shows on mount
   useEffect(() => {
@@ -304,56 +299,22 @@ export default function HistoryPage() {
     if (container.scrollTop < 100) {
       void fetchTranscripts(selectedShow, offsetRef.current, true)
     }
-
-    // Track if we're at the bottom for pull-to-refresh
-    const isBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 10
-    isAtBottom.current = isBottom
   }, [selectedShow, loadingMore, hasMore, isFollowing, fetchTranscripts])
 
-  // Handle pull-to-refresh at bottom
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    if (!isFollowing && isAtBottom.current) {
-      touchStartY.current = e.touches[0].clientY
-    }
-  }, [isFollowing])
-
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    const container = transcriptContainerRef.current
-    if (!container || isFollowing || touchStartY.current === null || !isAtBottom.current) {
-      return
-    }
-
-    const touchY = e.touches[0].clientY
-    const distance = touchY - touchStartY.current
-
-    // Only trigger pull when scrolled to bottom and pulling down
-    if (distance > 0) {
-      setPullDistance(distance)
-      if (distance > 80) {
-        setIsPulling(true)
-      }
-    }
-  }, [isFollowing])
-
+  // Handle refresh by reloading from the beginning
   const handleRefresh = useCallback(async () => {
-    if (!selectedShow) return
+    if (!selectedShow || refreshing) return
 
-    // Refresh by reloading from the beginning
-    offsetRef.current = 0
-    setHasMore(true)
-    await fetchTranscripts(selectedShow, 0, false)
-  }, [selectedShow, fetchTranscripts])
-
-  const handleTouchEnd = useCallback(() => {
-    if (isPulling && pullDistance > 80) {
-      void handleRefresh()
+    setRefreshing(true)
+    try {
+      // Refresh by reloading from the beginning
+      offsetRef.current = 0
+      setHasMore(true)
+      await fetchTranscripts(selectedShow, 0, false)
+    } finally {
+      setRefreshing(false)
     }
-
-    // Reset pull state
-    touchStartY.current = null
-    setPullDistance(0)
-    setIsPulling(false)
-  }, [isPulling, pullDistance, handleRefresh])
+  }, [selectedShow, fetchTranscripts, refreshing])
 
   return (
     <div className="space-y-6">
@@ -507,26 +468,23 @@ export default function HistoryPage() {
                 {error}
               </p>
             ) : (
-              <div
-                ref={transcriptContainerRef}
-                onScroll={handleScroll}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 min-h-[500px] max-h-[600px] text-left overflow-y-auto relative"
-              >
-                {loadingMore && (
-                  <div className="flex items-center justify-center py-3 mb-2">
-                    <Loader2 className="w-5 h-5 animate-spin text-slate-400 mr-2" />
-                    <span className="text-sm text-slate-500">Loading more...</span>
-                  </div>
-                )}
-                {transcripts.length === 0 ? (
-                  <p className="text-slate-500 dark:text-slate-400 text-center py-8">
-                    No transcripts found for this show.
-                  </p>
-                ) : (
-                  <>
+              <>
+                <div
+                  ref={transcriptContainerRef}
+                  onScroll={handleScroll}
+                  className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 min-h-[500px] max-h-[600px] text-left overflow-y-auto"
+                >
+                  {loadingMore && (
+                    <div className="flex items-center justify-center py-3 mb-2">
+                      <Loader2 className="w-5 h-5 animate-spin text-slate-400 mr-2" />
+                      <span className="text-sm text-slate-500">Loading more...</span>
+                    </div>
+                  )}
+                  {transcripts.length === 0 ? (
+                    <p className="text-slate-500 dark:text-slate-400 text-center py-8">
+                      No transcripts found for this show.
+                    </p>
+                  ) : (
                     <ul className="space-y-1.5 text-sm text-slate-800 dark:text-slate-100">
                       {transcripts.map((row) => (
                         <li
@@ -542,28 +500,28 @@ export default function HistoryPage() {
                         </li>
                       ))}
                     </ul>
-                    {/* Pull to refresh indicator */}
-                    {!isFollowing && pullDistance > 0 && (
-                      <div
-                        className="flex items-center justify-center py-4 transition-opacity"
-                        style={{
-                          opacity: Math.min(pullDistance / 80, 1),
-                          transform: `translateY(${Math.min(pullDistance / 2, 40)}px)`
-                        }}
-                      >
-                        {isPulling ? (
-                          <>
-                            <Loader2 className="w-5 h-5 animate-spin text-slate-400 mr-2" />
-                            <span className="text-sm text-slate-500">Release to refresh...</span>
-                          </>
-                        ) : (
-                          <span className="text-sm text-slate-500">Pull down to refresh...</span>
-                        )}
-                      </div>
-                    )}
-                  </>
+                  )}
+                </div>
+                {/* Load More button - shown at bottom when not following */}
+                {!isFollowing && transcripts.length > 0 && (
+                  <div className="mt-3 flex justify-center">
+                    <button
+                      onClick={handleRefresh}
+                      disabled={refreshing}
+                      className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 transition-colors text-sm font-medium"
+                    >
+                      {refreshing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin inline-block mr-2" />
+                          Loading...
+                        </>
+                      ) : (
+                        'Load More'
+                      )}
+                    </button>
+                  </div>
                 )}
-              </div>
+              </>
             )}
           </CardContent>
         </Card>
