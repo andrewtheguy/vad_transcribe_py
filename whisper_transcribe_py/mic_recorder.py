@@ -69,6 +69,7 @@ class MicRecorder:
             AudioTranscriber(
                 self.audio_input_queue,
                 language=language,
+                mode='livestream',  # Microphone uses livestream mode
                 stop_event=self.stop_event,
                 queue_backlog_limiter=self.queue_limiter,
                 n_threads=self.n_threads,

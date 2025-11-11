@@ -37,6 +37,12 @@ class TrackingSpeechDetector:
     def consume_silence(self) -> float:
         return 0.0
 
+    def reset(self) -> None:
+        """Reset the detector state (for context resets)."""
+        self._script_index = 0
+        self.is_in_speech = False
+        self.pending_silence_duration = 0.0
+
     def set_script(self, script: list[tuple[bool, bool]]) -> None:
         self._script = script
         self._script_index = 0
@@ -124,7 +130,8 @@ def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_
     assert second_ts == pytest.approx(5.0 + 512 / audio_transcriber.TARGET_SAMPLE_RATE)
 
 
-def test_drop_notice_waits_until_silence_release(monkeypatch, make_transcriber, recorded_transcribe):
+def test_drop_notice_emitted_after_segment_complete(monkeypatch, make_transcriber, recorded_transcribe):
+    """Test that drop notice is emitted immediately after VAD segment completes."""
     window_samples = audio_transcriber.get_window_size_samples()
     audio = np.zeros(window_samples * 3, dtype=np.float32)
     segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
@@ -134,30 +141,27 @@ def test_drop_notice_waits_until_silence_release(monkeypatch, make_transcriber, 
     audio_queue.put(None)
 
     transcriber = make_transcriber(audio_queue=audio_queue, language="en")
+    # Sequence: speech → speech → silence (triggers segment_complete)
     transcriber.speech_detector.set_script([
         (True, True),
         (False, True),
-        (False, False),
+        (False, False),  # This triggers segment completion
     ])
     transcriber._handle_drop_notice(5.0)
 
-    release_calls = []
-    original_release = audio_transcriber.AudioTranscriber._release_ready_drop_notices
-
-    def recording_release(self, ts):
-        release_calls.append((len(self.speech_detector.calls), ts, self.speech_detector.is_in_speech))
-        return original_release(self, ts)
-
-    monkeypatch.setattr(audio_transcriber.AudioTranscriber, "_release_ready_drop_notices", recording_release)
-
     transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
 
-    assert release_calls, "expected drop release attempts"
-    first_call = release_calls[0]
-    assert first_call[0] == 3  # release occurs after three windows processed
-    assert first_call[2] is False
+    # Should have one TranscriptionNotice emitted after segment completion
     notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]
     assert len(notices) == 1
+    assert notices[0].timestamp == pytest.approx(5.0)
+
+    # Check that segment comes before notice
+    segments = [item for item in recorded_transcribe if isinstance(item, AudioSegment)]
+    if segments:
+        segment_idx = recorded_transcribe.index(segments[0])
+        notice_idx = recorded_transcribe.index(notices[0])
+        assert segment_idx < notice_idx, "Segment should come before notice"
 
 
 def test_new_segment_callback_emits_callbacks(make_transcriber):

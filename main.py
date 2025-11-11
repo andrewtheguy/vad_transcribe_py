@@ -42,13 +42,15 @@ class JsonTranscriptWriter:
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
                   transcript_persistence_callback=None,model='large-v3-turbo',segment_callback=None,
                   n_threads=1, stop_event=None,
-                  queue_backlog_limiter: Optional[QueueBacklogLimiter] = None):
+                  queue_backlog_limiter: Optional[QueueBacklogLimiter] = None,
+                  mode='livestream'):
     print("process_queue")
     if save_audio and audio_segment_callback is None:
         audio_segment_callback = create_audio_file_saver()
 
     AudioTranscriber(audio_input_queue=q,
                      language=language,
+                     mode=mode,
                      show_name=show_name,
                      model=model,
                      audio_segment_callback=audio_segment_callback,
@@ -140,14 +142,13 @@ if __name__ == '__main__':
                     'model': args.model if args.model is not None else 'large-v3-turbo',
                     'n_threads': args.n_threads if args.n_threads is not None else 1,
                     'stop_event': stop_event,
+                    'mode': 'file',  # File mode: no wall_clock timestamps
                 })
 
                 # Start the thread
                 thread_transcribe.start()
 
                 ts = 0
-                # For file-based transcription, use Unix epoch (0.0) as base timestamp
-                base_wall_clock = 0.0
                 interrupted = False
                 try:
                     with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
@@ -158,11 +159,11 @@ if __name__ == '__main__':
                             if not chunk:
                                 break
                             audio = pcm_s16le_to_float32(chunk)
-                            # Use epoch-based timestamp for files (base_wall_clock + relative ts)
+                            # File mode: no wall_clock_start, only relative timestamps
                             audio_input_queue.put(AudioSegment(
                                 audio=audio,
                                 start=ts,
-                                wall_clock_start=base_wall_clock + ts
+                                wall_clock_start=None
                             ))
                             ts += len(audio) / TARGET_SAMPLE_RATE
                 except KeyboardInterrupt:
