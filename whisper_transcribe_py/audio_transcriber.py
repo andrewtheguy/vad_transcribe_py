@@ -439,14 +439,10 @@ class AudioTranscriber:
 
         # Mode-specific initialization
         if mode == 'livestream':
-            self._pending_drop_notice: Optional[TranscriptionNotice] = None
-            self._drop_notice_lock = threading.Lock()
             self.wall_clock_reference = wall_clock_reference
             self.queue_backlog_limiter = queue_backlog_limiter
             self._last_transcript_wall_clock: Optional[float] = None
         else:  # file mode
-            self._pending_drop_notice = None
-            self._drop_notice_lock = None
             self.wall_clock_reference = None
             self.queue_backlog_limiter = None
             self._last_transcript_wall_clock = None
@@ -590,10 +586,6 @@ class AudioTranscriber:
         # Queue the segment for transcription
         self.transcribe_queue.put(segment)
 
-        # Emit any pending drop notice immediately after segment completion (livestream mode only)
-        if self.mode == 'livestream':
-            self._emit_pending_drop_notice()
-
         # Consume silence from backlog limiter
         if self.queue_backlog_limiter:
             silence = self.speech_detector.consume_silence()
@@ -602,7 +594,7 @@ class AudioTranscriber:
 
     def _handle_drop_notice(self, timestamp: float) -> None:
         """
-        Store a drop notice to be emitted after the next segment completes.
+        Put a drop notice directly into the audio input queue.
 
         Args:
             timestamp: Real wall clock timestamp when the drop occurred (required).
@@ -618,9 +610,8 @@ class AudioTranscriber:
             ts_seconds = timestamp
 
         notice = TranscriptionNotice("(transcript temporarily dropped)", ts_seconds)
-        with self._drop_notice_lock:
-            # Store single pending notice (overwrites previous if not yet emitted)
-            self._pending_drop_notice = notice
+        # Put notice directly into audio input queue
+        self.audio_input_queue.put(notice)
         # Fast-forward downstream timestamps so future segments align with the drop point
         self._last_transcript_wall_clock = ts_seconds
 
@@ -656,20 +647,6 @@ class AudioTranscriber:
     def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
         self._emit_notice("(transcript temporarily dropped)", wall_clock_ts)
 
-    def _emit_pending_drop_notice(self) -> None:
-        """Emit the pending drop notice immediately (livestream mode only)."""
-        if self.mode != 'livestream':
-            return
-
-        notice_to_emit: Optional[TranscriptionNotice] = None
-        with self._drop_notice_lock:
-            if self._pending_drop_notice is not None:
-                notice_to_emit = self._pending_drop_notice
-                self._pending_drop_notice = None
-
-        if notice_to_emit is not None:
-            self.transcribe_queue.put(notice_to_emit)
-
     def _reset_transcription_context(self) -> None:
         """
         Reset full transcription context (livestream mode only).
@@ -689,6 +666,19 @@ class AudioTranscriber:
 
         # Note: _last_transcript_wall_clock is intentionally NOT reset here
         # because it's used for maintaining monotonicity of future timestamps
+
+    def _reset_processing_state(self) -> None:
+        """
+        Reset processing state when TranscriptionNotice is encountered in input queue.
+
+        Called in the processing loop when a TranscriptionNotice is dequeued.
+        Clears buffer, resets SpeechDetector, as if starting fresh.
+        """
+        # Reset SpeechDetector state
+        self.speech_detector.reset()
+
+        # Note: buffer will be cleared by returning from the TranscriptionNotice handler
+        # Note: timestamps will be re-initialized from next segment
 
     def _process_input_file(self, input_sample_rate: int) -> None:
         """
@@ -799,6 +789,12 @@ class AudioTranscriber:
                 print("end of audio", ts_wall_clock, file=sys.stderr)
                 break
             if isinstance(segment, TranscriptionNotice):
+                # Reset processing state: clear buffer, reset SpeechDetector
+                self._reset_processing_state()
+                buffer.clear()
+                ts_wall_clock = None  # Reset timestamp tracking
+
+                # Emit the notice to transcribe queue
                 self.transcribe_queue.put(segment)
                 continue
             segment_duration = segment.duration_seconds
@@ -871,9 +867,6 @@ class AudioTranscriber:
                         continue
                 except queue.Empty:
                     break
-
-        # Emit any final pending drop notice
-        self._emit_pending_drop_notice()
 
         self.transcribe_queue.put(None)
         transcribing_thread.join()
