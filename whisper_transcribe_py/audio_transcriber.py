@@ -308,19 +308,20 @@ class QueueBacklogLimiter:
         with self._lock:
             self._stuck_callback = callback
 
-    def _check_stuck_state_locked(self) -> bool:
+    def _check_stuck_state_locked(self) -> tuple[bool, Optional[float]]:
         """Check if backlog is stuck and hasn't made progress. Must be called with lock held.
 
-        Returns True if stuck callback was invoked.
+        Returns (is_stuck, timestamp_for_drop_notice) tuple.
+        If stuck, also resets the limiter state completely.
         """
         if not self._drop_mode or self._stuck_callback is None:
-            return False
+            return (False, None)
 
         now = time.time()
         elapsed = now - self._last_stuck_check_time
 
         if elapsed < self._stuck_check_interval:
-            return False
+            return (False, None)
 
         # Check if backlog has decreased by at least the threshold
         progress = self._last_stuck_check_backlog - self.current_seconds
@@ -330,15 +331,25 @@ class QueueBacklogLimiter:
             print(
                 f"ERROR: Backlog stuck for {self.source_label}! "
                 f"Only {progress:.2f}s progress in {elapsed:.1f}s (threshold: {self._stuck_progress_threshold}s). "
-                f"Current backlog: {self.current_seconds:.1f}s. Clearing queue...",
+                f"Current backlog: {self.current_seconds:.1f}s. Resetting everything...",
                 file=sys.stderr,
             )
-            return True
+
+            # Completely reset the limiter state
+            old_backlog = self.current_seconds
+            self.current_seconds = 0.0
+            self._drop_mode = False
+            self._drop_notice_active = False
+            self._last_stuck_check_time = now
+            self._last_stuck_check_backlog = 0.0
+
+            # Return timestamp for drop notice (use current time)
+            return (True, time.time())
 
         # Update checkpoint for next check
         self._last_stuck_check_time = now
         self._last_stuck_check_backlog = self.current_seconds
-        return False
+        return (False, None)
 
     def try_add(self, duration_seconds: float, chunk_wall_clock: Optional[float] = None) -> bool:
         """Return True and account for the chunk if it fits under the cap.
@@ -359,8 +370,13 @@ class QueueBacklogLimiter:
                 self._dropped_seconds += duration_seconds
                 self._log_drop(duration_seconds)
                 # Check for stuck state while in drop mode
-                if self._check_stuck_state_locked():
+                is_stuck, stuck_timestamp = self._check_stuck_state_locked()
+                if is_stuck:
+                    # Stuck detected - limiter state already reset
+                    # Clear queue via stuck callback, then emit drop notice to reset everything
                     stuck_callback_to_notify = self._stuck_callback
+                    callback_to_notify = self._drop_callback
+                    drop_notice_timestamp = stuck_timestamp
                 return False
             if self._drop_mode and self.current_seconds <= resume_threshold:
                 self._drop_mode = False
@@ -670,12 +686,13 @@ class AudioTranscriber:
 
     def _handle_stuck_queue(self) -> None:
         """
-        Handle stuck queue situation by clearing the queue and resetting state.
+        Handle stuck queue situation by clearing the queue.
 
         This is called when the backlog has not made sufficient progress while in
         drop mode, indicating a deadlock or stuck state that requires recovery.
+        The limiter state is already reset by the time this is called.
         """
-        # Clear the audio input queue
+        # Clear the audio input queue - all pending items are lost
         cleared_count = 0
         try:
             while True:
@@ -688,21 +705,6 @@ class AudioTranscriber:
             f"Cleared {cleared_count} items from stuck queue for {self.show_name}",
             file=sys.stderr,
         )
-
-        # Reset the backlog limiter state
-        if self.queue_backlog_limiter is not None:
-            with self.queue_backlog_limiter._lock:
-                self.queue_backlog_limiter.current_seconds = 0.0
-                self.queue_backlog_limiter._drop_mode = False
-                self.queue_backlog_limiter._drop_notice_active = False
-                self.queue_backlog_limiter._last_stuck_check_time = time.time()
-                self.queue_backlog_limiter._last_stuck_check_backlog = 0.0
-
-        # Put a TranscriptionNotice to trigger full processing reset
-        timestamp = self._last_transcript_wall_clock or time.time()
-        notice = TranscriptionNotice("(transcript reset due to stuck queue)", timestamp)
-        self.audio_input_queue.put(notice)
-        self._last_transcript_wall_clock = timestamp
 
     def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
