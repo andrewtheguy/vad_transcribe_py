@@ -14,7 +14,16 @@
       "Bash(make:*)",
       "Bash(find:*)",
       "Bash(uv sync:*)",
-      "Bash(uv run pytest:*)"
+      "Bash(uv run pytest:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(echo:*)",
+      "Bash(sort:*)",
+      "Bash(while read n)",
+      "Bash(do echo \"tmp/speech/$n.wav\")",
+      "Bash(done)",
+      "Bash(python3:*)",
+      "Bash(ffprobe:*)",
+      "Bash(1)"
     ],
     "deny": [],
     "ask": []

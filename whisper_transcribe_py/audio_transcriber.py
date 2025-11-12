@@ -86,17 +86,23 @@ def ffmpeg_get_16bit_pcm(full_audio_path,target_sample_rate=None,ac=None):
     process = None
 
     try:
-        # Run the command, capturing only stdout
+        # Run the command, capturing stdout and stderr
         process = subprocess.Popen(
             command,
-            stdout=subprocess.PIPE  # Pipe stdout
+            stdout=subprocess.PIPE,  # Pipe stdout
+            stderr=subprocess.PIPE   # Capture stderr for error reporting
         )
         yield process.stdout
-        if process.wait() != 0:
-            raise ValueError(f"ffmpeg command failed with return code {process.returncode}")
+        returncode = process.wait()
+        if returncode != 0:
+            # Read stderr to get error message
+            stderr_output = process.stderr.read().decode('utf-8', errors='replace')
+            raise ValueError(f"ffmpeg command failed with return code {returncode}. Error: {stderr_output}")
     finally:
         if process is not None:
             process.stdout.close()
+            if process.stderr:
+                process.stderr.close()
 
 
 import numpy as np
@@ -494,6 +500,8 @@ class AudioTranscriber:
             wall_clock_reference: Optional[float] = None,
             queue_backlog_limiter: Optional["QueueBacklogLimiter"] = None,
             backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
+            vad_min_speech_seconds: Optional[float] = None,
+            vad_max_speech_seconds: Optional[float] = None,
     ):
         self.mode = mode
         self.backend = backend
@@ -520,9 +528,15 @@ class AudioTranscriber:
             self.queue_backlog_limiter = None
             self._last_transcript_wall_clock = None
 
+        # VAD defaults (same for both modes)
+        default_min_speech = 3.0
+        default_max_speech = 60.0
+
         # Initialize speech detector with callback
         self.speech_detector = SpeechDetector(
             sample_rate=TARGET_SAMPLE_RATE,
+            min_speech_seconds=vad_min_speech_seconds if vad_min_speech_seconds is not None else default_min_speech,
+            max_speech_seconds=vad_max_speech_seconds if vad_max_speech_seconds is not None else default_max_speech,
             on_segment_complete=self._handle_vad_segment,
         )
 
@@ -879,7 +893,7 @@ class AudioTranscriber:
                 break
             segment = self.audio_input_queue.get()  # blocking
             if segment is None:
-                print("end of audio", ts, file=sys.stderr)
+                print(f"end of audio, ts={ts}", file=sys.stderr)
                 break
 
             # File mode doesn't handle TranscriptionNotice
@@ -910,7 +924,7 @@ class AudioTranscriber:
                 data_slice = np.asarray(arr)
 
                 # Process window through speech detector (no wall_clock_timestamp for file mode)
-                self.speech_detector.process_window(data_slice, ts, wall_clock_timestamp=None)
+                has_speech = self.speech_detector.process_window(data_slice, ts, wall_clock_timestamp=None)
 
                 # Advance timestamp
                 if ts is not None:

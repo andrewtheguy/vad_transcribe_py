@@ -155,14 +155,20 @@ if __name__ == '__main__':
 
                 ts = 0
                 interrupted = False
+                chunks_read = 0
+                total_bytes = 0
                 try:
                     with ffmpeg_get_16bit_pcm(args.file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
                         while True:
                             if stop_event.is_set():
+                                print(f"Stop event set after {chunks_read} chunks, {total_bytes} bytes", file=sys.stderr)
                                 break
                             chunk = stdout.read(4096)
                             if not chunk:
+                                print(f"End of stream reached after {chunks_read} chunks, {total_bytes} bytes, {ts:.2f} seconds", file=sys.stderr)
                                 break
+                            chunks_read += 1
+                            total_bytes += len(chunk)
                             audio = pcm_s16le_to_float32(chunk)
                             # File mode: no wall_clock_start, only relative timestamps
                             audio_input_queue.put(AudioSegment(
@@ -171,11 +177,19 @@ if __name__ == '__main__':
                                 wall_clock_start=None
                             ))
                             ts += len(audio) / TARGET_SAMPLE_RATE
+                            if chunks_read % 1000 == 0:
+                                print(f"Progress: {chunks_read} chunks, {total_bytes} bytes, {ts:.2f} seconds", file=sys.stderr)
                 except KeyboardInterrupt:
                     interrupted = True
                     print("\nCtrl+C received, stopping transcription...", file=sys.stderr)
                 finally:
-                    _request_shutdown(stop_event, audio_input_queue)
+                    # Only set stop_event if we were interrupted
+                    # For normal completion, just send sentinel and wait for thread
+                    if interrupted:
+                        _request_shutdown(stop_event, audio_input_queue)
+                    else:
+                        # Normal completion: just send sentinel, don't set stop_event
+                        audio_input_queue.put(None)
                     thread_transcribe.join()
 
                 transcript_writer.flush()
