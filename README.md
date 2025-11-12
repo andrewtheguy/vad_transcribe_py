@@ -1,10 +1,13 @@
 # Whisper Transcribe
 
-**OpenAI Whisper Transcribe** is a real-time speech transcription system that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and [whispercpp](https://github.com/absadiki/pywhispercpp) (a Python binding for whisper.cpp) to transcribe them with high accuracy.
+**OpenAI Whisper Transcribe** is a real-time speech transcription system that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends:
+- [whispercpp](https://github.com/absadiki/pywhispercpp) (default) - Python binding for whisper.cpp (Faster on Mac with MPS support)
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) - CTranslate2-based implementation for faster GPU/CPU inference (faster for CPU inference without MPS support)
 
 ## Key Features
 
 - **Smart Voice Detection**: Uses Silero VAD to detect speech segments, reducing unnecessary processing
+- **Flexible Backend Selection**: Choose between whisper.cpp (default) or faster-whisper backends for transcription
 - **Multiple Input Sources**: Process audio files, microphone input, or live audio streams
 - **Real-time Transcription**: Low-latency transcription for live audio sources
 - **Web Interface**: Modern web UI for browser-based microphone recording and transcription
@@ -27,6 +30,37 @@ export DATABASE_URL="postgresql://user:password@localhost/dbname"
 ```
 
 **Note**: The project uses python-dotenv to automatically load environment variables from a `.env` file in the project root. Only the `file` command works without a database.
+
+## Backend Selection
+
+Whisper Transcribe supports two transcription backends with different performance characteristics:
+
+### whisper_cpp (Default)
+- Python bindings for the original whisper.cpp implementation
+- Good CPU performance with optimized inference
+- Lower memory footprint
+- Best for: CPU-only environments, embedded systems, or when memory is constrained
+
+### faster-whisper
+- Based on CTranslate2 for optimized GPU/CPU inference
+- Automatic device detection (uses GPU if CUDA available, falls back to CPU)
+- Faster inference speed, especially on GPU
+- Best for: GPU-enabled systems, high-throughput processing, or when speed is priority
+
+**Usage examples:**
+```bash
+# Use default whisper_cpp backend
+uv run python main.py file --file audio.mp3 --lang en --output output.json
+
+# Use faster-whisper backend with GPU acceleration
+uv run python main.py file --file audio.mp3 --lang en --output output.json --backend faster_whisper
+
+# Set backend in config file for stream processing
+echo "backend = 'faster_whisper'" >> configs/mystream.toml
+uv run python main.py stream --config configs/mystream.toml
+```
+
+**Note:** Both backends use the same custom VAD logic (Silero VAD) to detect speech segments. The faster-whisper backend has its built-in VAD disabled to prevent duplicate processing.
 
 ### Web Interface
 
@@ -70,6 +104,7 @@ uv run python main.py file --file /path/to/file --lang en --output /path/to/outp
 **Optional arguments:**
 - `--model`: Whisper model size (default: 'large-v3-turbo')
 - `--n-threads`: Number of threads for Whisper (default: 1)
+- `--backend`: Transcription backend - `whisper_cpp` or `faster_whisper` (default: 'whisper_cpp')
 
 ### 2. Transcribe from microphone
 Record from microphone and transcribe in real-time.
@@ -88,6 +123,7 @@ uv run python main.py mic --lang en
 
 **Optional arguments:**
 - `--n-threads`: Number of threads for Whisper (default: 1)
+- `--backend`: Transcription backend - `whisper_cpp` or `faster_whisper` (default: 'whisper_cpp')
 
 **Required environment variables:**
 - `DATABASE_URL`: PostgreSQL connection string (e.g., `postgresql://user:pass@localhost/db`)
@@ -114,6 +150,7 @@ uv run python main.py stream --config configs/rthk2.toml
 **Optional arguments:**
 - `--model`: Whisper model size (overrides config file, default: 'large-v3-turbo')
 - `--n-threads`: Number of threads for Whisper (overrides config file, default: 1)
+- `--backend`: Transcription backend - `whisper_cpp` or `faster_whisper` (overrides config file, default: 'whisper_cpp')
 
 **Required environment variables:**
 - `DATABASE_URL`: PostgreSQL connection string (e.g., `postgresql://user:pass@localhost/db`)
@@ -129,8 +166,9 @@ show_name = 'my_show'                     # Show identifier for database
 language = 'en'                           # Language code (e.g., 'en', 'zh', 'yue')
 
 # Optional fields
-model = 'large-v3-turbo'  # Whisper model name or path (default: 'large-v3-turbo')
-n_threads = 4             # Number of threads for Whisper (default: 1)
+model = 'large-v3-turbo'      # Whisper model name or path (default: 'large-v3-turbo')
+n_threads = 4                 # Number of threads for Whisper (default: 1)
+backend = 'faster_whisper'    # Transcription backend: 'whisper_cpp' or 'faster_whisper' (default: 'whisper_cpp')
 ```
 
 **Note:** Command line arguments take priority over config file settings. For example:
@@ -216,7 +254,8 @@ See the [Web Setup Guide](WEB_SETUP.md) for detailed instructions on setting up 
 - Uvicorn - ASGI server with hot reload support
 - PostgreSQL - Transcript persistence
 - silero-vad - Voice activity detection
-- pywhispercpp - Whisper.cpp Python bindings
+- pywhispercpp - Whisper.cpp Python bindings (default backend)
+- faster-whisper - CTranslate2-based Whisper implementation (alternative backend)
 
 **Frontend**
 - Vite - Fast build tool and dev server
