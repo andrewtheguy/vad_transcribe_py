@@ -23,6 +23,7 @@ class MicRecorder:
             n_threads: int = 1,
             show_name: str = "unknown",
             transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
+            backend: str = 'whisper_cpp',
     ):
         self.audio_input_queue = audio_input_queue
         self.stop_event = stop_event
@@ -32,6 +33,7 @@ class MicRecorder:
         self.stream = sd.InputStream(callback=self.audio_callback)
         self.show_name = show_name
         self.transcript_persistence_callback = transcript_persistence_callback
+        self.backend = backend
 
     def audio_callback(self, indata, frames, t, status):
         """This is called (from a separate thread) for each audio block."""
@@ -75,4 +77,5 @@ class MicRecorder:
                 n_threads=self.n_threads,
                 show_name=self.show_name,
                 transcript_persistence_callback=self.transcript_persistence_callback,
+                backend=self.backend,
             ).process_input(input_sample_rate)

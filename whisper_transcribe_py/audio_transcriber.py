@@ -493,8 +493,10 @@ class AudioTranscriber:
             stop_event: Optional[threading.Event] = None,
             wall_clock_reference: Optional[float] = None,
             queue_backlog_limiter: Optional["QueueBacklogLimiter"] = None,
+            backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
     ):
         self.mode = mode
+        self.backend = backend
         self.transcribe_queue = queue.Queue()
         self.audio_input_queue = audio_input_queue
         self.language = language
@@ -530,7 +532,13 @@ class AudioTranscriber:
             if hasattr(self.queue_backlog_limiter, 'register_stuck_callback'):
                 self.queue_backlog_limiter.register_stuck_callback(self._handle_stuck_queue)
 
-        self._load_whisper_cpp()
+        # Load backend-specific model
+        if self.backend == 'whisper_cpp':
+            self._load_whisper_cpp()
+        elif self.backend == 'faster_whisper':
+            self._load_faster_whisper()
+        else:
+            raise ValueError(f"Unsupported backend: {self.backend}")
 
     def _load_whisper_cpp(self):
         from pywhispercpp.model import Model
@@ -548,9 +556,109 @@ class AudioTranscriber:
         print(self.whisper_cpp_model.get_params())
         print(self.whisper_cpp_model.system_info())
 
+    def _load_faster_whisper(self):
+        from faster_whisper import WhisperModel
+        #import torch
+
+        # # Determine device and compute type intelligently
+        # if torch.cuda.is_available():
+        #     device = "cuda"
+        #     compute_type = "float16"
+        #     print(f"CUDA available, using GPU with {compute_type}")
+        # else:
+        #     device = "cpu"
+        #     compute_type = "int8"
+        #     print(f"CUDA not available, using CPU with {compute_type}")
+
+        self.faster_whisper_model = WhisperModel(
+            self.model,
+            #device=device,
+            #compute_type=compute_type
+        )
+
+        #print(f"Faster-whisper model loaded: {self.model} on {device} with {compute_type}")
 
     def _transcribe(self):
-        self._transcribe_whisper_cpp()
+        while True:
+            queued_item = self.transcribe_queue.get(block=True)
+            if queued_item is None:
+                break
+            if isinstance(queued_item, TranscriptionNotice):
+                # Livestream mode only
+                if self.mode == 'livestream':
+                    self._emit_notice(queued_item.text, queued_item.timestamp)
+                    # Reset full transcription context after processing TranscriptionNotice
+                    self._reset_transcription_context()
+                continue
+            if isinstance(queued_item, AudioSegment):
+                audio = queued_item.audio
+                segment_offset = queued_item.start
+            else:
+                # All audio items must be AudioSegment
+                raise TypeError(
+                    f"Expected AudioSegment but got {type(queued_item).__name__}. "
+                    f"All audio items in transcribe_queue must be AudioSegment instances."
+                )
+
+            self.current_audio_offset = segment_offset
+
+            # File mode: wall_clock_start will be None
+            # Livestream mode: wall_clock_start is required
+            if self.mode == 'livestream':
+                if queued_item.wall_clock_start is None:
+                    raise ValueError(
+                        "wall_clock_start is required for AudioSegment in livestream mode. "
+                        "All input sources must provide wall_clock_timestamp."
+                    )
+                self.ts_transcribe_start = queued_item.wall_clock_start
+            else:
+                # File mode doesn't use wall_clock_start
+                self.ts_transcribe_start = None
+
+            self._backend_transcribe(audio)
+            segment_duration_seconds = None
+            if isinstance(queued_item, AudioSegment):
+                segment_duration_seconds = queued_item.duration_seconds
+            if segment_duration_seconds is None and audio is not None:
+                segment_duration_seconds = len(audio) / TARGET_SAMPLE_RATE
+            if (
+                    self.queue_backlog_limiter is not None
+                    and segment_duration_seconds is not None
+                    and segment_duration_seconds > 0
+            ):
+                self.queue_backlog_limiter.consume(segment_duration_seconds)
+
+    def _backend_transcribe(self, audio: npt.NDArray[np.float32]) -> None:
+        """
+        Backend-specific transcription method.
+
+        For whisper.cpp: Uses callback-based transcription
+        For faster-whisper: Iterates through returned segments and calls callback manually
+        """
+        if self.backend == 'whisper_cpp':
+            # whisper.cpp backend (callback-based)
+            self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
+        elif self.backend == 'faster_whisper':
+            # faster-whisper backend (iterator-based)
+            # faster-whisper returns an iterator of segments
+            # vad_filter=False to disable built-in VAD since we use custom VAD logic
+            segments, info = self.faster_whisper_model.transcribe(audio, beam_size=5, language=self.language, vad_filter=False)
+
+            # Iterate through segments and manually call the callback
+            for segment in segments:
+                # Create a compatible segment object that matches whisper.cpp's format
+                # faster-whisper segments have: start (float), end (float), text (str)
+                # whisper.cpp segments have: t0 (int ms), t1 (int ms), text (str)
+                class SegmentWrapper:
+                    def __init__(self, start, end, text):
+                        self.t0 = int(start * 1000)  # Convert seconds to milliseconds
+                        self.t1 = int(end * 1000)
+                        self.text = text
+
+                wrapped_segment = SegmentWrapper(segment.start, segment.end, segment.text)
+                self._new_segment_callback(wrapped_segment)
+        else:
+            raise ValueError(f"Unsupported backend: {self.backend}")
 
     def _new_segment_callback(self, segment):
         relative_start = self.current_audio_offset + segment.t0 / 1000
@@ -600,57 +708,6 @@ class AudioTranscriber:
 
             # Update last transcript wall clock time
             self._last_transcript_wall_clock = ts_end_dt.timestamp()
-
-    def _transcribe_whisper_cpp(self):
-        while True:
-            queued_item = self.transcribe_queue.get(block=True)
-            if queued_item is None:
-                #print("finished transcribing audio",file=sys.stderr)
-                break
-            if isinstance(queued_item, TranscriptionNotice):
-                # Livestream mode only
-                if self.mode == 'livestream':
-                    self._emit_notice(queued_item.text, queued_item.timestamp)
-                    # Reset full transcription context after processing TranscriptionNotice
-                    self._reset_transcription_context()
-                continue
-            if isinstance(queued_item, AudioSegment):
-                audio = queued_item.audio
-                segment_offset = queued_item.start
-            else:
-                # All audio items must be AudioSegment
-                raise TypeError(
-                    f"Expected AudioSegment but got {type(queued_item).__name__}. "
-                    f"All audio items in transcribe_queue must be AudioSegment instances."
-                )
-
-            self.current_audio_offset = segment_offset
-
-            # File mode: wall_clock_start will be None
-            # Livestream mode: wall_clock_start is required
-            if self.mode == 'livestream':
-                if queued_item.wall_clock_start is None:
-                    raise ValueError(
-                        "wall_clock_start is required for AudioSegment in livestream mode. "
-                        "All input sources must provide wall_clock_timestamp."
-                    )
-                self.ts_transcribe_start = queued_item.wall_clock_start
-            else:
-                # File mode doesn't use wall_clock_start
-                self.ts_transcribe_start = None
-
-            self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
-            segment_duration_seconds = None
-            if isinstance(queued_item, AudioSegment):
-                segment_duration_seconds = queued_item.duration_seconds
-            if segment_duration_seconds is None and audio is not None:
-                segment_duration_seconds = len(audio) / TARGET_SAMPLE_RATE
-            if (
-                    self.queue_backlog_limiter is not None
-                    and segment_duration_seconds is not None
-                    and segment_duration_seconds > 0
-            ):
-                self.queue_backlog_limiter.consume(segment_duration_seconds)
 
     def _handle_vad_segment(self, segment: AudioSegment) -> None:
         """Callback from SpeechDetector when speech segment completes."""
