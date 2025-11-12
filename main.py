@@ -43,7 +43,7 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                   transcript_persistence_callback=None,model='large-v3-turbo',segment_callback=None,
                   n_threads=1, stop_event=None,
                   queue_backlog_limiter: Optional[QueueBacklogLimiter] = None,
-                  mode='livestream'):
+                  mode='livestream', backend='whisper_cpp'):
     print("process_queue")
     if save_audio and audio_segment_callback is None:
         audio_segment_callback = create_audio_file_saver()
@@ -59,6 +59,7 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                      n_threads=n_threads,
                      stop_event=stop_event,
                      queue_backlog_limiter=queue_backlog_limiter,
+                     backend=backend,
                      ).process_input(TARGET_SAMPLE_RATE)
 
 def process_mic(
@@ -69,6 +70,7 @@ def process_mic(
         n_threads: int = 1,
         show_name: str = "microphone",
         transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
+        backend: str = 'whisper_cpp',
 ):
     if max_queue_seconds is None:
         limiter = create_default_queue_limiter(show_name)
@@ -83,6 +85,7 @@ def process_mic(
         n_threads=n_threads,
         show_name=show_name,
         transcript_persistence_callback=transcript_persistence_callback,
+        backend=backend,
     ).record(language=language)
 
 
@@ -106,6 +109,7 @@ if __name__ == '__main__':
     argparse.add_argument('--n-threads', type=int, required=False, default=None, help='Number of threads for whisper model (default: 1 or from config file)')
     # https://absadiki.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
     argparse.add_argument('--model', type=str, required=False, default=None, help='Whisper model name (default: large-v3-turbo or from config file)')
+    argparse.add_argument('--backend', type=str, choices=['whisper_cpp', 'faster_whisper'], default='whisper_cpp', help='Transcription backend (default: whisper_cpp)')
     # Web server options
     argparse.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
     argparse.add_argument('--port', type=int, required=False, default=5002, help='Port to bind web server to (default: 5002)')
@@ -143,6 +147,7 @@ if __name__ == '__main__':
                     'n_threads': args.n_threads if args.n_threads is not None else 1,
                     'stop_event': stop_event,
                     'mode': 'file',  # File mode: no wall_clock timestamps
+                    'backend': args.backend,
                 })
 
                 # Start the thread
@@ -201,6 +206,7 @@ if __name__ == '__main__':
                             'n_threads': args.n_threads if args.n_threads is not None else 1,
                             'show_name': show_name,
                             'transcript_persistence_callback': transcript_writer,
+                            'backend': args.backend,
                         },
                     )
 
@@ -254,6 +260,7 @@ if __name__ == '__main__':
                         'n_threads': args.n_threads if args.n_threads is not None else int(data.get('n_threads', 1)),
                         'stop_event': stop_event,
                         'queue_backlog_limiter': queue_limiter,
+                        'backend': args.backend if args.backend != 'whisper_cpp' else data.get('backend', 'whisper_cpp'),
                     })
 
                     # Start the thread
