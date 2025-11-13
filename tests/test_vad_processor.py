@@ -110,7 +110,7 @@ class TestSpeechDetector:
         return np.full(detector._window_size_samples, value, dtype=np.float32)
 
     def _create_non_speech_window(self, detector):
-        """Create a low-level non-speech window to avoid actual silence."""
+        """Create a low-level non-speech window to avoid true zero samples."""
         return self._create_audio_window(detector, value=NON_SPEECH_LEVEL)
 
     def test_initialization(self, detector):
@@ -121,7 +121,7 @@ class TestSpeechDetector:
         assert detector.speech_threshold == 0.5
         assert detector.is_in_speech is False
         assert detector.current_segment_duration == 0.0
-        assert detector.pending_silence_duration == 0.0
+        assert detector.pending_non_speech_duration == 0.0
 
     def test_process_window_wrong_size(self, detector):
         """Test that wrong window size raises ValueError."""
@@ -134,7 +134,7 @@ class TestSpeechDetector:
         """Test processing a single non-speech window."""
         detector.on_segment_complete = mock_segment_callback
 
-        # Create low-level non-speech (avoids true silence)
+        # Create low-level non-speech (avoids true zero-signal gaps)
         audio = self._create_non_speech_window(detector)
         has_speech = detector.process_window(audio, 0.0, 1000.0 + 0.0)
 
@@ -169,7 +169,7 @@ class TestSpeechDetector:
         # Verify all state is cleared
         assert detector.is_in_speech is False
         assert detector.current_segment_duration == 0.0
-        assert detector.pending_silence_duration == 0.0
+        assert detector.pending_non_speech_duration == 0.0
         assert detector._prev_has_speech is False
         assert len(detector._speech_section) == 0
         assert detector._has_speech_begin_timestamp is None
@@ -184,38 +184,38 @@ class TestSpeechDetector:
 
         assert len(mock_segment_callback.segments) == 0
 
-    def test_consume_silence(self, detector):
-        """Test consume_silence returns and clears pending silence."""
-        # Manually set pending silence
-        detector._pending_silence_seconds = 0.5
+    def test_consume_non_speech(self, detector):
+        """Test consume_non_speech returns and clears pending non-speech."""
+        # Manually set pending non-speech
+        detector._pending_non_speech_seconds = 0.5
 
-        consumed = detector.consume_silence()
+        consumed = detector.consume_non_speech()
 
         assert consumed == 0.5
-        assert detector.pending_silence_duration == 0.0
+        assert detector.pending_non_speech_duration == 0.0
 
-    def test_consume_silence_when_zero(self, detector):
-        """Test consume_silence when there's no pending silence."""
-        consumed = detector.consume_silence()
+    def test_consume_non_speech_when_zero(self, detector):
+        """Test consume_non_speech when there's no pending non-speech."""
+        consumed = detector.consume_non_speech()
 
         assert consumed == 0.0
-        assert detector.pending_silence_duration == 0.0
+        assert detector.pending_non_speech_duration == 0.0
 
     def test_properties(self, detector):
         """Test property accessors."""
         # Initial state
         assert detector.is_in_speech is False
         assert detector.current_segment_duration == 0.0
-        assert detector.pending_silence_duration == 0.0
+        assert detector.pending_non_speech_duration == 0.0
 
         # Simulate some state
         detector._prev_has_speech = True
         detector._speech_section = [0.1] * 16000  # 1 second of audio
-        detector._pending_silence_seconds = 0.25
+        detector._pending_non_speech_seconds = 0.25
 
         assert detector.is_in_speech is True
         assert detector.current_segment_duration == 1.0
-        assert detector.pending_silence_duration == 0.25
+        assert detector.pending_non_speech_duration == 0.25
 
     def test_custom_parameters(self):
         """Test SpeechDetector with custom parameters."""
@@ -300,8 +300,8 @@ class TestSpeechDetector:
 class TestSpeechDetectorIntegration:
     """Integration tests for SpeechDetector with realistic scenarios."""
 
-    def test_short_silence_periods(self):
-        """Test that short silence periods don't break speech segments."""
+    def test_short_non_speech_periods(self):
+        """Test that short non-speech periods don't break speech segments."""
         segments = []
 
         def callback(segment):
@@ -362,7 +362,7 @@ class TestMinDurationEnforcement:
     """Test minimum speech duration hysteresis enforcement."""
 
     def test_min_duration_prevents_early_cutoff(self):
-        """Test that speech below min duration continues even if VAD detects silence."""
+        """Test that speech below min duration continues even if VAD detects non-speech."""
         segments = []
         detector = SpeechDetector(
             sample_rate=16000,
@@ -497,7 +497,7 @@ class TestLookBackBuffer:
     """Test look-back buffer (prev_slice) inclusion at speech start."""
 
     def test_prev_slice_included_at_speech_start(self):
-        """Test that previous silence window is included when speech starts."""
+        """Test that the previous non-speech window is included when speech starts."""
         segments = []
         detector = SpeechDetector(
             sample_rate=16000,
@@ -508,14 +508,14 @@ class TestLookBackBuffer:
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             # Create distinguishable windows
-            silence_window = np.ones(512, dtype=np.float32) * 0.1
+            non_speech_window = np.ones(512, dtype=np.float32) * 0.1
             speech_window = np.ones(512, dtype=np.float32) * 0.9
 
-            # Window 1: silence (should be saved as prev_slice)
+            # Window 1: non-speech (should be saved as prev_slice)
             mock_vad.return_value = False
-            detector.process_window(silence_window, 0.0, 1000.0 + 0.0)
+            detector.process_window(non_speech_window, 0.0, 1000.0 + 0.0)
             assert detector._prev_slice is not None
-            assert np.array_equal(detector._prev_slice, silence_window)
+            assert np.array_equal(detector._prev_slice, non_speech_window)
 
             # Window 2: speech starts (should include prev_slice)
             mock_vad.return_value = True
@@ -524,14 +524,14 @@ class TestLookBackBuffer:
             # Speech section should have prev_slice + current
             assert len(detector._speech_section) == 1024  # 512 + 512
 
-            # Verify first part is the silence window
+            # Verify first part is the non-speech window
             assert detector._speech_section[0] == pytest.approx(0.1, abs=0.01)
             # Verify second part is the speech window
             assert detector._speech_section[512] == pytest.approx(0.9, abs=0.01)
 
             # End speech
             mock_vad.return_value = False
-            detector.process_window(silence_window, 0.064, 1000.0 + 0.064)
+            detector.process_window(non_speech_window, 0.064, 1000.0 + 0.064)
 
             # Verify segment includes look-back buffer
             assert len(segments) == 1
@@ -565,8 +565,8 @@ class TestLookBackBuffer:
             assert len(segments) == 1
             assert len(segments[0].audio) == 1536  # 3 speech windows
 
-    def test_multiple_silence_windows_only_last_included(self):
-        """Test that only the immediately preceding silence window is included."""
+    def test_multiple_non_speech_windows_only_last_included(self):
+        """Test that only the immediately preceding non-speech window is included."""
         segments = []
         detector = SpeechDetector(
             sample_rate=16000,
@@ -576,25 +576,25 @@ class TestLookBackBuffer:
         )
 
         with patch.object(detector, '_detect_speech') as mock_vad:
-            silence1 = np.ones(512, dtype=np.float32) * 0.1
-            silence2 = np.ones(512, dtype=np.float32) * 0.2
-            silence3 = np.ones(512, dtype=np.float32) * 0.3
+            non_speech1 = np.ones(512, dtype=np.float32) * 0.1
+            non_speech2 = np.ones(512, dtype=np.float32) * 0.2
+            non_speech3 = np.ones(512, dtype=np.float32) * 0.3
             speech = np.ones(512, dtype=np.float32) * 0.9
 
-            # Three silence windows
+            # Three non-speech windows
             mock_vad.return_value = False
-            detector.process_window(silence1, 0.0, 1000.0 + 0.0)
-            detector.process_window(silence2, 0.032, 1000.0 + 0.032)
-            detector.process_window(silence3, 0.064, 1000.0 + 0.064)
+            detector.process_window(non_speech1, 0.0, 1000.0 + 0.0)
+            detector.process_window(non_speech2, 0.032, 1000.0 + 0.032)
+            detector.process_window(non_speech3, 0.064, 1000.0 + 0.064)
 
-            # Only silence3 should be in prev_slice
+            # Only non_speech3 should be in prev_slice
             assert detector._prev_slice[0] == pytest.approx(0.3, abs=0.01)
 
             # Speech starts
             mock_vad.return_value = True
             detector.process_window(speech, 0.096, 1000.0 + 0.096)
 
-            # First window in speech_section should be silence3
+            # First window in speech_section should be non_speech3
             assert detector._speech_section[0] == pytest.approx(0.3, abs=0.01)
             assert detector._speech_section[512] == pytest.approx(0.9, abs=0.01)
 
@@ -806,23 +806,23 @@ class TestEdgeCasesAndBoundaries:
             expected_duration = 1536 / 16000
             assert segments[0].duration_seconds == pytest.approx(expected_duration, abs=0.0001)
 
-    def test_pending_silence_tracking(self):
-        """Test that pending silence is tracked correctly for backlog management."""
+    def test_pending_non_speech_tracking(self):
+        """Test that pending non-speech is tracked correctly for backlog management."""
         detector = SpeechDetector(sample_rate=16000)
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             window = make_non_speech_window()
 
-            # Non-speech should track pending silence
+            # Non-speech should track pending duration
             mock_vad.return_value = False
             detector.process_window(window, 0.0, 1000.0 + 0.0)
 
-            assert detector.pending_silence_duration > 0
+            assert detector.pending_non_speech_duration > 0
 
-            # Consuming silence should clear it
-            consumed = detector.consume_silence()
+            # Consuming non-speech should clear it
+            consumed = detector.consume_non_speech()
             assert consumed > 0
-            assert detector.pending_silence_duration == 0
+            assert detector.pending_non_speech_duration == 0
 
     def test_min_and_max_interaction_handles_flapping_vad(self):
         """Test that min/max enforcement handles VAD outputs that oscillate."""
@@ -985,7 +985,7 @@ class TestMixedBoundarySegments:
             run(speech2, True)
             run(speech2, True)
 
-        # Flush to emit the second segment without needing trailing silence.
+        # Flush to emit the second segment without needing trailing non-speech.
         detector.flush()
 
         assert len(segments) == 2

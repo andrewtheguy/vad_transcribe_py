@@ -60,7 +60,7 @@ class SpeechDetector:
     - Enforces minimum segment duration to avoid false positives
     - Enforces maximum segment duration to prevent unbounded segments
     - Uses look-back buffer to capture speech onset
-    - Tracks silence for backlog management
+    - Tracks non-speech for backlog management
 
     Attributes:
         sample_rate: Audio sample rate (default: 16000 Hz)
@@ -103,7 +103,7 @@ class SpeechDetector:
         self._has_speech_begin_timestamp: Optional[float] = None
         self._has_speech_begin_wall_clock: Optional[float] = None
         self._prev_slice: Optional[npt.NDArray[np.float32]] = None
-        self._pending_silence_seconds = 0.0
+        self._pending_non_speech_seconds = 0.0
 
         # Window configuration
         self._window_size_samples = get_window_size_samples(self.sample_rate)
@@ -143,7 +143,7 @@ class SpeechDetector:
                 self._handle_speech_start(audio_window, timestamp, wall_clock_timestamp)
             else:
                 # Still no speech
-                self._handle_silence(audio_window)
+                self._handle_non_speech(audio_window)
         else:
             # Apply hysteresis constraints
             if seconds > self.max_speech_seconds:
@@ -197,15 +197,15 @@ class SpeechDetector:
         if self._prev_slice is not None:
             self._speech_section.extend(self._prev_slice)
             self._prev_slice = None
-            self._pending_silence_seconds = 0.0
+            self._pending_non_speech_seconds = 0.0
 
         # Add current window
         self._speech_section.extend(audio_window)
 
-    def _handle_silence(self, audio_window: npt.NDArray[np.float32]) -> None:
-        """Handle continued silence."""
-        # Track pending silence for backlog management
-        self._pending_silence_seconds = self._window_seconds
+    def _handle_non_speech(self, audio_window: npt.NDArray[np.float32]) -> None:
+        """Handle continued non-speech windows."""
+        # Track pending non-speech duration for backlog management
+        self._pending_non_speech_seconds = self._window_seconds
 
         # Save as look-back buffer
         self._prev_slice = audio_window
@@ -273,12 +273,12 @@ class SpeechDetector:
         self._has_speech_begin_timestamp = None
         self._has_speech_begin_wall_clock = None
         self._prev_slice = None
-        self._pending_silence_seconds = 0.0
+        self._pending_non_speech_seconds = 0.0
         self.vad_model.reset_states()
 
     @property
     def is_in_speech(self) -> bool:
-        """Current speech/silence state."""
+        """Current speech/non-speech state."""
         return self._prev_has_speech
 
     @property
@@ -287,18 +287,18 @@ class SpeechDetector:
         return len(self._speech_section) / self.sample_rate
 
     @property
-    def pending_silence_duration(self) -> float:
-        """Duration of accumulated silence (for backlog tracking)."""
-        return self._pending_silence_seconds
+    def pending_non_speech_duration(self) -> float:
+        """Duration of accumulated non-speech (for backlog tracking)."""
+        return self._pending_non_speech_seconds
 
-    def consume_silence(self) -> float:
+    def consume_non_speech(self) -> float:
         """
-        Return and clear pending silence duration.
+        Return and clear pending non-speech duration.
         Used by AudioTranscriber for backlog management.
 
         Returns:
-            Pending silence duration in seconds
+            Pending non-speech duration in seconds
         """
-        silence_duration = self._pending_silence_seconds
-        self._pending_silence_seconds = 0.0
-        return silence_duration
+        non_speech_duration = self._pending_non_speech_seconds
+        self._pending_non_speech_seconds = 0.0
+        return non_speech_duration

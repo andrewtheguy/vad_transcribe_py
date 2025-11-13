@@ -15,7 +15,7 @@ class TrackingSpeechDetector:
         self.max_speech_seconds = max_speech_seconds
         self.on_segment_complete = on_segment_complete
         self.calls: list[tuple[float, float | None, int]] = []
-        self.pending_silence_duration = 0.0
+        self.pending_non_speech_duration = 0.0
         self.is_in_speech = False
         self._script: list[tuple[bool, bool] | tuple[bool, bool, bool]] = []
         self._script_index = 0
@@ -34,9 +34,9 @@ class TrackingSpeechDetector:
             self._script_index += 1
             self.is_in_speech = in_speech
             if not has_speech and not in_speech:
-                self.pending_silence_duration = len(audio_window) / self.sample_rate
+                self.pending_non_speech_duration = len(audio_window) / self.sample_rate
             else:
-                self.pending_silence_duration = 0.0
+                self.pending_non_speech_duration = 0.0
 
             # Trigger segment completion if requested
             if trigger_complete and self.on_segment_complete:
@@ -57,14 +57,14 @@ class TrackingSpeechDetector:
     def flush(self):
         pass
 
-    def consume_silence(self) -> float:
+    def consume_non_speech(self) -> float:
         return 0.0
 
     def reset(self) -> None:
         """Reset the detector state (for context resets)."""
         self._script_index = 0
         self.is_in_speech = False
-        self.pending_silence_duration = 0.0
+        self.pending_non_speech_duration = 0.0
         self._accumulated_audio = []
 
     def set_script(self, script: list[tuple[bool, bool] | tuple[bool, bool, bool]]) -> None:
@@ -169,7 +169,7 @@ def test_drop_notice_in_audio_input_queue(monkeypatch, make_transcriber, recorde
     audio_queue.put(None)
 
     transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    # Sequence: speech → speech → silence (triggers segment_complete)
+    # Sequence: speech → speech → non-speech (triggers segment_complete)
     transcriber.speech_detector.set_script([
         (True, True),
         (False, True),
@@ -501,8 +501,8 @@ def test_initialization_with_all_params(make_transcriber):
     assert transcriber.wall_clock_reference == 1234567890.0
 
 
-def test_handle_vad_segment_consumes_silence_from_backlog(make_transcriber):
-    """Test that silence is consumed from backlog limiter when VAD segment completes."""
+def test_handle_vad_segment_consumes_non_speech_from_backlog(make_transcriber):
+    """Test that non-speech is consumed from backlog limiter when VAD segment completes."""
     limiter = audio_transcriber.QueueBacklogLimiter(
         max_seconds=10.0,
         source_label="test",
@@ -513,15 +513,15 @@ def test_handle_vad_segment_consumes_silence_from_backlog(make_transcriber):
         queue_backlog_limiter=limiter,
     )
 
-    # Set up speech detector to return some silence
-    transcriber.speech_detector.pending_silence_duration = 0.5
+    # Set up speech detector to return some non-speech
+    transcriber.speech_detector.pending_non_speech_duration = 0.5
 
-    def mock_consume_silence():
-        silence = transcriber.speech_detector.pending_silence_duration
-        transcriber.speech_detector.pending_silence_duration = 0.0
-        return silence
+    def mock_consume_non_speech():
+        non_speech = transcriber.speech_detector.pending_non_speech_duration
+        transcriber.speech_detector.pending_non_speech_duration = 0.0
+        return non_speech
 
-    transcriber.speech_detector.consume_silence = mock_consume_silence
+    transcriber.speech_detector.consume_non_speech = mock_consume_non_speech
 
     initial_backlog = limiter.current_seconds
     limiter.try_add(1.0)  # Add 1 second to backlog
@@ -531,7 +531,7 @@ def test_handle_vad_segment_consumes_silence_from_backlog(make_transcriber):
     segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=0.1)
     transcriber._handle_vad_segment(segment)
 
-    # Verify silence was consumed
+    # Verify non-speech was consumed
     assert limiter.current_seconds < limiter.current_seconds + 1.0
 
 

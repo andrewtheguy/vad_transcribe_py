@@ -17,7 +17,7 @@ class DummySpeechDetector:
     ) -> None:
         self.sample_rate = sample_rate
         self.on_segment_complete = on_segment_complete
-        self.pending_silence_duration = 0.0
+        self.pending_non_speech_duration = 0.0
         self.is_in_speech = False
 
     def process_window(self, *_, **__):
@@ -26,7 +26,7 @@ class DummySpeechDetector:
     def flush(self) -> None:
         pass
 
-    def consume_silence(self) -> float:
+    def consume_non_speech(self) -> float:
         return 0.0
 
     def reset(self) -> None:

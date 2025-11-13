@@ -731,11 +731,11 @@ class AudioTranscriber:
         # Queue the segment for transcription
         self.transcribe_queue.put(segment)
 
-        # Consume silence from backlog limiter
+        # Consume non-speech gaps from backlog limiter
         if self.queue_backlog_limiter:
-            silence = self.speech_detector.consume_silence()
-            if silence > 0:
-                self.queue_backlog_limiter.consume(silence)
+            non_speech = self.speech_detector.consume_non_speech()
+            if non_speech > 0:
+                self.queue_backlog_limiter.consume(non_speech)
 
     def _handle_drop_notice(self, timestamp: float, message: str = "(transcript temporarily dropped)") -> None:
         """
@@ -1018,13 +1018,13 @@ class AudioTranscriber:
                 ts_relative = ts_wall_clock - (segment.wall_clock_start - segment.start) if segment.wall_clock_start and segment.start is not None else 0.0
                 has_speech = self.speech_detector.process_window(data_slice, ts_relative, ts_wall_clock)
 
-                # Handle backlog for silence (when not in speech and no accumulated segment)
+                # Handle backlog for non-speech (when not in speech and no accumulated segment)
                 if not has_speech and not self.speech_detector.is_in_speech:
-                    # Consume pending silence from backlog
+                    # Consume pending non-speech from backlog
                     if self.queue_backlog_limiter is not None:
-                        pending_silence = self.speech_detector.pending_silence_duration
-                        if pending_silence > 0:
-                            self.queue_backlog_limiter.consume(pending_silence)
+                        pending_non_speech = self.speech_detector.pending_non_speech_duration
+                        if pending_non_speech > 0:
+                            self.queue_backlog_limiter.consume(pending_non_speech)
 
                 # Advance wall clock timestamp
                 if ts_wall_clock is not None:
@@ -1036,11 +1036,11 @@ class AudioTranscriber:
         if not stop_requested:
             self.speech_detector.flush()
 
-        # Consume any remaining silence
+        # Consume any remaining non-speech backlog
         if self.queue_backlog_limiter:
-            remaining_silence = self.speech_detector.consume_silence()
-            if remaining_silence > 0:
-                self.queue_backlog_limiter.consume(remaining_silence)
+            remaining_non_speech = self.speech_detector.consume_non_speech()
+            if remaining_non_speech > 0:
+                self.queue_backlog_limiter.consume(remaining_non_speech)
 
         if stop_requested:
             # Drop any queued-but-unprocessed transcribe work so shutdown is fast
