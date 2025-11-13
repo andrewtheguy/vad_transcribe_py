@@ -113,7 +113,7 @@ class SpeechDetector:
         self._window_size_samples = get_window_size_samples(self.sample_rate)
         self._window_seconds = self._window_size_samples / self.sample_rate
         self.look_back_seconds = (
-            self._window_seconds if look_back_seconds is None else max(0.0, look_back_seconds)
+            0.5 if look_back_seconds is None else max(0.0, look_back_seconds)
         )
 
     def process_window(

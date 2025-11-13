@@ -122,7 +122,7 @@ class TestSpeechDetector:
         assert detector.is_in_speech is False
         assert detector.current_segment_duration == 0.0
         assert detector.pending_non_speech_duration == 0.0
-        assert detector.look_back_seconds == pytest.approx(detector._window_seconds)
+        assert detector.look_back_seconds == pytest.approx(0.5)
 
     def test_process_window_wrong_size(self, detector):
         """Test that wrong window size raises ValueError."""
@@ -571,10 +571,12 @@ class TestLookBackBuffer:
     def test_multiple_non_speech_windows_only_last_included(self):
         """Test that only the immediately preceding non-speech window is included."""
         segments = []
+        window_seconds = get_window_size_samples(16000) / 16000
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=10.0,
+            look_back_seconds=window_seconds,
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -935,6 +937,7 @@ class TestMixedBoundarySegments:
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
             max_speech_seconds=window_seconds * 1.5,
+            look_back_seconds=window_seconds,
             on_segment_complete=lambda s: segments.append(s),
         )
 
