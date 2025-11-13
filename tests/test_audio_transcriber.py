@@ -9,8 +9,10 @@ from whisper_transcribe_py.vad_processor import AudioSegment
 
 
 class TrackingSpeechDetector:
-    def __init__(self, sample_rate: int, on_segment_complete):
+    def __init__(self, sample_rate: int, min_speech_seconds: float = 3.0, max_speech_seconds: float = 60.0, on_segment_complete=None):
         self.sample_rate = sample_rate
+        self.min_speech_seconds = min_speech_seconds
+        self.max_speech_seconds = max_speech_seconds
         self.on_segment_complete = on_segment_complete
         self.calls: list[tuple[float, float | None, int]] = []
         self.pending_silence_duration = 0.0
