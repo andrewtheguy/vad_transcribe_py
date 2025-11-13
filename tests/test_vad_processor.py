@@ -122,6 +122,7 @@ class TestSpeechDetector:
         assert detector.is_in_speech is False
         assert detector.current_segment_duration == 0.0
         assert detector.pending_non_speech_duration == 0.0
+        assert detector.look_back_seconds == pytest.approx(detector._window_seconds)
 
     def test_process_window_wrong_size(self, detector):
         """Test that wrong window size raises ValueError."""
@@ -174,7 +175,7 @@ class TestSpeechDetector:
         assert len(detector._speech_section) == 0
         assert detector._has_speech_begin_timestamp is None
         assert detector._has_speech_begin_wall_clock is None
-        assert detector._prev_slice is None
+        assert len(detector._look_back_buffer) == 0
 
     def test_flush_with_no_speech(self, detector, mock_segment_callback):
         """Test flush with no accumulated speech does nothing."""
@@ -224,12 +225,14 @@ class TestSpeechDetector:
             min_speech_seconds=1.0,
             max_speech_seconds=30.0,
             speech_threshold=0.7,
+            look_back_seconds=0.5,
         )
 
         assert detector.sample_rate == 8000
         assert detector.min_speech_seconds == 1.0
         assert detector.max_speech_seconds == 30.0
         assert detector.speech_threshold == 0.7
+        assert detector.look_back_seconds == 0.5
         assert detector._window_size_samples == 256  # 8kHz uses 256 samples
 
     def test_wall_clock_timestamp_propagation(self, mock_segment_callback):
@@ -514,13 +517,13 @@ class TestLookBackBuffer:
             # Window 1: non-speech (should be saved as prev_slice)
             mock_vad.return_value = False
             detector.process_window(non_speech_window, 0.0, 1000.0 + 0.0)
-            assert detector._prev_slice is not None
-            assert np.array_equal(detector._prev_slice, non_speech_window)
+            assert len(detector._look_back_buffer) == 1
+            assert np.array_equal(detector._look_back_buffer[0], non_speech_window)
 
             # Window 2: speech starts (should include prev_slice)
             mock_vad.return_value = True
             detector.process_window(speech_window, 0.032, 1000.0 + 0.032)
-            assert detector._prev_slice is None  # Should be consumed
+            assert len(detector._look_back_buffer) == 0  # Should be consumed
             # Speech section should have prev_slice + current
             assert len(detector._speech_section) == 1024  # 512 + 512
 
@@ -587,8 +590,9 @@ class TestLookBackBuffer:
             detector.process_window(non_speech2, 0.032, 1000.0 + 0.032)
             detector.process_window(non_speech3, 0.064, 1000.0 + 0.064)
 
-            # Only non_speech3 should be in prev_slice
-            assert detector._prev_slice[0] == pytest.approx(0.3, abs=0.01)
+            # Only non_speech3 should remain in look-back buffer
+            assert len(detector._look_back_buffer) == 1
+            assert detector._look_back_buffer[0][0] == pytest.approx(0.3, abs=0.01)
 
             # Speech starts
             mock_vad.return_value = True
@@ -597,6 +601,56 @@ class TestLookBackBuffer:
             # First window in speech_section should be non_speech3
             assert detector._speech_section[0] == pytest.approx(0.3, abs=0.01)
             assert detector._speech_section[512] == pytest.approx(0.9, abs=0.01)
+
+    def test_configurable_look_back_buffer_accumulates_multiple_windows(self):
+        """Test that extended look-back buffer prepends the configured duration."""
+        segments = []
+        look_back_seconds = 0.5
+        detector = SpeechDetector(
+            sample_rate=16000,
+            min_speech_seconds=0.05,
+            max_speech_seconds=10.0,
+            look_back_seconds=look_back_seconds,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        window_size = detector._window_size_samples
+        window_seconds = detector._window_seconds
+        total_windows = 20
+        non_speech_windows = [
+            np.ones(window_size, dtype=np.float32) * (0.01 + i * 0.002) for i in range(total_windows)
+        ]
+        speech_window = np.ones(window_size, dtype=np.float32) * 0.9
+
+        with patch.object(detector, '_detect_speech') as mock_vad:
+            ts = 0.0
+
+            for win in non_speech_windows:
+                mock_vad.return_value = False
+                detector.process_window(win, ts, 1000.0 + ts)
+                ts += window_seconds
+
+            mock_vad.return_value = True
+            detector.process_window(speech_window, ts, 1000.0 + ts)
+
+        expected_windows = min(
+            len(non_speech_windows),
+            int((detector.look_back_seconds + 1e-9) / window_seconds),
+        )
+        assert len(detector._look_back_buffer) == 0  # Consumed at speech start
+        assert len(detector._speech_section) == window_size * (expected_windows + 1)
+
+        if expected_windows > 0:
+            expected_prefix = np.concatenate(non_speech_windows[-expected_windows:])
+            assert np.allclose(
+                detector._speech_section[: expected_windows * window_size],
+                expected_prefix,
+            )
+
+        assert np.allclose(
+            detector._speech_section[-window_size:],
+            speech_window,
+        )
 
 
 class TestFinalWindowInclusion:

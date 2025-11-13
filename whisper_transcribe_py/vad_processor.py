@@ -5,7 +5,8 @@ This module provides a SpeechDetector class that encapsulates the Silero VAD mod
 and state machine for detecting speech segments in audio streams.
 """
 
-from typing import Callable, Optional
+from collections import deque
+from typing import Callable, Optional, Deque
 
 import numpy as np
 import numpy.typing as npt
@@ -76,6 +77,7 @@ class SpeechDetector:
         min_speech_seconds: float = 3.0,
         max_speech_seconds: float = 60.0,
         speech_threshold: float = 0.5,
+        look_back_seconds: Optional[float] = None,
         on_segment_complete: Optional[Callable[[AudioSegment], None]] = None,
     ):
         """
@@ -86,6 +88,7 @@ class SpeechDetector:
             min_speech_seconds: Minimum duration to consider as valid speech
             max_speech_seconds: Maximum duration before forcing segment split
             speech_threshold: Probability threshold for speech detection
+            look_back_seconds: Amount of non-speech audio to prepend when speech starts
             on_segment_complete: Callback invoked when speech segment completes
         """
         self.sample_rate = sample_rate
@@ -102,12 +105,16 @@ class SpeechDetector:
         self._speech_section: list = []
         self._has_speech_begin_timestamp: Optional[float] = None
         self._has_speech_begin_wall_clock: Optional[float] = None
-        self._prev_slice: Optional[npt.NDArray[np.float32]] = None
+        self._look_back_buffer: Deque[npt.NDArray[np.float32]] = deque()
+        self._look_back_buffer_duration = 0.0
         self._pending_non_speech_seconds = 0.0
 
         # Window configuration
         self._window_size_samples = get_window_size_samples(self.sample_rate)
         self._window_seconds = self._window_size_samples / self.sample_rate
+        self.look_back_seconds = (
+            self._window_seconds if look_back_seconds is None else max(0.0, look_back_seconds)
+        )
 
     def process_window(
         self,
@@ -194,9 +201,11 @@ class SpeechDetector:
         self._has_speech_begin_wall_clock = wall_clock_timestamp
 
         # Add look-back buffer if available
-        if self._prev_slice is not None:
-            self._speech_section.extend(self._prev_slice)
-            self._prev_slice = None
+        if self._look_back_buffer:
+            for prev_window in self._look_back_buffer:
+                self._speech_section.extend(prev_window)
+            self._look_back_buffer.clear()
+            self._look_back_buffer_duration = 0.0
             self._pending_non_speech_seconds = 0.0
 
         # Add current window
@@ -207,8 +216,20 @@ class SpeechDetector:
         # Track pending non-speech duration for backlog management
         self._pending_non_speech_seconds = self._window_seconds
 
-        # Save as look-back buffer
-        self._prev_slice = audio_window
+        if self.look_back_seconds <= 0.0:
+            self._look_back_buffer.clear()
+            self._look_back_buffer_duration = 0.0
+            return
+
+        # Save into the rolling look-back buffer
+        window_copy = np.copy(audio_window)
+        self._look_back_buffer.append(window_copy)
+        self._look_back_buffer_duration += self._window_seconds
+
+        # Trim buffer to configured duration
+        while self._look_back_buffer and self._look_back_buffer_duration - 1e-9 > self.look_back_seconds:
+            self._look_back_buffer.popleft()
+            self._look_back_buffer_duration -= self._window_seconds
 
     def _handle_speech_continue(self, audio_window: npt.NDArray[np.float32]) -> None:
         """Handle continued speech."""
@@ -225,7 +246,8 @@ class SpeechDetector:
         # Reset state (note: _emit_segment() clears _speech_section)
         self._has_speech_begin_timestamp = None
         self._has_speech_begin_wall_clock = None
-        self._prev_slice = None
+        self._look_back_buffer.clear()
+        self._look_back_buffer_duration = 0.0
 
     def _emit_segment(self) -> None:
         """Create AudioSegment and invoke callback."""
@@ -264,7 +286,8 @@ class SpeechDetector:
             # Note: _emit_segment() clears _speech_section
             self._has_speech_begin_timestamp = None
             self._has_speech_begin_wall_clock = None
-            self._prev_slice = None
+            self._look_back_buffer.clear()
+            self._look_back_buffer_duration = 0.0
 
     def reset(self) -> None:
         """Reset all state (for stream restart or testing)."""
@@ -272,7 +295,8 @@ class SpeechDetector:
         self._speech_section = []
         self._has_speech_begin_timestamp = None
         self._has_speech_begin_wall_clock = None
-        self._prev_slice = None
+        self._look_back_buffer.clear()
+        self._look_back_buffer_duration = 0.0
         self._pending_non_speech_seconds = 0.0
         self.vad_model.reset_states()
 
