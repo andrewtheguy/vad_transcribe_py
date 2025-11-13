@@ -1001,6 +1001,74 @@ class TestMixedBoundarySegments:
             np.concatenate([non_speech, speech2, speech2]),
         )
 
+    def test_max_speech_split_preserves_contiguous_audio(self):
+        """
+        Ensure max_speech_seconds splits create contiguous segments without losing samples.
+
+        The stream stays in speech the entire time; the first segment is cut because the
+        max duration is exceeded, and the second segment starts immediately with speech.
+        """
+        segments = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            max_speech_seconds=window_seconds * 1.5,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        def make_window(value: float) -> np.ndarray:
+            return np.full(window_size, value, dtype=np.float32)
+
+        speech_a1 = make_window(0.1)
+        speech_a2 = make_window(0.2)
+        speech_a3 = make_window(0.3)
+        speech_b1 = make_window(0.4)
+        speech_b2 = make_window(0.5)
+
+        with patch.object(detector, '_detect_speech', return_value=True):
+            ts = 0.0
+
+            def run(window: np.ndarray) -> None:
+                nonlocal ts
+                detector.process_window(window, ts, 1000.0 + ts)
+                ts += window_seconds
+
+            # First segment forced to end after exceeding max_speech_seconds.
+            run(speech_a1)
+            run(speech_a2)
+            run(speech_a3)  # This window triggers the forced split.
+
+            # Speech continues immediately in the next window(s).
+            run(speech_b1)
+            run(speech_b2)
+
+        detector.flush()
+
+        assert len(segments) == 2
+
+        first_segment = segments[0]
+        assert len(first_segment.audio) == window_size * 3
+        assert np.allclose(
+            first_segment.audio,
+            np.concatenate([speech_a1, speech_a2, speech_a3]),
+        )
+
+        second_segment = segments[1]
+        assert len(second_segment.audio) == window_size * 2
+        assert np.allclose(
+            second_segment.audio,
+            np.concatenate([speech_b1, speech_b2]),
+        )
+
+        # Combined output should match the original stream with no samples lost.
+        assert np.allclose(
+            np.concatenate([first_segment.audio, second_segment.audio]),
+            np.concatenate([speech_a1, speech_a2, speech_a3, speech_b1, speech_b2]),
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
