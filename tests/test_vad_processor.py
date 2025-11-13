@@ -1126,6 +1126,111 @@ class TestMixedBoundarySegments:
             np.concatenate([speech_a1, speech_a2, speech_a3, speech_b1, speech_b2]),
         )
 
+    def test_default_look_back_gap_under_half_second_keeps_gap(self):
+        """
+        With default 0.5s look-back, a short non-speech gap should prepend to the next segment.
+        """
+        segments: list[AudioSegment] = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            max_speech_seconds=window_seconds * 3,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        speech_window = np.ones(window_size, dtype=np.float32) * 0.8
+        non_speech_window = make_non_speech_window(length=window_size, level=0.02)
+
+        with patch.object(detector, '_detect_speech') as mock_vad:
+            ts = 0.0
+
+            def run(window: np.ndarray, has_speech: bool):
+                nonlocal ts
+                mock_vad.return_value = has_speech
+                detector.process_window(window, ts, 1000.0 + ts)
+                ts += window_seconds
+
+            # First segment: 2 speech windows
+            run(speech_window, True)
+            run(speech_window, True)
+            run(non_speech_window, False)  # ends first segment
+
+            # Short gap: 0.2 seconds (approx 6 windows at 512/16k)
+            for _ in range(6):
+                run(non_speech_window, False)
+
+            # Second segment: resumes speech immediately
+            run(speech_window, True)
+            run(speech_window, True)
+
+        detector.flush()
+        assert len(segments) == 2
+
+        first_segment = segments[0]
+        assert len(first_segment.audio) == window_size * 3
+        assert np.allclose(
+            first_segment.audio,
+            np.concatenate([speech_window, speech_window, non_speech_window]),
+        )
+
+        second_segment = segments[1]
+        assert len(second_segment.audio) == window_size * (2 + 6)
+        assert np.allclose(
+            second_segment.audio,
+            np.concatenate([np.tile(non_speech_window, 6), speech_window, speech_window]),
+        )
+
+    def test_default_look_back_caps_to_half_second(self):
+        """When non-speech exceeds 0.5s, only the most recent 0.5s should prepend."""
+        segments: list[AudioSegment] = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            max_speech_seconds=window_seconds * 3,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        speech_window = np.ones(window_size, dtype=np.float32) * 0.7
+        non_speech_window = make_non_speech_window(length=window_size, level=0.03)
+
+        with patch.object(detector, '_detect_speech') as mock_vad:
+            ts = 0.0
+
+            def run(window: np.ndarray, has_speech: bool):
+                nonlocal ts
+                mock_vad.return_value = has_speech
+                detector.process_window(window, ts, 1000.0 + ts)
+                ts += window_seconds
+
+            # First segment ends with non-speech
+            run(speech_window, True)
+            run(speech_window, True)
+            run(non_speech_window, False)
+
+            # Long gap: 20 windows (~0.64s)
+            for _ in range(20):
+                run(non_speech_window, False)
+
+            # Second segment resumes
+            run(speech_window, True)
+            run(speech_window, True)
+
+        detector.flush()
+        assert len(segments) == 2
+        second_segment = segments[1]
+        max_windows = int((detector.look_back_seconds + 1e-9) / window_seconds)
+        assert len(second_segment.audio) == window_size * (2 + max_windows)
+        assert np.allclose(
+            second_segment.audio[: max_windows * window_size],
+            np.tile(non_speech_window, max_windows),
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
