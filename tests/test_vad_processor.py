@@ -508,7 +508,7 @@ class TestLookBackBuffer:
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             # Create distinguishable windows
-            non_speech_window = np.ones(512, dtype=np.float32) * 0.1
+            non_speech_window = make_non_speech_window(level=0.1)
             speech_window = np.ones(512, dtype=np.float32) * 0.9
 
             # Window 1: non-speech (should be saved as prev_slice)
@@ -576,9 +576,9 @@ class TestLookBackBuffer:
         )
 
         with patch.object(detector, '_detect_speech') as mock_vad:
-            non_speech1 = np.ones(512, dtype=np.float32) * 0.1
-            non_speech2 = np.ones(512, dtype=np.float32) * 0.2
-            non_speech3 = np.ones(512, dtype=np.float32) * 0.3
+            non_speech1 = make_non_speech_window(level=0.1)
+            non_speech2 = make_non_speech_window(level=0.2)
+            non_speech3 = make_non_speech_window(level=0.3)
             speech = np.ones(512, dtype=np.float32) * 0.9
 
             # Three non-speech windows
@@ -614,7 +614,7 @@ class TestFinalWindowInclusion:
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             speech_window = np.ones(512, dtype=np.float32) * 0.9
-            final_window = np.ones(512, dtype=np.float32) * 0.1
+            final_window = make_non_speech_window(level=0.1)
 
             # Two speech windows
             mock_vad.return_value = True
@@ -889,9 +889,9 @@ class TestMixedBoundarySegments:
 
         speech_a1 = make_window(0.1)
         speech_a2 = make_window(0.2)
-        non_speech_end = make_window(0.01)
-        non_speech_buffer1 = make_window(0.02)
-        non_speech_buffer2 = make_window(0.03)
+        non_speech_end = make_non_speech_window(length=window_size, level=0.01)
+        non_speech_buffer1 = make_non_speech_window(length=window_size, level=0.02)
+        non_speech_buffer2 = make_non_speech_window(length=window_size, level=0.03)
         speech_b1 = make_window(0.4)
         speech_b2 = make_window(0.5)
 
@@ -956,7 +956,7 @@ class TestMixedBoundarySegments:
             return np.ones(window_size, dtype=np.float32) * value
 
         speech1 = make_window(0.5)
-        non_speech = make_window(0.01)
+        non_speech = make_non_speech_window(length=window_size, level=0.01)
         speech2 = make_window(0.6)
         original_max = detector.max_speech_seconds
 
