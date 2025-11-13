@@ -11,11 +11,14 @@ from dotenv import load_dotenv
 
 from silero_vad import (load_silero_vad)
 
+import numpy as np
+
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter, \
     TranscriptPersistenceCallback, create_default_queue_limiter
 from whisper_transcribe_py.mic_recorder import MicRecorder
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
+from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_samples
 from file_lock import acquire_lock, LockError
 
 
@@ -37,6 +40,49 @@ class JsonTranscriptWriter:
             os.makedirs(directory, exist_ok=True)
         with open(self.output_path, "w", encoding="utf-8") as f:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
+
+
+def process_vad_only(audio_input_queue, stop_event=None):
+    """
+    Process audio through VAD only, saving detected speech segments without transcription.
+    """
+    audio_segment_callback = create_audio_file_saver()
+
+    def on_segment_complete(segment: AudioSegment):
+        """Called when VAD detects a complete speech segment."""
+        audio_segment_callback(segment.audio, segment.start)
+        print(f"Saved audio segment at {segment.start:.2f}s", file=sys.stderr)
+
+    speech_detector = SpeechDetector(
+        sample_rate=TARGET_SAMPLE_RATE,
+        on_segment_complete=on_segment_complete
+    )
+
+    window_size_samples = get_window_size_samples()
+    buffer = []
+    current_ts = 0  # Track the current timestamp position
+
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            break
+
+        item = audio_input_queue.get()
+        if item is None:
+            # Sentinel value - process any remaining audio
+            break
+
+        buffer.extend(item.audio)
+
+        # Process complete windows
+        while len(buffer) >= window_size_samples:
+            window = np.array(buffer[:window_size_samples], dtype=np.float32)
+            speech_detector.process_window(window, current_ts, wall_clock_timestamp=None)
+            buffer = buffer[window_size_samples:]
+            current_ts += window_size_samples / TARGET_SAMPLE_RATE
+
+    # Flush any remaining speech segment
+    speech_detector.flush()
+    print("VAD processing complete", file=sys.stderr)
 
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
@@ -114,7 +160,7 @@ if __name__ == '__main__':
     argparse.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
     argparse.add_argument('--port', type=int, required=False, default=5002, help='Port to bind web server to (default: 5002)')
     argparse.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
-    argparse.add_argument('--no-transcribe', action='store_true', help='Disable built-in transcription (view-only mode for web server)')
+    argparse.add_argument('--no-transcribe', action='store_true', help='Skip transcription: for file action, only save VAD-detected audio segments; for web server, enable view-only mode')
     argparse.add_argument('--transcribe-api-url', type=str, required=False, help='Alternate transcribe API endpoint URL (for future use)')
     args = argparse.parse_args()
 
@@ -126,29 +172,37 @@ if __name__ == '__main__':
             print(f"File {args.file} does not exist")
             exit(1)
 
-        if not args.output:
+        if not args.no_transcribe and not args.output:
             print("Please provide an --output path for the JSON transcript")
             exit(1)
 
         try:
             with acquire_lock('file'):
-                output_path = args.output
-                transcript_writer = JsonTranscriptWriter(output_path)
-
                 audio_input_queue = queue.Queue()
                 stop_event = threading.Event()
 
-                # Create a new thread
-                thread_transcribe = threading.Thread(target=process_queue, kwargs={
-                    'q': audio_input_queue,
-                    'language': args.lang,
-                    'segment_callback': transcript_writer.add_segment,
-                    'model': args.model if args.model is not None else 'large-v3-turbo',
-                    'n_threads': args.n_threads if args.n_threads is not None else 1,
-                    'stop_event': stop_event,
-                    'mode': 'file',  # File mode: no wall_clock timestamps
-                    'backend': args.backend,
-                })
+                if args.no_transcribe:
+                    # VAD-only mode: just save audio segments without transcription
+                    thread_transcribe = threading.Thread(target=process_vad_only, kwargs={
+                        'audio_input_queue': audio_input_queue,
+                        'stop_event': stop_event,
+                    })
+                    print("VAD-only mode: saving audio segments without transcription", file=sys.stderr)
+                else:
+                    # Normal mode: transcribe and save to JSON
+                    output_path = args.output
+                    transcript_writer = JsonTranscriptWriter(output_path)
+
+                    thread_transcribe = threading.Thread(target=process_queue, kwargs={
+                        'q': audio_input_queue,
+                        'language': args.lang,
+                        'segment_callback': transcript_writer.add_segment,
+                        'model': args.model if args.model is not None else 'large-v3-turbo',
+                        'n_threads': args.n_threads if args.n_threads is not None else 1,
+                        'stop_event': stop_event,
+                        'mode': 'file',  # File mode: no wall_clock timestamps
+                        'backend': args.backend,
+                    })
 
                 # Start the thread
                 thread_transcribe.start()
@@ -181,7 +235,7 @@ if __name__ == '__main__':
                                 print(f"Progress: {chunks_read} chunks, {total_bytes} bytes, {ts:.2f} seconds", file=sys.stderr)
                 except KeyboardInterrupt:
                     interrupted = True
-                    print("\nCtrl+C received, stopping transcription...", file=sys.stderr)
+                    print("\nCtrl+C received, stopping processing...", file=sys.stderr)
                 finally:
                     # Only set stop_event if we were interrupted
                     # For normal completion, just send sentinel and wait for thread
@@ -192,11 +246,14 @@ if __name__ == '__main__':
                         audio_input_queue.put(None)
                     thread_transcribe.join()
 
-                transcript_writer.flush()
-                if interrupted:
-                    print(f"Transcript written to {output_path} (partial)")
+                if not args.no_transcribe:
+                    transcript_writer.flush()
+                    if interrupted:
+                        print(f"Transcript written to {output_path} (partial)")
+                    else:
+                        print(f"Transcript written to {output_path}")
                 else:
-                    print(f"Transcript written to {output_path}")
+                    print("Audio segments saved to ./tmp/speech/")
         except LockError as e:
             print(str(e), file=sys.stderr)
             exit(1)
