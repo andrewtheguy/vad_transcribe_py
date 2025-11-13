@@ -934,7 +934,13 @@ class TestMixedBoundarySegments:
         assert np.allclose(second_segment.audio[-window_size:], speech_b2)
 
     def test_single_non_speech_between_segments_not_duplicated(self):
-        """Ensure single non-speech window between segments isn't double-counted."""
+        """
+        Ensure exactly one non-speech window between audio segments isn't counted twice.
+
+        This simulates a stream that emits one segment, has exactly one window's worth
+        of low-energy audio, and immediately emits the next segment. The gap window
+        should appear once at the start of the second segment.
+        """
         segments = []
         sample_rate = 16000
         window_size = get_window_size_samples(sample_rate)
@@ -952,6 +958,7 @@ class TestMixedBoundarySegments:
         speech1 = make_window(0.5)
         non_speech = make_window(0.01)
         speech2 = make_window(0.6)
+        original_max = detector.max_speech_seconds
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             ts = 0.0
@@ -962,34 +969,37 @@ class TestMixedBoundarySegments:
                 detector.process_window(window, ts, 1000.0 + ts)
                 ts += window_seconds
 
-            # First segment: speech + speech + non-speech
+            # Force the first segment to end due to max duration with only speech windows.
+            detector.max_speech_seconds = window_seconds * 1.5
             run(speech1, True)
             run(speech1, True)
+            run(speech1, True)  # Forced end after exceeding max duration
+
+            # Restore max duration for the rest of the stream.
+            detector.max_speech_seconds = original_max
+
+            # Exactly one non-speech window between segments.
             run(non_speech, False)
 
-            # Non-speech separating segments (should be prev_slice only once)
-            run(non_speech, False)
-
-            # Second segment restarts immediately with speech
+            # Second segment resumes immediately after the single gap.
             run(speech2, True)
             run(speech2, True)
 
-            # End second segment
-            run(non_speech, False)
+        # Flush to emit the second segment without needing trailing silence.
+        detector.flush()
 
         assert len(segments) == 2
 
         first_segment = segments[0]
-        assert np.allclose(first_segment.audio[-window_size:], non_speech)
+        assert len(first_segment.audio) == window_size * 3
+        assert np.allclose(first_segment.audio, np.concatenate([speech1, speech1, speech1]))
 
         second_segment = segments[1]
-        assert len(second_segment.audio) == window_size * 4
-        assert np.allclose(second_segment.audio[:window_size], non_speech)
+        assert len(second_segment.audio) == window_size * 3
         assert np.allclose(
-            second_segment.audio[window_size:window_size * 3],
-            np.concatenate([speech2, speech2]),
+            second_segment.audio,
+            np.concatenate([non_speech, speech2, speech2]),
         )
-        assert np.allclose(second_segment.audio[-window_size:], non_speech)
 
 
 if __name__ == "__main__":
