@@ -23,7 +23,8 @@
       "Bash(done)",
       "Bash(python3:*)",
       "Bash(ffprobe:*)",
-      "Bash(1)"
+      "Bash(1)",
+      "Bash(uv pip list:*)"
     ],
     "deny": [],
     "ask": []

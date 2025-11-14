@@ -15,7 +15,7 @@ from typing import Callable, Literal, Optional
 import numpy.typing as npt
 import scipy
 
-import soundfile as sf
+from pydub import AudioSegment as PydubAudioSegment
 
 from zhconv_rs import zhconv
 from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment
@@ -215,8 +215,21 @@ TranscriptPersistenceCallback = Callable[[TranscribedSegment], None]
 def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCallback:
     os.makedirs(directory, exist_ok=True)
 
-    def _save(segment: AudioSegment):
-        sf.write(os.path.join(directory, f"{segment.start}.wav"), segment.audio, TARGET_SAMPLE_RATE)
+    def _save(audio: npt.NDArray[np.float32], start_timestamp: float):
+        # Convert float32 normalized audio to int16 PCM
+        audio_int16 = (audio * 32767).astype(np.int16)
+
+        # Create pydub AudioSegment from raw PCM data
+        audio_segment = PydubAudioSegment(
+            audio_int16.tobytes(),
+            frame_rate=TARGET_SAMPLE_RATE,
+            sample_width=2,  # 2 bytes for int16
+            channels=1       # mono audio
+        )
+
+        # Export as OPUS with 8 kbps bitrate
+        output_path = os.path.join(directory, f"{start_timestamp}.opus")
+        audio_segment.export(output_path, format="opus", bitrate="8k")
 
     return _save
 
