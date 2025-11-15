@@ -221,13 +221,21 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
 
     def _save(segment: AudioSegment):
         audio = segment.audio
-        start_timestamp = f"{segment.start:08.3f}"
-        end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):08.3f}"
-        
+
+        # Use wall clock timestamps for livestream mode, relative timestamps for file mode
+        if segment.wall_clock_start is not None:
+            # Livestream mode: use Unix timestamps (seconds.microseconds)
+            start_timestamp = f"{segment.wall_clock_start:.6f}"
+            end_timestamp = f"{(segment.wall_clock_start + len(audio) / TARGET_SAMPLE_RATE):.6f}"
+        else:
+            # File mode: use relative timestamps
+            start_timestamp = f"{segment.start:08.3f}"
+            end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):08.3f}"
+
         # Convert float32 audio to int16 for opus encoding
         max_int16 = np.iinfo(np.int16).max
         audio_int16 = (audio * max_int16).astype(np.int16)
-        
+
         # Create final opus file path
         final_path = os.path.join(show_directory, f"{start_timestamp}-{end_timestamp}.opus")
         
