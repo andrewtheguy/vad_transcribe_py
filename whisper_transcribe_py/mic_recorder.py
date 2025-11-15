@@ -3,7 +3,14 @@ import time
 import threading
 from typing import Optional
 
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except ImportError:
+    raise ImportError(
+        "sounddevice is not installed. "
+        "To use microphone recording, install with: uv pip install -e '.[mic]' "
+        "Note: Microphone recording is only supported on desktop platforms (Windows, Mac, Linux)."
+    )
 
 from whisper_transcribe_py.audio_transcriber import (
     AudioSegment,

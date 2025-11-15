@@ -21,27 +21,40 @@
 
 Whisper Transcribe supports optional dependencies for different use cases:
 
-**Full installation (with transcription):**
+**Full installation (transcription + microphone):**
 ```bash
-# Install with all features including transcription backends
+# Install with all features including transcription and microphone support
+uv pip install -e '.[transcribe,mic]'
+```
+
+**Transcription only (no microphone):**
+```bash
+# Install transcription without microphone support (for stream/file/web only)
 uv pip install -e '.[transcribe]'
 ```
 
-**Lightweight installation (VAD-only, no transcription):**
+**Microphone only (no transcription):**
 ```bash
-# Install without transcription backends (saves ~2GB disk space and faster install)
+# Install microphone recording without transcription (saves ~2GB)
+uv pip install -e '.[mic]'
+```
+
+**Lightweight installation (VAD-only):**
+```bash
+# Install without transcription or microphone (for stream processing only)
 uv pip install -e .
 ```
 
-The lightweight installation is perfect if you only need:
-- Audio segmentation with VAD (Voice Activity Detection)
-- Saving detected speech segments to files (`--no-transcribe` mode)
-- Reduced dependencies and smaller deployment footprint
+#### Optional dependency groups:
 
-To use transcription features, you must install the `[transcribe]` extra which includes:
-- `pywhispercpp` - Whisper.cpp Python bindings
-- `faster-whisper` - CTranslate2-based Whisper implementation
-- `psycopg[binary]` - PostgreSQL database adapter (for saving transcripts)
+- **`[transcribe]`** - Transcription backends and database support:
+  - `pywhispercpp` - Whisper.cpp Python bindings
+  - `faster-whisper` - CTranslate2-based Whisper implementation
+  - `psycopg[binary]` - PostgreSQL database adapter
+
+- **`[mic]`** - Microphone recording (desktop only):
+  - `sounddevice` - Audio capture from microphone
+  - **Note:** Only works on desktop platforms (Windows, Mac, Linux with audio hardware)
 
 ### Database Setup (Required for transcription mode)
 

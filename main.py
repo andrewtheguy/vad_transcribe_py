@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 from silero_vad import (load_silero_vad)
 
 import numpy as np
-import sounddevice as sd
 
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter, \
@@ -223,6 +222,15 @@ def capture_mic_to_queue(audio_input_queue, stop_event, queue_limiter: Optional[
     Returns the input sample rate.
     """
     import scipy.signal
+
+    try:
+        import sounddevice as sd
+    except ImportError:
+        raise ImportError(
+            "sounddevice is not installed. "
+            "To use microphone recording, install with: uv pip install -e '.[mic]' "
+            "Note: Microphone recording is only supported on desktop platforms (Windows, Mac, Linux)."
+        )
 
     approx_input_sample_rate = [TARGET_SAMPLE_RATE]  # Use list to allow modification in callback
 
