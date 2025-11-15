@@ -69,7 +69,11 @@ class JsonTranscriptWriter:
 
 
 class SqliteTranscriptWriter:
-    """Transcript writer for SQLite export with metadata and speech segment tracking."""
+    """Transcript writer for SQLite export with metadata and speech segment tracking.
+
+    Saves temporary transcription results to a JSONL file as they complete,
+    then combines them into the final JSON output.
+    """
 
     def __init__(self, output_path: str, database_id: str, audio_format: str, max_id: int, show_name: str):
         self.output_path = output_path
@@ -77,34 +81,70 @@ class SqliteTranscriptWriter:
         self.audio_format = audio_format
         self.max_id = max_id
         self.show_name = show_name
-        self.speeches = []
-        self.segment_id_map = {}  # Maps relative start time to speech ID
 
-    def set_segment_id(self, start: float, speech_id: int, start_ts: str, end_ts: str):
-        """Associate a speech segment ID with its relative start time."""
-        self.segment_id_map[start] = {
-            'id': speech_id,
-            'start_ts': start_ts,
-            'end_ts': end_ts
-        }
+        # Track segments in order (more reliable than float key lookup)
+        self.segment_metadata = []  # List of (speech_id, start_ts, end_ts) tuples
+        self.segment_index = 0  # Current position in segment_metadata list
 
-    def add_segment(self, *, start: float, end: float, text: str):
-        """Add transcribed segment with associated speech ID."""
-        if start in self.segment_id_map:
-            speech_info = self.segment_id_map[start]
-            self.speeches.append({
-                "id": speech_info['id'],
-                "start_ts": speech_info['start_ts'],
-                "end_ts": speech_info['end_ts'],
-                "content": text,
-            })
+        # Temporary JSONL file for incremental results
+        self.temp_jsonl_path = f"{output_path}.jsonl.tmp"
 
-    def flush(self):
-        """Write JSON output with metadata and speeches."""
+        # Create directory and initialize temp file
         directory = os.path.dirname(self.output_path)
         if directory:
             os.makedirs(directory, exist_ok=True)
 
+        # Clear/create temp JSONL file
+        with open(self.temp_jsonl_path, "w", encoding="utf-8") as f:
+            pass  # Just create empty file
+
+    def set_segment_id(self, start: float, speech_id: int, start_ts: str, end_ts: str):
+        """Associate a speech segment ID with its relative start time.
+
+        Segments are expected to be added in order.
+        """
+        self.segment_metadata.append({
+            'id': speech_id,
+            'start_ts': start_ts,
+            'end_ts': end_ts
+        })
+
+    def add_segment(self, *, start: float, end: float, text: str):
+        """Add transcribed segment with associated speech ID.
+
+        Immediately writes to temporary JSONL file for crash recovery.
+        Assumes segments are transcribed in the same order they were queued.
+        """
+        # Get next segment metadata
+        if self.segment_index < len(self.segment_metadata):
+            speech_info = self.segment_metadata[self.segment_index]
+            self.segment_index += 1
+
+            speech_entry = {
+                "id": speech_info['id'],
+                "start_ts": speech_info['start_ts'],
+                "end_ts": speech_info['end_ts'],
+                "content": text,
+            }
+
+            # Write to temporary JSONL file immediately
+            with open(self.temp_jsonl_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(speech_entry, ensure_ascii=False) + "\n")
+
+    def flush(self):
+        """Write final JSON output with metadata and speeches.
+
+        Reads from temporary JSONL file and combines into final JSON format.
+        """
+        # Read all speeches from temporary JSONL file
+        speeches = []
+        with open(self.temp_jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    speeches.append(json.loads(line))
+
+        # Create final output
         output = {
             "metadata": {
                 "database_id": self.database_id,
@@ -113,11 +153,18 @@ class SqliteTranscriptWriter:
                 "max_id": self.max_id,
                 "export_timestamp": datetime.now(timezone.utc).isoformat(),
             },
-            "speeches": self.speeches
+            "speeches": speeches
         }
 
+        # Write final JSON
         with open(self.output_path, "w", encoding="utf-8") as f:
             json.dump(output, f, ensure_ascii=False, indent=2)
+
+        # Clean up temporary JSONL file
+        try:
+            os.remove(self.temp_jsonl_path)
+        except OSError:
+            pass  # Ignore if cleanup fails
 
 
 def process_vad_only(audio_input_queue, show_name, stop_event=None):
