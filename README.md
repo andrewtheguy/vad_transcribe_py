@@ -41,10 +41,11 @@ The lightweight installation is perfect if you only need:
 To use transcription features, you must install the `[transcribe]` extra which includes:
 - `pywhispercpp` - Whisper.cpp Python bindings
 - `faster-whisper` - CTranslate2-based Whisper implementation
+- `psycopg[binary]` - PostgreSQL database adapter (for saving transcripts)
 
-### Database Setup (Required for most features)
+### Database Setup (Required for transcription mode)
 
-Most features (web interface, microphone recording, and stream processing) require a PostgreSQL database to store transcripts. Set this up first:
+Transcription mode (without `--no-transcribe` flag) requires a PostgreSQL database to store transcripts. Set this up if you plan to use transcription:
 
 ```bash
 # Option 1: Create a .env file in the project root (Recommended)
@@ -54,7 +55,7 @@ echo 'DATABASE_URL=postgresql://user:password@localhost/dbname' > .env
 export DATABASE_URL="postgresql://user:password@localhost/dbname"
 ```
 
-**Note**: The project uses python-dotenv to automatically load environment variables from a `.env` file in the project root. Only the `file` command works without a database.
+**Note**: The project uses python-dotenv to automatically load environment variables from a `.env` file in the project root. Database is only required for transcription mode. VAD-only mode (`--no-transcribe`) saves audio files and does not require a database.
 
 ## Backend Selection
 

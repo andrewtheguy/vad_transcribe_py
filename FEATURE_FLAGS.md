@@ -18,6 +18,7 @@ uv pip install -e '.[transcribe]'
 - All base dependencies
 - `pywhispercpp` - Whisper.cpp Python bindings (~1GB)
 - `faster-whisper` - CTranslate2-based Whisper (~1GB)
+- `psycopg[binary]` - PostgreSQL database adapter
 
 **Use when:**
 - You need full transcription capabilities
@@ -32,9 +33,9 @@ uv pip install -e .
 
 **Includes:**
 - All base dependencies (silero-vad, sounddevice, scipy, etc.)
-- **Excludes:** pywhispercpp, faster-whisper
+- **Excludes:** pywhispercpp, faster-whisper, psycopg (PostgreSQL)
 
-**Saves:** ~2GB disk space, faster installation
+**Saves:** ~2GB disk space, faster installation, no database required
 
 **Use when:**
 - You only need voice activity detection (VAD)
@@ -77,13 +78,14 @@ dependencies = [
     "silero-vad>=5.1.2,<6",
     "scipy>=1.14.1,<2",
     # ... other base dependencies
-    # NOTE: pywhispercpp and faster-whisper are NOT here
+    # NOTE: pywhispercpp, faster-whisper, and psycopg are NOT here
 ]
 
 [project.optional-dependencies]
 transcribe = [
     "pywhispercpp>=1.3.3,<1.4",
     "faster-whisper>=1.0.0,<2",
+    "psycopg[binary]>=3.2.3,<4",
 ]
 ```
 
@@ -155,7 +157,8 @@ uv run pytest
 ## Benefits
 
 1. **Reduced Disk Usage**: Save ~2GB by not installing transcription models
-2. **Faster Installation**: Skip compilation of native extensions
-3. **Flexible Deployment**: Deploy only what you need
-4. **Clear Error Messages**: Users know exactly what to install when needed
-5. **Backward Compatible**: Existing full installations continue to work
+2. **Faster Installation**: Skip compilation of native extensions (pywhispercpp, faster-whisper, psycopg)
+3. **No Database Required**: VAD-only mode doesn't need PostgreSQL
+4. **Flexible Deployment**: Deploy only what you need
+5. **Clear Error Messages**: Users know exactly what to install when needed
+6. **Backward Compatible**: Existing full installations continue to work
