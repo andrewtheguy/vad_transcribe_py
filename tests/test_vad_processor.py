@@ -654,6 +654,44 @@ class TestLookBackBuffer:
             speech_window,
         )
 
+    def test_look_back_adjusts_start_and_wall_clock(self):
+        """Look-back duration should shift both relative and wall clock timestamps."""
+        segments = []
+        window_seconds = get_window_size_samples(16000) / 16000
+        look_back_seconds = window_seconds * 2
+        detector = SpeechDetector(
+            sample_rate=16000,
+            min_speech_seconds=window_seconds * 0.5,
+            max_speech_seconds=10.0,
+            look_back_seconds=look_back_seconds,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        non_speech = make_non_speech_window(level=0.1)
+        speech = np.ones(512, dtype=np.float32) * 0.9
+        base_wall_clock = 1234.5
+
+        with patch.object(detector, '_detect_speech') as mock_vad:
+            ts = 0.0
+            mock_vad.return_value = False
+            detector.process_window(non_speech, ts, base_wall_clock + ts)
+            ts += window_seconds
+            detector.process_window(non_speech, ts, base_wall_clock + ts)
+
+            mock_vad.return_value = True
+            ts += window_seconds
+            detector.process_window(speech, ts, base_wall_clock + ts)
+            ts += window_seconds
+            detector.process_window(speech, ts, base_wall_clock + ts)
+
+            mock_vad.return_value = False
+            ts += window_seconds
+            detector.process_window(non_speech, ts, base_wall_clock + ts)
+
+        assert len(segments) == 1
+        assert segments[0].start == pytest.approx(0.0, abs=1e-6)
+        assert segments[0].wall_clock_start == pytest.approx(base_wall_clock, abs=1e-6)
+
 
 class TestFinalWindowInclusion:
     """Test that final window is included when speech ends."""
