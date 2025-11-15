@@ -17,8 +17,6 @@ import scipy
 from zhconv_rs import zhconv
 from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment
 
-import soundfile as sf
-
 TARGET_SAMPLE_RATE = 16000
 
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
