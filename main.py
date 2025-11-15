@@ -348,23 +348,23 @@ def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
 
 if __name__ == '__main__':
     load_dotenv()
-    argparse = argparse.ArgumentParser()
-    argparse.add_argument('action', type=str, choices=['file','mic','stream','web'])
-    argparse.add_argument('--file', type=str, required=False)
-    argparse.add_argument('--lang', type=str, required=False)
-    argparse.add_argument('--config', type=str, required=False) # for url live streaming
-    argparse.add_argument('--output', type=str, required=False)
-    argparse.add_argument('--n-threads', type=int, required=False, default=None, help='Number of threads for whisper model (default: 1 or from config file)')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('action', type=str, choices=['file','mic','stream','web'])
+    parser.add_argument('--file', type=str, required=False)
+    parser.add_argument('--lang', type=str, required=False)
+    parser.add_argument('--config', type=str, required=False) # for url live streaming
+    parser.add_argument('--output', type=str, required=False)
+    parser.add_argument('--n-threads', type=int, required=False, default=None, help='Number of threads for whisper model (default: 1 or from config file)')
     # https://absadiki.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
-    argparse.add_argument('--model', type=str, required=False, default=None, help='Whisper model name (default: large-v3-turbo or from config file)')
-    argparse.add_argument('--backend', type=str, choices=['whisper_cpp', 'faster_whisper'], default='whisper_cpp', help='Transcription backend (default: whisper_cpp)')
+    parser.add_argument('--model', type=str, required=False, default=None, help='Whisper model name (default: large-v3-turbo or from config file)')
+    parser.add_argument('--backend', type=str, choices=['whisper_cpp', 'faster_whisper'], default='whisper_cpp', help='Transcription backend (default: whisper_cpp)')
     # Web server options
-    argparse.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
-    argparse.add_argument('--port', type=int, required=False, default=5002, help='Port to bind web server to (default: 5002)')
-    argparse.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
-    argparse.add_argument('--no-transcribe', action='store_true', help='Skip transcription: for file action, only save VAD-detected audio segments; for web server, enable view-only mode')
-    argparse.add_argument('--transcribe-api-url', type=str, required=False, help='Alternate transcribe API endpoint URL (for future use)')
-    args = argparse.parse_args()
+    parser.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
+    parser.add_argument('--port', type=int, required=False, default=5002, help='Port to bind web server to (default: 5002)')
+    parser.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
+    parser.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
+    parser.add_argument('--transcribe-api-url', type=str, required=False, help='Alternate transcribe API endpoint URL (for future use)')
+    args = parser.parse_args()
 
     if args.action == 'file':
         if not args.file:
@@ -374,7 +374,7 @@ if __name__ == '__main__':
             print(f"File {args.file} does not exist")
             exit(1)
 
-        if not args.no_transcribe and not args.output:
+        if args.transcribe and not args.output:
             print("Please provide an --output path for the JSON transcript")
             exit(1)
 
@@ -383,7 +383,7 @@ if __name__ == '__main__':
                 audio_input_queue = queue.Queue()
                 stop_event = threading.Event()
 
-                if args.no_transcribe:
+                if not args.transcribe:
                     # VAD-only mode: just save audio segments without transcription
                     # Extract filename without extension for show_name
                     show_name = os.path.splitext(os.path.basename(args.file))[0]
@@ -451,7 +451,7 @@ if __name__ == '__main__':
                         audio_input_queue.put(None)
                     thread_transcribe.join()
 
-                if not args.no_transcribe:
+                if args.transcribe:
                     transcript_writer.flush()
                     if interrupted:
                         print(f"Transcript written to {output_path} (partial)")
@@ -471,7 +471,7 @@ if __name__ == '__main__':
                 stop_event = threading.Event()
                 show_name = "microphone"
 
-                if args.no_transcribe:
+                if not args.transcribe:
                     # No-transcribe mode: VAD-only, save audio files without loading Whisper model
                     queue_limiter = create_default_queue_limiter(show_name)
 
@@ -556,7 +556,7 @@ if __name__ == '__main__':
                 stop_event = threading.Event()
                 queue_limiter = create_default_queue_limiter(data.get('show_name', 'stream'))
 
-                if args.no_transcribe:
+                if not args.transcribe:
                     # No-transcribe mode: VAD-only, save audio files without loading Whisper model
                     print("Stream mode: saving audio segments without transcription", file=sys.stderr)
 
@@ -669,7 +669,7 @@ if __name__ == '__main__':
                 if args.dev:
                     print("Development mode enabled - CORS and hot reload active")
                     print("Frontend dev server: http://localhost:5173")
-                if args.no_transcribe:
+                if not args.transcribe:
                     print("Transcription disabled - running in view-only mode")
                 if args.transcribe_api_url:
                     print(f"Alternate transcribe API URL: {args.transcribe_api_url}")
@@ -679,7 +679,7 @@ if __name__ == '__main__':
                     host=args.host,
                     port=args.port,
                     dev=args.dev,
-                    no_transcribe=args.no_transcribe,
+                    no_transcribe=not args.transcribe,
                     transcribe_api_url=args.transcribe_api_url,
                 )
         except LockError as e:
