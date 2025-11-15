@@ -18,7 +18,6 @@ import numpy as np
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter, \
     TranscriptPersistenceCallback, create_default_queue_limiter
-from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_samples
 from file_lock import acquire_lock, LockError
 
@@ -525,6 +524,14 @@ if __name__ == '__main__':
                     print("Audio segments saved to ./tmp/speech/")
                 else:
                     # Transcribe mode: save to database
+                    try:
+                        from whisper_transcribe_py.db import build_database_writer, connect_to_database
+                    except ImportError:
+                        raise ImportError(
+                            "psycopg is not installed. "
+                            "To use database features with CLI, install with: uv pip install -e '.[transcribe]'"
+                        )
+
                     with connect_to_database() as conn:
                         transcript_writer = build_database_writer(conn, show_name)
                         thread_transcribe = threading.Thread(
@@ -620,6 +627,14 @@ if __name__ == '__main__':
                     print("Audio segments saved to ./tmp/speech/")
                 else:
                     # Transcribe mode: save to database
+                    try:
+                        from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
+                    except ImportError:
+                        raise ImportError(
+                            "psycopg is not installed. "
+                            "To use database features with CLI, install with: uv pip install -e '.[transcribe]'"
+                        )
+
                     with connect_to_database() as conn:
                         # Initialize database schema
                         initialize_database_schema(conn)
@@ -677,7 +692,22 @@ if __name__ == '__main__':
             exit(1)
         #thread_streaming.join()
     elif args.action == 'web':
-        from whisper_transcribe_py.api.server import run_server
+        try:
+            from whisper_transcribe_py.api.server import run_server
+        except ImportError as e:
+            # Check which dependency is missing
+            if 'fastapi' in str(e) or 'uvicorn' in str(e):
+                raise ImportError(
+                    "Web server dependencies are not installed. "
+                    "To use the web server, install with: uv pip install -e '.[web]'"
+                ) from e
+            elif 'psycopg' in str(e):
+                raise ImportError(
+                    "PostgreSQL adapter (psycopg) is not installed. "
+                    "Web server requires database access. Install with: uv pip install -e '.[web]'"
+                ) from e
+            else:
+                raise
 
         try:
             with acquire_lock('mic_web'):

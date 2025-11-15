@@ -1095,13 +1095,11 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "argparse" },
-    { name = "fastapi" },
     { name = "numpy" },
     { name = "python-dotenv" },
     { name = "scipy" },
     { name = "silero-vad" },
     { name = "torch" },
-    { name = "uvicorn", extra = ["standard"] },
     { name = "zhconv-rs" },
 ]
 
@@ -1118,15 +1116,21 @@ transcribe = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pywhispercpp" },
 ]
+web = [
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "uvicorn", extra = ["standard"] },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "argparse", specifier = ">=1.4.0,<2" },
-    { name = "fastapi", specifier = ">=0.115.0,<1" },
+    { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.0,<1" },
     { name = "faster-whisper", marker = "extra == 'transcribe'", specifier = ">=1.0.0,<2" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.1,<1" },
     { name = "numpy", specifier = ">=2.2.1,<3" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'transcribe'", specifier = ">=3.2.3,<4" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'web'", specifier = ">=3.2.3,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0,<10" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
     { name = "pywhispercpp", marker = "extra == 'transcribe'", specifier = ">=1.3.3,<1.4" },
@@ -1134,10 +1138,10 @@ requires-dist = [
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
     { name = "sounddevice", marker = "extra == 'mic'", specifier = ">=0.5.1,<0.6" },
     { name = "torch", specifier = ">=2.5.1,<3" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0,<1" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.32.0,<1" },
     { name = "zhconv-rs", specifier = ">=0.3.2.post2,<0.4" },
 ]
-provides-extras = ["transcribe", "mic", "dev"]
+provides-extras = ["transcribe", "mic", "web", "dev"]
 
 [[package]]
 name = "zhconv-rs"
