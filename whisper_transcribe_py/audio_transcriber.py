@@ -214,9 +214,8 @@ TranscriptPersistenceCallback = Callable[[TranscribedSegment], None]
 
 
 def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> AudioSegmentCallback:
-    # Create subdirectory for this show
-    show_directory = os.path.join(directory, show_name)
-    os.makedirs(show_directory, exist_ok=True)
+    # Base directory for this show
+    base_show_directory = os.path.join(directory, show_name)
 
     def _save(segment: AudioSegment):
         audio = segment.audio
@@ -230,17 +229,25 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
             end_ts = segment.wall_clock_start + len(audio) / TARGET_SAMPLE_RATE
             end_dt = datetime.fromtimestamp(end_ts, timezone.utc)
             end_timestamp = end_dt.strftime("%Y%m%d%H%M%S.%f")
+
+            # Organize by date: tmp/speech/showname/yyyy/mm/dd/
+            date_path = start_dt.strftime("%Y/%m/%d")
+            target_directory = os.path.join(base_show_directory, date_path)
         else:
-            # File mode: use relative timestamps
+            # File mode: use relative timestamps, no date subdirectories
             start_timestamp = f"{segment.start:08.3f}"
             end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):08.3f}"
+            target_directory = base_show_directory
+
+        # Create target directory if it doesn't exist
+        os.makedirs(target_directory, exist_ok=True)
 
         # Convert float32 audio to int16 for opus encoding
         max_int16 = np.iinfo(np.int16).max
         audio_int16 = (audio * max_int16).astype(np.int16)
 
         # Create final opus file path
-        final_path = os.path.join(show_directory, f"{start_timestamp}-{end_timestamp}.opus")
+        final_path = os.path.join(target_directory, f"{start_timestamp}-{end_timestamp}.opus")
         
         # Create temporary file path with proper extension for atomic save
         temp_path = f"{final_path}.tmp"
