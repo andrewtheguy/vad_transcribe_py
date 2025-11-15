@@ -124,6 +124,17 @@ def process_vad_only_livestream(audio_input_queue, show_name, input_sample_rate,
         on_segment_complete=on_segment_complete
     )
 
+    # Validate queue limit is at least twice the max speech duration
+    if queue_backlog_limiter and hasattr(queue_backlog_limiter, 'max_seconds') and queue_backlog_limiter.max_seconds is not None:
+        min_required_queue_seconds = 2 * speech_detector.max_speech_seconds
+        if queue_backlog_limiter.max_seconds < min_required_queue_seconds:
+            raise ValueError(
+                f"Queue limit ({queue_backlog_limiter.max_seconds}s) must be at least "
+                f"twice the max speech duration ({speech_detector.max_speech_seconds}s). "
+                f"Required minimum: {min_required_queue_seconds}s. "
+                f"Update QUEUE_TIME_LIMIT_SECONDS in audio_transcriber.py or pass a custom limiter."
+            )
+
     window_size_samples = get_window_size_samples()
     window_seconds = window_size_samples / TARGET_SAMPLE_RATE
     buffer = []
