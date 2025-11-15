@@ -3,6 +3,7 @@
 import os
 import sqlite3
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -150,6 +151,72 @@ def _create_file_saver(show_name: str, directory: str) -> AudioSegmentCallback:
     return _save
 
 
+def _get_metadata(conn: sqlite3.Connection, key: str) -> str | None:
+    """Get a metadata value from the database.
+
+    Args:
+        conn: SQLite database connection
+        key: Metadata key to retrieve
+
+    Returns:
+        Metadata value or None if key doesn't exist
+    """
+    cursor = conn.execute('SELECT value FROM metadata WHERE key = ?', (key,))
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+
+def _set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Set a metadata value in the database.
+
+    Args:
+        conn: SQLite database connection
+        key: Metadata key to set
+        value: Metadata value to set
+    """
+    conn.execute(
+        'INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)',
+        (key, value)
+    )
+    conn.commit()
+
+
+def _initialize_metadata(conn: sqlite3.Connection, audio_format: str) -> None:
+    """Initialize metadata table with format and database ID.
+
+    Args:
+        conn: SQLite database connection
+        audio_format: Audio format being used ('wav' or 'm4a')
+
+    Raises:
+        ValueError: If existing format doesn't match current OUTPUT_FORMAT
+    """
+    # Create metadata table if it doesn't exist
+    conn.execute('''CREATE TABLE IF NOT EXISTS metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )''')
+    conn.commit()
+
+    # Check if metadata already exists
+    existing_format = _get_metadata(conn, 'audio_format')
+
+    if existing_format is not None:
+        # Metadata exists - validate format matches
+        if existing_format != audio_format:
+            raise ValueError(
+                f"Database format mismatch: database was created with format '{existing_format}' "
+                f"but current OUTPUT_FORMAT is '{audio_format}'. "
+                f"Please use the correct format or create a new database."
+            )
+        # Format matches - no action needed, database_id already exists
+    else:
+        # No metadata exists - initialize it
+        database_id = str(uuid.uuid4())
+        _set_metadata(conn, 'audio_format', audio_format)
+        _set_metadata(conn, 'database_id', database_id)
+
+
 def _encode_to_raw_aac(audio_int16: np.ndarray) -> bytes:
     """Encode audio to raw AAC stream using ffmpeg.
 
@@ -214,6 +281,11 @@ def _create_sqlite_saver(show_name: str) -> AudioSegmentCallback:
 
     # Initialize database and schema
     conn = sqlite3.connect(db_path)
+
+    # Initialize metadata table and validate format
+    _initialize_metadata(conn, OUTPUT_FORMAT)
+
+    # Create speech table
     conn.execute('''CREATE TABLE IF NOT EXISTS speech (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         start_ts TEXT NOT NULL,
@@ -294,8 +366,10 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
     For SQLite storage:
     - Database location: ./tmp/speech_sqlite/{show_name}_{format}.sqlite
     - Table: speech (id, start_ts, end_ts, audio_data)
+    - Table: metadata (key, value) - stores audio_format and database_id
     - Timestamps: ISO 8601 format with timezone
     - Audio data: Raw PCM for wav, raw AAC (ADTS) for m4a
+    - Format validation: On startup, verifies audio_format in metadata matches OUTPUT_FORMAT
     - Note: Opus format not currently supported with SQLite storage
 
     Args:

@@ -24,7 +24,8 @@
       "Bash(python3:*)",
       "Bash(ffprobe:*)",
       "Bash(1)",
-      "Bash(uv pip list:*)"
+      "Bash(uv pip list:*)",
+      "Bash(sqlite3:*)"
     ],
     "deny": [],
     "ask": []
