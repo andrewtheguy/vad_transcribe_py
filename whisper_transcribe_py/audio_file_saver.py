@@ -11,8 +11,8 @@ import numpy as np
 from whisper_transcribe_py.vad_processor import AudioSegment
 
 TARGET_SAMPLE_RATE = 16000
-OUTPUT_FORMAT = "opus"  # Options: "opus", "wav", "m4a"
-STORAGE_TYPE = "file"  # Options: "file", "sqlite"
+OUTPUT_FORMAT = "m4a"  # Options: "opus", "wav", "m4a"
+STORAGE_TYPE = "sqlite"  # Options: "file", "sqlite"
 
 AudioSegmentCallback = Callable[[AudioSegment], None]
 
