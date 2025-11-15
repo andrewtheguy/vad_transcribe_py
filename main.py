@@ -42,11 +42,11 @@ class JsonTranscriptWriter:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
 
 
-def process_vad_only(audio_input_queue, stop_event=None):
+def process_vad_only(audio_input_queue, show_name, stop_event=None):
     """
     Process audio through VAD only, saving detected speech segments without transcription.
     """
-    audio_segment_callback = create_audio_file_saver()
+    audio_segment_callback = create_audio_file_saver(show_name)
 
     def on_segment_complete(segment: AudioSegment):
         """Called when VAD detects a complete speech segment."""
@@ -92,7 +92,9 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                   mode='livestream', backend='whisper_cpp'):
     print("process_queue")
     if save_audio and audio_segment_callback is None:
-        audio_segment_callback = create_audio_file_saver()
+        if show_name is None:
+            raise ValueError("show_name is required when save_audio=True and no audio_segment_callback provided")
+        audio_segment_callback = create_audio_file_saver(show_name)
 
     AudioTranscriber(audio_input_queue=q,
                      language=language,
@@ -183,8 +185,11 @@ if __name__ == '__main__':
 
                 if args.no_transcribe:
                     # VAD-only mode: just save audio segments without transcription
+                    # Extract filename without extension for show_name
+                    show_name = os.path.splitext(os.path.basename(args.file))[0]
                     thread_transcribe = threading.Thread(target=process_vad_only, kwargs={
                         'audio_input_queue': audio_input_queue,
+                        'show_name': show_name,
                         'stop_event': stop_event,
                     })
                     print("VAD-only mode: saving audio segments without transcription", file=sys.stderr)

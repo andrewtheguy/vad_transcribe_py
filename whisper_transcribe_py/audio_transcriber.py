@@ -214,8 +214,10 @@ AudioSegmentCallback = Callable[[AudioSegment], None]
 TranscriptPersistenceCallback = Callable[[TranscribedSegment], None]
 
 
-def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCallback:
-    os.makedirs(directory, exist_ok=True)
+def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> AudioSegmentCallback:
+    # Create subdirectory for this show
+    show_directory = os.path.join(directory, show_name)
+    os.makedirs(show_directory, exist_ok=True)
 
     def _save(segment: AudioSegment):
         audio = segment.audio
@@ -227,7 +229,7 @@ def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCall
         audio_int16 = (audio * max_int16).astype(np.int16)
         
         # Create final opus file path
-        final_path = os.path.join(directory, f"{start_timestamp}-{end_timestamp}.opus")
+        final_path = os.path.join(show_directory, f"{start_timestamp}-{end_timestamp}.opus")
         
         # Create temporary file path with proper extension for atomic save
         temp_path = f"{final_path}.tmp"
