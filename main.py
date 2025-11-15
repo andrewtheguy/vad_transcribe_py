@@ -16,8 +16,9 @@ from silero_vad import (load_silero_vad)
 import numpy as np
 
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
-    AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter, \
+    AudioTranscriber, AudioSegment, stream_url_thread, TranscribedSegment, QueueBacklogLimiter, \
     TranscriptPersistenceCallback, create_default_queue_limiter
+from whisper_transcribe_py.audio_file_saver import create_audio_file_saver
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_samples
 from file_lock import acquire_lock, LockError
