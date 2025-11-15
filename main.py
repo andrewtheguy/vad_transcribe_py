@@ -943,7 +943,8 @@ if __name__ == '__main__':
         print(f"Audio format: {audio_format}")
 
         # Connect to database and get snapshot
-        conn = sqlite3.connect(args.database)
+        # Use timeout for concurrent access while stream is writing
+        conn = sqlite3.connect(args.database, timeout=30.0)
         max_id = get_max_speech_id(conn)
         print(f"Processing {max_id} speech segments (snapshot)")
 

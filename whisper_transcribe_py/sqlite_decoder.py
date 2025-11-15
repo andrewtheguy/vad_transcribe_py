@@ -28,7 +28,7 @@ def read_database_metadata(db_path: str) -> Tuple[str, str, str]:
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"Database not found: {db_path}")
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
     try:
         cursor = conn.execute("SELECT value FROM metadata WHERE key = 'audio_format'")
         result = cursor.fetchone()

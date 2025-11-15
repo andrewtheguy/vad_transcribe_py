@@ -310,7 +310,12 @@ def _create_sqlite_saver(
     db_path = os.path.join(db_dir, f"{show_name}_{OUTPUT_FORMAT}.sqlite")
 
     # Initialize database and schema
-    conn = sqlite3.connect(db_path)
+    # Set timeout for database locks and enable WAL mode for concurrent access
+    conn = sqlite3.connect(db_path, timeout=30.0)
+
+    # Enable WAL mode for better concurrent read/write access
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.commit()
 
     # Initialize metadata table and validate format and show name
     _initialize_metadata(conn, OUTPUT_FORMAT, show_name)
