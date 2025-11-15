@@ -1,4 +1,3 @@
-
 import logging
 import os
 import queue
@@ -14,8 +13,6 @@ from typing import Callable, Literal, Optional
 
 import numpy.typing as npt
 import scipy
-
-from pydub import AudioSegment as PydubAudioSegment
 
 from zhconv_rs import zhconv
 from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment
