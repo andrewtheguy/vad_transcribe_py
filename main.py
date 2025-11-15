@@ -18,7 +18,6 @@ import numpy as np
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     AudioTranscriber, AudioSegment, stream_url_thread, create_audio_file_saver, TranscribedSegment, QueueBacklogLimiter, \
     TranscriptPersistenceCallback, create_default_queue_limiter
-from whisper_transcribe_py.mic_recorder import MicRecorder
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_samples
 from file_lock import acquire_lock, LockError
@@ -327,6 +326,15 @@ def process_mic(
         audio_segment_callback=None,
         backend: str = 'whisper_cpp',
 ):
+    try:
+        from whisper_transcribe_py.mic_recorder import MicRecorder
+    except ImportError:
+        raise ImportError(
+            "sounddevice is not installed. "
+            "To use microphone recording, install with: uv pip install -e '.[mic]' "
+            "Note: Microphone recording is only supported on desktop platforms (Windows, Mac, Linux)."
+        )
+
     if max_queue_seconds is None:
         limiter = create_default_queue_limiter(show_name)
     elif max_queue_seconds > 0:
