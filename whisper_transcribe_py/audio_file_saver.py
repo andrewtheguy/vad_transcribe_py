@@ -11,8 +11,8 @@ import numpy as np
 from whisper_transcribe_py.vad_processor import AudioSegment
 
 TARGET_SAMPLE_RATE = 16000
-OUTPUT_FORMAT = "wav"  # Options: "opus", "wav"
-STORAGE_TYPE = "sqlite"  # Options: "file", "sqlite"
+OUTPUT_FORMAT = "opus"  # Options: "opus", "wav", "m4a"
+STORAGE_TYPE = "file"  # Options: "file", "sqlite"
 
 AudioSegmentCallback = Callable[[AudioSegment], None]
 
@@ -95,8 +95,23 @@ def _create_file_saver(show_name: str, directory: str) -> AudioSegmentCallback:
                 "-y",  # Overwrite output file if it exists
                 temp_path
             ]
+        elif OUTPUT_FORMAT == "m4a":
+            # M4A: AAC compressed format (8kbps)
+            command = [
+                "ffmpeg",
+                "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
+                "-acodec", "pcm_s16le",  # Input codec
+                "-ac", "1",  # Number of channels (1 = mono)
+                "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
+                "-i", "pipe:",  # Input from stdin
+                "-c:a", "aac",  # Audio codec: AAC
+                "-b:a", "8k",  # Audio bitrate: 8kbps
+                "-f", "ipod",  # Container format: iPod (M4A)
+                "-y",  # Overwrite output file if it exists
+                temp_path
+            ]
         else:
-            raise ValueError(f"Unsupported OUTPUT_FORMAT: {OUTPUT_FORMAT}. Supported formats: 'opus', 'wav'")
+            raise ValueError(f"Unsupported OUTPUT_FORMAT: {OUTPUT_FORMAT}. Supported formats: 'opus', 'wav', 'm4a'")
 
         process = None
         try:
@@ -135,14 +150,14 @@ def _create_file_saver(show_name: str, directory: str) -> AudioSegmentCallback:
     return _save
 
 
-def _encode_to_raw_opus(audio_int16: np.ndarray) -> bytes:
-    """Encode audio to raw Opus packets using ffmpeg.
+def _encode_to_raw_aac(audio_int16: np.ndarray) -> bytes:
+    """Encode audio to raw AAC stream using ffmpeg.
 
     Args:
         audio_int16: Audio samples as int16 numpy array
 
     Returns:
-        Raw Opus packet data (without Ogg container)
+        Raw AAC stream data (ADTS format for concatenation)
 
     Raises:
         RuntimeError: If ffmpeg encoding fails
@@ -153,9 +168,9 @@ def _encode_to_raw_opus(audio_int16: np.ndarray) -> bytes:
         "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
         "-ac", "1",  # Number of channels (1 = mono)
         "-i", "pipe:",  # Input from stdin
-        "-c:a", "libopus",  # Audio codec: Opus
+        "-c:a", "aac",  # Audio codec: AAC
         "-b:a", "8k",  # Audio bitrate: 8kbps
-        "-f", "data",  # Output raw data stream
+        "-f", "adts",  # Output format: ADTS (raw AAC with headers for concatenation)
         "pipe:1"  # Output to stdout
     ]
 
@@ -169,16 +184,16 @@ def _encode_to_raw_opus(audio_int16: np.ndarray) -> bytes:
         )
 
         # Write audio data to ffmpeg stdin and get output
-        opus_data, stderr_output = process.communicate(input=audio_int16.tobytes())
+        aac_data, stderr_output = process.communicate(input=audio_int16.tobytes())
 
         if process.returncode != 0:
             stderr_text = stderr_output.decode('utf-8', errors='replace')
-            raise ValueError(f"ffmpeg opus encoding failed with return code {process.returncode}. Error: {stderr_text}")
+            raise ValueError(f"ffmpeg AAC encoding failed with return code {process.returncode}. Error: {stderr_text}")
 
-        return opus_data
+        return aac_data
 
     except Exception as e:
-        raise RuntimeError(f"Failed to encode to raw Opus: {e}")
+        raise RuntimeError(f"Failed to encode to raw AAC: {e}")
 
 
 def _create_sqlite_saver(show_name: str) -> AudioSegmentCallback:
@@ -238,11 +253,18 @@ def _create_sqlite_saver(show_name: str) -> AudioSegmentCallback:
             audio_data = audio_int16.tobytes()
 
         elif OUTPUT_FORMAT == "opus":
-            # Opus mode: encode to raw Opus packets
-            audio_data = _encode_to_raw_opus(audio_int16)
+            # raw opus mode not supported by ffmpeg
+            raise ValueError(
+                "OUTPUT_FORMAT='opus' is not supported with SQLite storage. "
+                "This combination is blocked by validation in create_audio_file_saver()."
+            )
+
+        elif OUTPUT_FORMAT == "m4a":
+            # M4A mode: encode to raw AAC stream (ADTS format)
+            audio_data = _encode_to_raw_aac(audio_int16)
 
         else:
-            raise ValueError(f"Unsupported OUTPUT_FORMAT for SQLite: {OUTPUT_FORMAT}. Supported: 'opus', 'wav'")
+            raise ValueError(f"Unsupported OUTPUT_FORMAT for SQLite: {OUTPUT_FORMAT}. Supported: 'wav', 'm4a'")
 
         # Insert into database
         try:
@@ -261,18 +283,19 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
     """Create a callback that saves audio segments.
 
     Storage backend is determined by the STORAGE_TYPE module constant:
-    - "file": Save segments as individual files (opus or wav)
-    - "sqlite": Save segments to SQLite database (wav only for now)
+    - "file": Save segments as individual files (opus, wav, or m4a)
+    - "sqlite": Save segments to SQLite database (wav or m4a)
 
     Output format is determined by the OUTPUT_FORMAT module constant:
-    - "opus": Compressed Opus format (8kbps)
+    - "opus": Compressed Opus format (8kbps) - file storage only
     - "wav": Uncompressed PCM format
+    - "m4a": AAC compressed format (8kbps)
 
     For SQLite storage:
     - Database location: ./tmp/speech_sqlite/{show_name}_{format}.sqlite
     - Table: speech (id, start_ts, end_ts, audio_data)
     - Timestamps: ISO 8601 format with timezone
-    - Audio data: Raw PCM for wav
+    - Audio data: Raw PCM for wav, raw AAC (ADTS) for m4a
     - Note: Opus format not currently supported with SQLite storage
 
     Args:
@@ -289,7 +312,7 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
     if STORAGE_TYPE == "sqlite" and OUTPUT_FORMAT == "opus":
         raise ValueError(
             "STORAGE_TYPE='sqlite' with OUTPUT_FORMAT='opus' is not currently supported. "
-            "Please use OUTPUT_FORMAT='wav' with SQLite storage, or use STORAGE_TYPE='file' for Opus format."
+            "Please use OUTPUT_FORMAT='wav' or 'm4a' with SQLite storage, or use STORAGE_TYPE='file' for Opus format."
         )
 
     if STORAGE_TYPE == "file":
