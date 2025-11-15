@@ -217,7 +217,7 @@ def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCall
 
     def _save(segment: AudioSegment):
         audio = segment.audio
-        start_timestamp = segment.start
+        start_timestamp = f"{segment.start:.3f}"
         # Convert float32 normalized audio to int16 PCM
         audio_int16 = (audio * 32767).astype(np.int16)
 
