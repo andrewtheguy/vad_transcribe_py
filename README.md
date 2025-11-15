@@ -65,19 +65,19 @@ uv pip install -e .
 
 #### Optional dependency groups:
 
-- **`[transcribe]`** - Transcription backends and database:
+- **`[transcribe]`** - Transcription backends:
   - `pywhispercpp` - Whisper.cpp Python bindings
   - `faster-whisper` - CTranslate2-based Whisper implementation
-  - `psycopg[binary]` - PostgreSQL database adapter (for storing transcripts)
 
 - **`[mic]`** - Microphone recording (desktop only):
   - `sounddevice` - Audio capture from microphone
   - **Note:** Only works on desktop platforms (Windows, Mac, Linux with audio hardware)
 
-- **`[web]`** - Web server and database:
+- **`[web]`** - Web server:
   - `fastapi` - Modern Python web framework
   - `uvicorn[standard]` - ASGI server
-  - `psycopg[binary]` - PostgreSQL database adapter (for viewing/storing transcripts)
+
+**Note:** PostgreSQL database adapter (`psycopg[binary]`) is included in base dependencies for all installations.
 
 ### Database Setup
 

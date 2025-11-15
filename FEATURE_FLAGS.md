@@ -15,9 +15,8 @@ uv pip install -e '.[transcribe,mic,web]'
 ```
 
 **Includes:**
-- All base dependencies
+- All base dependencies (including PostgreSQL adapter)
 - Transcription backends (`pywhispercpp`, `faster-whisper`)
-- PostgreSQL database adapter (`psycopg[binary]`)
 - Microphone recording (`sounddevice`)
 - Web server (`fastapi`, `uvicorn`)
 
@@ -32,12 +31,11 @@ uv pip install -e '.[transcribe,mic]'
 ```
 
 **Includes:**
-- All base dependencies
+- All base dependencies (including PostgreSQL adapter)
 - Transcription backends (`pywhispercpp`, `faster-whisper`)
-- PostgreSQL database adapter (`psycopg[binary]`)
 - Microphone recording (`sounddevice`)
 
-**Excludes:** fastapi, uvicorn (web server)
+**Excludes:** Web server (`fastapi`, `uvicorn`)
 
 **Use when:**
 - You only need CLI tools (no web interface)
@@ -51,8 +49,8 @@ uv pip install -e '.[web,transcribe,mic]'
 ```
 
 **Includes:**
-- All base dependencies
-- Web server (`fastapi`, `uvicorn`, `psycopg[binary]`)
+- All base dependencies (including PostgreSQL adapter)
+- Web server (`fastapi`, `uvicorn`)
 - Transcription backends (`pywhispercpp`, `faster-whisper`)
 - Microphone recording (`sounddevice`)
 
@@ -68,10 +66,10 @@ uv pip install -e '.[web]'
 ```
 
 **Includes:**
-- All base dependencies
-- Web server (`fastapi`, `uvicorn`, `psycopg[binary]`)
+- All base dependencies (including PostgreSQL adapter)
+- Web server (`fastapi`, `uvicorn`)
 
-**Excludes:** pywhispercpp, faster-whisper, sounddevice
+**Excludes:** Transcription backends (`pywhispercpp`, `faster-whisper`), microphone (`sounddevice`)
 
 **Saves:** ~2GB disk space (no transcription models)
 
@@ -87,30 +85,29 @@ uv pip install -e '.[transcribe]'
 ```
 
 **Includes:**
-- All base dependencies
+- All base dependencies (including PostgreSQL adapter)
 - Transcription backends (`pywhispercpp`, `faster-whisper`)
-- PostgreSQL database adapter (`psycopg[binary]`)
 
-**Excludes:** sounddevice, fastapi, uvicorn
+**Excludes:** Microphone (`sounddevice`), web server (`fastapi`, `uvicorn`)
 
 **Use when:**
 - Processing audio files to JSON output only (file mode doesn't use database)
-- CLI transcription to database (mic/stream modes)
+- CLI transcription to database (mic/stream modes require mic separately)
 - Don't need microphone or web interface
 
-### Microphone Only (no transcription, no database)
+### Microphone Only (no transcription)
 
 ```bash
 uv pip install -e '.[mic]'
 ```
 
 **Includes:**
-- All base dependencies
+- All base dependencies (including PostgreSQL adapter)
 - Microphone recording (`sounddevice`)
 
-**Excludes:** pywhispercpp, faster-whisper, psycopg, fastapi, uvicorn
+**Excludes:** Transcription backends (`pywhispercpp`, `faster-whisper`), web server (`fastapi`, `uvicorn`)
 
-**Saves:** ~2GB disk space, no database required
+**Saves:** ~2GB disk space (no transcription models)
 
 **Use when:**
 - Only need microphone recording with `--no-transcribe` mode
@@ -124,15 +121,14 @@ uv pip install -e .
 ```
 
 **Includes:**
-- All base dependencies (silero-vad, scipy, torch, numpy, etc.)
+- All base dependencies (silero-vad, scipy, torch, numpy, psycopg, etc.)
 
 **Excludes:**
-- pywhispercpp, faster-whisper (transcription)
-- psycopg (PostgreSQL)
-- sounddevice (microphone)
-- fastapi, uvicorn (web server)
+- Transcription backends (`pywhispercpp`, `faster-whisper`)
+- Microphone recording (`sounddevice`)
+- Web server (`fastapi`, `uvicorn`)
 
-**Saves:** ~2GB disk space, faster installation, no database or audio hardware required
+**Saves:** ~2GB disk space (no transcription models), faster installation
 
 **Use when:**
 - You only need voice activity detection (VAD)
@@ -210,15 +206,6 @@ To use microphone recording, install with: uv pip install -e '.[mic]'
 Note: Microphone recording is only supported on desktop platforms (Windows, Mac, Linux).
 ```
 
-### Attempting Database Access Without Dependencies
-
-If you try to use database features without installing the `[transcribe]` or `[web]` extra, you'll get a helpful error:
-
-```
-ImportError: psycopg is not installed.
-To use database features with CLI, install with: uv pip install -e '.[transcribe]'
-```
-
 ### Attempting Web Server Without Dependencies
 
 If you try to start the web server without installing the `[web]` extra, you'll get a helpful error:
@@ -239,15 +226,15 @@ dependencies = [
     "scipy>=1.14.1,<2",
     "torch>=2.5.1,<3",
     "numpy>=2.2.1,<3",
+    "psycopg[binary]>=3.2.3,<4",  # Database adapter (lightweight, always included)
     # ... other base dependencies
-    # NOTE: transcription, database, mic, and web dependencies are optional
+    # NOTE: transcription, mic, and web dependencies are optional
 ]
 
 [project.optional-dependencies]
 transcribe = [
     "pywhispercpp>=1.3.3,<1.4",
     "faster-whisper>=1.0.0,<2",
-    "psycopg[binary]>=3.2.3,<4",
 ]
 mic = [
     "sounddevice>=0.5.1,<0.6",
@@ -255,7 +242,6 @@ mic = [
 web = [
     "fastapi>=0.115.0,<1",
     "uvicorn[standard]>=0.32.0,<1",
-    "psycopg[binary]>=3.2.3,<4",
 ]
 dev = [
     "pytest>=9.0.0,<10",
@@ -348,11 +334,12 @@ uv run pytest
 
 1. **Reduced Disk Usage**: Save ~2GB by not installing transcription models
 2. **Faster Installation**: Skip compilation of native extensions when not needed
-3. **Modular Architecture**: Separate CLI, web server, database, and transcription components
+3. **Modular Architecture**: Separate CLI, web server, and transcription components
 4. **Flexible Deployment**:
    - CLI-only servers without web dependencies
    - Web-only servers for viewing transcripts
-   - VAD-only mode doesn't need PostgreSQL, transcription, or web server
+   - VAD-only mode doesn't need transcription backends or web server
 5. **Clear Error Messages**: Users know exactly what to install when needed
 6. **Platform-Specific**: Microphone recording only installed on desktop platforms
 7. **Resource Optimization**: Install only the components needed for your use case
+8. **Database Always Available**: PostgreSQL adapter is lightweight and included by default for all installations
