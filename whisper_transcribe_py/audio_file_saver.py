@@ -10,12 +10,16 @@ import numpy as np
 from whisper_transcribe_py.vad_processor import AudioSegment
 
 TARGET_SAMPLE_RATE = 16000
+OUTPUT_FORMAT = "opus"  # Options: "opus", "wav"
 
 AudioSegmentCallback = Callable[[AudioSegment], None]
 
 
 def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> AudioSegmentCallback:
-    """Create a callback that saves audio segments to disk as Opus files.
+    """Create a callback that saves audio segments to disk.
+
+    Output format is determined by the OUTPUT_FORMAT module constant.
+    Supported formats: "opus" (default, compressed), "wav" (uncompressed PCM).
 
     Args:
         show_name: Name of the show (used for organizing files)
@@ -52,52 +56,48 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
         # Create target directory if it doesn't exist
         os.makedirs(target_directory, exist_ok=True)
 
-        # Convert float32 audio to int16 for opus encoding
+        # Convert float32 audio to int16 for encoding
         max_int16 = np.iinfo(np.int16).max
         audio_int16 = (audio * max_int16).astype(np.int16)
 
-        # Create final opus file path
-        final_path = os.path.join(target_directory, f"{start_timestamp}-{end_timestamp}.opus")
+        # Create final audio file path with format-specific extension
+        final_path = os.path.join(target_directory, f"{start_timestamp}-{end_timestamp}.{OUTPUT_FORMAT}")
 
         # Create temporary file path with proper extension for atomic save
         temp_path = f"{final_path}.tmp"
 
-        # Use ffmpeg to encode to opus 8kbps with 8kHz sample rate
-        command = [
-            "ffmpeg",
-            "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
-            "-acodec", "pcm_s16le",  # Input codec
-            "-ac", "1",  # Number of channels (1 = mono)
-            "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
-            "-i", "pipe:",  # Input from stdin
-            "-c:a", "libopus",  # Audio codec: Opus
-            "-b:a", "8k",  # Audio bitrate: 8kbps
-            #"-ar", "8000",  # Output sample rate: 8kHz
-            "-f", "ogg",  # Explicitly specify container format
-            "-y",  # Overwrite output file if it exists
-            temp_path
-        ]
-
-        # # Create final mp4 file path
-        # final_path = os.path.join(directory, f"{start_timestamp}-{end_timestamp}.m4a")
-
-        # # Create temporary file path with proper extension for atomic save
-        # temp_path = f"{final_path}.tmp"
-
-        # # Use ffmpeg to encode to opus 8kbps
-        # command = [
-        #     "ffmpeg",
-        #     "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
-        #     "-acodec", "pcm_s16le",  # Input codec
-        #     "-ac", "1",  # Number of channels (1 = mono)
-        #     "-ar", str(TARGET_SAMPLE_RATE),  # Sample rate
-        #     "-i", "pipe:",  # Input from stdin
-        #     "-c:a", "aac",  # Audio codec: AAC
-        #     "-b:a", "8k",  # Audio bitrate: 8kbps
-        #     "-f", "ipod",  # Explicitly specify container format
-        #     "-y",  # Overwrite output file if it exists
-        #     temp_path
-        # ]
+        # Build ffmpeg command based on output format
+        if OUTPUT_FORMAT == "wav":
+            # WAV: Uncompressed PCM format
+            command = [
+                "ffmpeg",
+                "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
+                "-acodec", "pcm_s16le",  # Input codec
+                "-ac", "1",  # Number of channels (1 = mono)
+                "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
+                "-i", "pipe:",  # Input from stdin
+                "-c:a", "pcm_s16le",  # Output codec: uncompressed PCM
+                "-f", "wav",  # Container format: WAV
+                "-y",  # Overwrite output file if it exists
+                temp_path
+            ]
+        elif OUTPUT_FORMAT == "opus":
+            # Opus: Compressed format (8kbps)
+            command = [
+                "ffmpeg",
+                "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
+                "-acodec", "pcm_s16le",  # Input codec
+                "-ac", "1",  # Number of channels (1 = mono)
+                "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
+                "-i", "pipe:",  # Input from stdin
+                "-c:a", "libopus",  # Audio codec: Opus
+                "-b:a", "8k",  # Audio bitrate: 8kbps
+                "-f", "ogg",  # Container format: OGG
+                "-y",  # Overwrite output file if it exists
+                temp_path
+            ]
+        else:
+            raise ValueError(f"Unsupported OUTPUT_FORMAT: {OUTPUT_FORMAT}. Supported formats: 'opus', 'wav'")
 
         process = None
         try:
@@ -116,7 +116,7 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
             returncode = process.wait()
             if returncode != 0:
                 stderr_output = process.stderr.read().decode('utf-8', errors='replace')
-                raise ValueError(f"ffmpeg opus encoding failed with return code {returncode}. Error: {stderr_output}")
+                raise ValueError(f"ffmpeg {OUTPUT_FORMAT} encoding failed with return code {returncode}. Error: {stderr_output}")
 
             # Atomically rename temp file to final file
             os.rename(temp_path, final_path)
@@ -128,7 +128,7 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
                     os.remove(temp_path)
                 except OSError:
                     pass  # Ignore cleanup errors
-            raise RuntimeError(f"Failed to save opus audio: {e}")
+            raise RuntimeError(f"Failed to save {OUTPUT_FORMAT} audio: {e}")
         finally:
             if process and process.stderr:
                 process.stderr.close()
