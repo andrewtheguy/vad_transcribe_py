@@ -23,7 +23,9 @@ TARGET_SAMPLE_RATE = 16000
 
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
-QUEUE_TIME_LIMIT_SECONDS = 60.0
+# Queue backlog limit must be at least 2x the max speech segment duration (default 60s)
+# to ensure a single segment doesn't exceed the queue capacity
+QUEUE_TIME_LIMIT_SECONDS = 120.0
 # don't make it too low otherwise it will be stuck in drop mode
 QUEUE_RESUME_LIMIT_SECONDS = 15.0
 
@@ -218,13 +220,21 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
 
     def _save(segment: AudioSegment):
         audio = segment.audio
-        start_timestamp = f"{segment.start:08.3f}"
-        end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):08.3f}"
-        
+
+        # Use wall clock timestamps for livestream mode, relative timestamps for file mode
+        if segment.wall_clock_start is not None:
+            # Livestream mode: use Unix timestamps (seconds.microseconds)
+            start_timestamp = f"{segment.wall_clock_start:.6f}"
+            end_timestamp = f"{(segment.wall_clock_start + len(audio) / TARGET_SAMPLE_RATE):.6f}"
+        else:
+            # File mode: use relative timestamps
+            start_timestamp = f"{segment.start:08.3f}"
+            end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):08.3f}"
+
         # Convert float32 audio to int16 for opus encoding
         max_int16 = np.iinfo(np.int16).max
         audio_int16 = (audio * max_int16).astype(np.int16)
-        
+
         # Create final opus file path
         final_path = os.path.join(show_directory, f"{start_timestamp}-{end_timestamp}.opus")
         
@@ -616,15 +626,29 @@ class AudioTranscriber:
         default_min_speech = 3.0
         default_max_speech = 60.0
 
+        # Determine actual max_speech_seconds value
+        actual_max_speech = vad_max_speech_seconds if vad_max_speech_seconds is not None else default_max_speech
+
         # Initialize speech detector with callback
         self.speech_detector = SpeechDetector(
             sample_rate=TARGET_SAMPLE_RATE,
             min_speech_seconds=vad_min_speech_seconds if vad_min_speech_seconds is not None else default_min_speech,
-            max_speech_seconds=vad_max_speech_seconds if vad_max_speech_seconds is not None else default_max_speech,
+            max_speech_seconds=actual_max_speech,
             on_segment_complete=self._handle_vad_segment,
         )
 
         if mode == 'livestream' and self.queue_backlog_limiter is not None:
+            # Validate that queue limit is at least twice the max speech duration
+            if hasattr(self.queue_backlog_limiter, 'max_seconds') and self.queue_backlog_limiter.max_seconds is not None:
+                min_required_queue_seconds = 2 * actual_max_speech
+                if self.queue_backlog_limiter.max_seconds < min_required_queue_seconds:
+                    raise ValueError(
+                        f"QUEUE_TIME_LIMIT_SECONDS ({self.queue_backlog_limiter.max_seconds}s) must be at least "
+                        f"twice the max speech duration ({actual_max_speech}s). "
+                        f"Required minimum: {min_required_queue_seconds}s. "
+                        f"Update QUEUE_TIME_LIMIT_SECONDS in audio_transcriber.py or pass a custom limiter."
+                    )
+
             self.queue_backlog_limiter.register_drop_callback(self._handle_drop_notice)
             # Register stuck callback if available (not all limiters may have this)
             if hasattr(self.queue_backlog_limiter, 'register_stuck_callback'):

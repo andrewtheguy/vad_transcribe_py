@@ -7,6 +7,7 @@ import sounddevice as sd
 
 from whisper_transcribe_py.audio_transcriber import (
     AudioSegment,
+    AudioSegmentCallback,
     AudioTranscriber,
     TARGET_SAMPLE_RATE,
     QueueBacklogLimiter,
@@ -23,6 +24,7 @@ class MicRecorder:
             n_threads: int = 1,
             show_name: str = "unknown",
             transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
+            audio_segment_callback: Optional[AudioSegmentCallback] = None,
             backend: str = 'whisper_cpp',
     ):
         self.audio_input_queue = audio_input_queue
@@ -33,6 +35,7 @@ class MicRecorder:
         self.stream = sd.InputStream(callback=self.audio_callback)
         self.show_name = show_name
         self.transcript_persistence_callback = transcript_persistence_callback
+        self.audio_segment_callback = audio_segment_callback
         self.backend = backend
 
     def audio_callback(self, indata, frames, t, status):
@@ -77,5 +80,6 @@ class MicRecorder:
                 n_threads=self.n_threads,
                 show_name=self.show_name,
                 transcript_persistence_callback=self.transcript_persistence_callback,
+                audio_segment_callback=self.audio_segment_callback,
                 backend=self.backend,
             ).process_input(input_sample_rate)

@@ -28,7 +28,8 @@ class SessionError(Exception):
 class SessionRevokedError(SessionError):
     """Raised when an API call references a revoked session."""
 
-DEFAULT_SESSION_QUEUE_TIME_LIMIT_SECONDS = 60.0
+# Queue backlog limit must be at least 2x the max speech segment duration (default 60s)
+DEFAULT_SESSION_QUEUE_TIME_LIMIT_SECONDS = 120.0
 
 
 @dataclass

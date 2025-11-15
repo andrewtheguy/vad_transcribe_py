@@ -511,6 +511,7 @@ def test_handle_vad_segment_consumes_non_speech_from_backlog(make_transcriber):
     transcriber = make_transcriber(
         language="en",
         queue_backlog_limiter=limiter,
+        vad_max_speech_seconds=5.0,  # Ensure 2*5 = 10 fits within limiter max
     )
 
     # Set up speech detector to return some non-speech
