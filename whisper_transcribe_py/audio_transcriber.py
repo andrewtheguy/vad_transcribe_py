@@ -232,20 +232,42 @@ def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCall
         # Create temporary file path with proper extension for atomic save
         temp_path = f"{final_path}.tmp"
         
-        # Use ffmpeg to encode to opus 8kbps
+        # Use ffmpeg to encode to opus 8kbps with 8kHz sample rate
         command = [
             "ffmpeg",
             "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
             "-acodec", "pcm_s16le",  # Input codec
             "-ac", "1",  # Number of channels (1 = mono)
-            "-ar", str(TARGET_SAMPLE_RATE),  # Sample rate
+            "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
             "-i", "pipe:",  # Input from stdin
             "-c:a", "libopus",  # Audio codec: Opus
             "-b:a", "8k",  # Audio bitrate: 8kbps
+            #"-ar", "8000",  # Output sample rate: 8kHz
             "-f", "ogg",  # Explicitly specify container format
             "-y",  # Overwrite output file if it exists
             temp_path
         ]
+
+        # # Create final mp4 file path
+        # final_path = os.path.join(directory, f"{start_timestamp}-{end_timestamp}.m4a")
+        
+        # # Create temporary file path with proper extension for atomic save
+        # temp_path = f"{final_path}.tmp"
+        
+        # # Use ffmpeg to encode to opus 8kbps
+        # command = [
+        #     "ffmpeg",
+        #     "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
+        #     "-acodec", "pcm_s16le",  # Input codec
+        #     "-ac", "1",  # Number of channels (1 = mono)
+        #     "-ar", str(TARGET_SAMPLE_RATE),  # Sample rate
+        #     "-i", "pipe:",  # Input from stdin
+        #     "-c:a", "aac",  # Audio codec: AAC
+        #     "-b:a", "8k",  # Audio bitrate: 8kbps
+        #     "-f", "ipod",  # Explicitly specify container format
+        #     "-y",  # Overwrite output file if it exists
+        #     temp_path
+        # ]
         
         process = None
         try:
@@ -1183,3 +1205,4 @@ def stream_url_thread(
         print("stream_stopped, restarting", file=sys.stderr)
         sleep(0.5)
     print("stream_url_thread exiting", file=sys.stderr)
+
