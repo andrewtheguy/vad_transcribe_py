@@ -24,6 +24,29 @@ from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_
 from file_lock import acquire_lock, LockError
 
 
+class ThreadExceptionHandler:
+    """Captures exceptions from worker threads and signals main thread to exit."""
+    def __init__(self):
+        self.exception = None
+        self.lock = threading.Lock()
+
+    def set_exception(self, exc: Exception):
+        """Store the first exception encountered."""
+        with self.lock:
+            if self.exception is None:  # Only capture first exception
+                self.exception = exc
+
+    def has_exception(self) -> bool:
+        """Check if an exception has been captured."""
+        with self.lock:
+            return self.exception is not None
+
+    def get_exception(self) -> Optional[Exception]:
+        """Retrieve the captured exception."""
+        with self.lock:
+            return self.exception
+
+
 class JsonTranscriptWriter:
     def __init__(self, output_path: str):
         self.output_path = output_path
@@ -49,7 +72,8 @@ def process_vad_only(audio_input_queue, show_name, stop_event=None):
     Process audio through VAD only, saving detected speech segments without transcription.
     File mode - no wall clock timestamps, no backlog limiting.
     """
-    audio_segment_callback = create_audio_file_saver(show_name)
+    exception_handler = ThreadExceptionHandler()
+    audio_segment_callback = create_audio_file_saver(show_name, exception_handler=exception_handler)
 
     def on_segment_complete(segment: AudioSegment):
         """Called when VAD detects a complete speech segment."""
@@ -68,6 +92,12 @@ def process_vad_only(audio_input_queue, show_name, stop_event=None):
     while True:
         if stop_event is not None and stop_event.is_set():
             break
+
+        # Check for exceptions from audio saver
+        if exception_handler.has_exception():
+            exc = exception_handler.get_exception()
+            print(f"FATAL ERROR in audio saver: {exc}", file=sys.stderr)
+            sys.exit(1)
 
         item = audio_input_queue.get()
         if item is None:
@@ -96,7 +126,8 @@ def process_vad_only_livestream(audio_input_queue, show_name, input_sample_rate,
     """
     import scipy.signal
 
-    audio_segment_callback = create_audio_file_saver(show_name)
+    exception_handler = ThreadExceptionHandler()
+    audio_segment_callback = create_audio_file_saver(show_name, exception_handler=exception_handler)
 
     def on_segment_complete(segment: AudioSegment):
         """Called when VAD detects a complete speech segment."""
@@ -142,6 +173,12 @@ def process_vad_only_livestream(audio_input_queue, show_name, input_sample_rate,
     while True:
         if stop_event is not None and stop_event.is_set():
             break
+
+        # Check for exceptions from audio saver
+        if exception_handler.has_exception():
+            exc = exception_handler.get_exception()
+            print(f"FATAL ERROR in audio saver: {exc}", file=sys.stderr)
+            sys.exit(1)
 
         segment = audio_input_queue.get()
         if segment is None:
@@ -295,12 +332,13 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                   transcript_persistence_callback=None,model='large-v3-turbo',segment_callback=None,
                   n_threads=1, stop_event=None,
                   queue_backlog_limiter: Optional[QueueBacklogLimiter] = None,
-                  mode='livestream', backend='whisper_cpp'):
+                  mode='livestream', backend='whisper_cpp',
+                  exception_handler: Optional[ThreadExceptionHandler] = None):
     print("process_queue")
     if save_audio and audio_segment_callback is None:
         if show_name is None:
             raise ValueError("show_name is required when save_audio=True and no audio_segment_callback provided")
-        audio_segment_callback = create_audio_file_saver(show_name)
+        audio_segment_callback = create_audio_file_saver(show_name, exception_handler=exception_handler)
 
     AudioTranscriber(audio_input_queue=q,
                      language=language,
@@ -414,6 +452,7 @@ if __name__ == '__main__':
                     # Normal mode: transcribe and save to JSON
                     output_path = args.output
                     transcript_writer = JsonTranscriptWriter(output_path)
+                    exception_handler = ThreadExceptionHandler()
 
                     thread_transcribe = threading.Thread(target=process_queue, kwargs={
                         'q': audio_input_queue,
@@ -424,6 +463,7 @@ if __name__ == '__main__':
                         'stop_event': stop_event,
                         'mode': 'file',  # File mode: no wall_clock timestamps
                         'backend': args.backend,
+                        'exception_handler': exception_handler,
                     })
 
                 # Start the thread
@@ -439,6 +479,15 @@ if __name__ == '__main__':
                             if stop_event.is_set():
                                 print(f"Stop event set after {chunks_read} chunks, {total_bytes} bytes", file=sys.stderr)
                                 break
+
+                            # Check for exceptions from transcribe thread
+                            if args.transcribe and exception_handler.has_exception():
+                                exc = exception_handler.get_exception()
+                                print(f"FATAL ERROR in transcribe thread: {exc}", file=sys.stderr)
+                                _request_shutdown(stop_event, audio_input_queue)
+                                thread_transcribe.join()
+                                sys.exit(1)
+
                             chunk = stdout.read(4096)
                             if not chunk:
                                 print(f"End of stream reached after {chunks_read} chunks, {total_bytes} bytes, {ts:.2f} seconds", file=sys.stderr)
@@ -626,6 +675,7 @@ if __name__ == '__main__':
                         initialize_database_schema(conn)
 
                         db_writer = build_database_writer(conn, data['show_name'])
+                        exception_handler = ThreadExceptionHandler()
 
                         # Create a new thread
                         thread_transcribe = threading.Thread(target=process_queue,  kwargs={
@@ -639,6 +689,7 @@ if __name__ == '__main__':
                             'stop_event': stop_event,
                             'queue_backlog_limiter': queue_limiter,
                             'backend': args.backend if args.backend != 'whisper_cpp' else data.get('backend', 'whisper_cpp'),
+                            'exception_handler': exception_handler,
                         })
 
                         # Start the thread
@@ -665,7 +716,13 @@ if __name__ == '__main__':
                         print("Press Ctrl+C to stop streaming.")
                         try:
                             while not stop_event.wait(timeout=1):
-                                pass
+                                # Check for exceptions from transcribe thread
+                                if exception_handler.has_exception():
+                                    exc = exception_handler.get_exception()
+                                    print(f"FATAL ERROR in transcribe thread: {exc}", file=sys.stderr)
+                                    stop_stream()
+                                    thread_transcribe.join()
+                                    sys.exit(1)
                         except KeyboardInterrupt:
                             print("\nCtrl+C received, stopping stream...", file=sys.stderr)
                             stop_stream()

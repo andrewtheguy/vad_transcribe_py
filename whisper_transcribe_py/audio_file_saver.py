@@ -5,11 +5,14 @@ import sqlite3
 import subprocess
 import uuid
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, TYPE_CHECKING, Optional
 
 import numpy as np
 
 from whisper_transcribe_py.vad_processor import AudioSegment
+
+if TYPE_CHECKING:
+    from __main__ import ThreadExceptionHandler
 
 TARGET_SAMPLE_RATE = 16000
 OUTPUT_FORMAT = "m4a"  # Options: "opus", "wav", "m4a"
@@ -18,12 +21,17 @@ STORAGE_TYPE = "sqlite"  # Options: "file", "sqlite"
 AudioSegmentCallback = Callable[[AudioSegment], None]
 
 
-def _create_file_saver(show_name: str, directory: str) -> AudioSegmentCallback:
+def _create_file_saver(
+    show_name: str,
+    directory: str,
+    exception_handler: Optional['ThreadExceptionHandler'] = None
+) -> AudioSegmentCallback:
     """Create a callback that saves audio segments to individual files.
 
     Args:
         show_name: Name of the show (used for organizing files)
         directory: Base directory for saving audio files
+        exception_handler: Optional handler to capture exceptions for main thread
 
     Returns:
         Callback function that accepts AudioSegment and saves it to disk
@@ -31,7 +39,7 @@ def _create_file_saver(show_name: str, directory: str) -> AudioSegmentCallback:
     # Base directory for this show
     base_show_directory = os.path.join(directory, show_name)
 
-    def _save(segment: AudioSegment):
+    def _save_impl(segment: AudioSegment):
         audio = segment.audio
 
         # Use wall clock timestamps for livestream mode, relative timestamps for file mode
@@ -148,6 +156,15 @@ def _create_file_saver(show_name: str, directory: str) -> AudioSegmentCallback:
             if process and process.stderr:
                 process.stderr.close()
 
+    def _save(segment: AudioSegment):
+        """Wrapper that captures exceptions for the exception handler."""
+        try:
+            _save_impl(segment)
+        except Exception as e:
+            if exception_handler:
+                exception_handler.set_exception(e)
+            raise
+
     return _save
 
 
@@ -263,11 +280,15 @@ def _encode_to_raw_aac(audio_int16: np.ndarray) -> bytes:
         raise RuntimeError(f"Failed to encode to raw AAC: {e}")
 
 
-def _create_sqlite_saver(show_name: str) -> AudioSegmentCallback:
+def _create_sqlite_saver(
+    show_name: str,
+    exception_handler: Optional['ThreadExceptionHandler'] = None
+) -> AudioSegmentCallback:
     """Create a callback that saves audio segments to an SQLite database.
 
     Args:
         show_name: Name of the show (used for database filename)
+        exception_handler: Optional handler to capture exceptions for main thread
 
     Returns:
         Callback function that accepts AudioSegment and saves it to SQLite
@@ -295,7 +316,7 @@ def _create_sqlite_saver(show_name: str) -> AudioSegmentCallback:
     conn.execute('CREATE INDEX IF NOT EXISTS idx_start_ts ON speech(start_ts)')
     conn.commit()
 
-    def _save(segment: AudioSegment):
+    def _save_impl(segment: AudioSegment):
         audio = segment.audio
 
         # Calculate timestamps in ISO 8601 format
@@ -348,10 +369,23 @@ def _create_sqlite_saver(show_name: str) -> AudioSegmentCallback:
         except Exception as e:
             raise RuntimeError(f"Failed to save audio segment to SQLite: {e}")
 
+    def _save(segment: AudioSegment):
+        """Wrapper that captures exceptions for the exception handler."""
+        try:
+            _save_impl(segment)
+        except Exception as e:
+            if exception_handler:
+                exception_handler.set_exception(e)
+            raise
+
     return _save
 
 
-def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> AudioSegmentCallback:
+def create_audio_file_saver(
+    show_name: str,
+    directory: str = "./tmp/speech",
+    exception_handler: Optional['ThreadExceptionHandler'] = None
+) -> AudioSegmentCallback:
     """Create a callback that saves audio segments.
 
     Storage backend is determined by the STORAGE_TYPE module constant:
@@ -375,6 +409,7 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
     Args:
         show_name: Name of the show (used for organizing files/database)
         directory: Base directory for file storage (ignored for sqlite mode)
+        exception_handler: Optional handler to capture exceptions for main thread
 
     Returns:
         Callback function that accepts AudioSegment and saves it
@@ -390,8 +425,8 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
         )
 
     if STORAGE_TYPE == "file":
-        return _create_file_saver(show_name, directory)
+        return _create_file_saver(show_name, directory, exception_handler)
     elif STORAGE_TYPE == "sqlite":
-        return _create_sqlite_saver(show_name)
+        return _create_sqlite_saver(show_name, exception_handler)
     else:
         raise ValueError(f"Unsupported STORAGE_TYPE: {STORAGE_TYPE}. Supported: 'file', 'sqlite'")
