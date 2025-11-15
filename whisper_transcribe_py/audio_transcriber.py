@@ -222,21 +222,6 @@ def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCall
         start_timestamp = f"{segment.start:08.3f}"
         end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):012.3f}"
 
-        # # Convert float32 normalized audio to int16 PCM
-        # audio_int16 = (audio * 32767).astype(np.int16)
-        #
-        # # Create pydub AudioSegment from raw PCM data
-        # audio_segment = PydubAudioSegment(
-        #     audio_int16.tobytes(),
-        #     frame_rate=TARGET_SAMPLE_RATE,
-        #     sample_width=2,  # 2 bytes for int16
-        #     channels=1       # mono audio
-        # )
-        #
-        # # Export as OPUS with 8 kbps bitrate
-        # output_path = os.path.join(directory, f"{start_timestamp}-{end_timestamp}.opus")
-        # audio_segment.export(output_path, format="opus", bitrate="8k")
-
         sf.write(os.path.join(directory, f"{start_timestamp}-{end_timestamp}.wav"), segment.audio, TARGET_SAMPLE_RATE)
 
     return _save
