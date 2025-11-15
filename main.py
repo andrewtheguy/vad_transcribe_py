@@ -218,12 +218,15 @@ def capture_mic_to_queue(audio_input_queue, stop_event, queue_limiter: Optional[
     """
     Capture microphone audio and put it into a queue for VAD processing.
     Simple version for --no-transcribe mode - no model loading.
+    Resamples audio to TARGET_SAMPLE_RATE before queuing.
     Blocks until stop_event is set.
     Returns the input sample rate.
     """
+    import scipy.signal
+
     approx_input_sample_rate = [TARGET_SAMPLE_RATE]  # Use list to allow modification in callback
 
-    def audio_callback(indata, frames, t, status):
+    def audio_callback(indata, _frames, _t, status):
         """Called from separate thread for each audio block."""
         if status:
             print(status, file=sys.stderr)
@@ -231,7 +234,18 @@ def capture_mic_to_queue(audio_input_queue, stop_event, queue_limiter: Optional[
             return
 
         data_flattened = indata.squeeze().copy()
-        duration_seconds = len(data_flattened) / approx_input_sample_rate[0] if approx_input_sample_rate[0] else 0
+
+        # Resample to TARGET_SAMPLE_RATE if needed
+        if approx_input_sample_rate[0] != TARGET_SAMPLE_RATE:
+            data_resampled = scipy.signal.resample(
+                data_flattened,
+                int(len(data_flattened) * TARGET_SAMPLE_RATE / approx_input_sample_rate[0])
+            )
+        else:
+            data_resampled = data_flattened
+
+        # Duration is based on resampled audio at TARGET_SAMPLE_RATE
+        duration_seconds = len(data_resampled) / TARGET_SAMPLE_RATE
 
         # Capture timestamp before try_add
         start_ts = time.time()
@@ -241,7 +255,7 @@ def capture_mic_to_queue(audio_input_queue, stop_event, queue_limiter: Optional[
         audio_input_queue.put(
             AudioSegment(
                 start=start_ts,
-                audio=data_flattened,
+                audio=data_resampled,
                 duration_seconds=duration_seconds if duration_seconds > 0 else None,
                 wall_clock_start=start_ts,
             )
