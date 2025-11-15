@@ -17,6 +17,31 @@
 
 ## Quick Start
 
+### Installation
+
+Whisper Transcribe supports optional dependencies for different use cases:
+
+**Full installation (with transcription):**
+```bash
+# Install with all features including transcription backends
+uv pip install -e '.[transcribe]'
+```
+
+**Lightweight installation (VAD-only, no transcription):**
+```bash
+# Install without transcription backends (saves ~2GB disk space and faster install)
+uv pip install -e .
+```
+
+The lightweight installation is perfect if you only need:
+- Audio segmentation with VAD (Voice Activity Detection)
+- Saving detected speech segments to files (`--no-transcribe` mode)
+- Reduced dependencies and smaller deployment footprint
+
+To use transcription features, you must install the `[transcribe]` extra which includes:
+- `pywhispercpp` - Whisper.cpp Python bindings
+- `faster-whisper` - CTranslate2-based Whisper implementation
+
 ### Database Setup (Required for most features)
 
 Most features (web interface, microphone recording, and stream processing) require a PostgreSQL database to store transcripts. Set this up first:

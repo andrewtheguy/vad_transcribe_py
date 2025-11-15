@@ -667,7 +667,14 @@ class AudioTranscriber:
             raise ValueError(f"Unsupported backend: {self.backend}")
 
     def _load_whisper_cpp(self):
-        from pywhispercpp.model import Model
+        try:
+            from pywhispercpp.model import Model
+        except ImportError:
+            raise ImportError(
+                "pywhispercpp is not installed. "
+                "To use transcription, install with: uv pip install -e '.[transcribe]' "
+                "or use --no-transcribe flag for VAD-only mode."
+            )
 
         self.whisper_cpp_model = Model(self.model,
 
@@ -683,7 +690,14 @@ class AudioTranscriber:
         print(self.whisper_cpp_model.system_info())
 
     def _load_faster_whisper(self):
-        from faster_whisper import WhisperModel
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            raise ImportError(
+                "faster-whisper is not installed. "
+                "To use transcription, install with: uv pip install -e '.[transcribe]' "
+                "or use --no-transcribe flag for VAD-only mode."
+            )
         #import torch
 
         # # Determine device and compute type intelligently

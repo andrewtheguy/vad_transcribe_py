@@ -1123,11 +1123,9 @@ source = { editable = "." }
 dependencies = [
     { name = "argparse" },
     { name = "fastapi" },
-    { name = "faster-whisper" },
     { name = "numpy" },
     { name = "psycopg", extra = ["binary"] },
     { name = "python-dotenv" },
-    { name = "pywhispercpp" },
     { name = "readchar" },
     { name = "scipy" },
     { name = "silero-vad" },
@@ -1143,18 +1141,22 @@ dev = [
     { name = "httpx" },
     { name = "pytest" },
 ]
+transcribe = [
+    { name = "faster-whisper" },
+    { name = "pywhispercpp" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "argparse", specifier = ">=1.4.0,<2" },
     { name = "fastapi", specifier = ">=0.115.0,<1" },
-    { name = "faster-whisper", specifier = ">=1.0.0,<2" },
+    { name = "faster-whisper", marker = "extra == 'transcribe'", specifier = ">=1.0.0,<2" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.1,<1" },
     { name = "numpy", specifier = ">=2.2.1,<3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.3,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0,<10" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
-    { name = "pywhispercpp", specifier = ">=1.3.3,<1.4" },
+    { name = "pywhispercpp", marker = "extra == 'transcribe'", specifier = ">=1.3.3,<1.4" },
     { name = "readchar", specifier = ">=4.2.1,<5" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
@@ -1164,7 +1166,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0,<1" },
     { name = "zhconv-rs", specifier = ">=0.3.2.post2,<0.4" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["transcribe", "dev"]
 
 [[package]]
 name = "zhconv-rs"
