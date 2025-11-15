@@ -756,8 +756,9 @@ class TestMultiSegmentScenarios:
             assert len(segments) == 2
 
             # Verify timestamps
-            assert segments[0].start == 0.032  # Started at speech window
-            assert segments[1].start == 0.192  # Started at 2nd segment
+            # Start timestamps should include look-back duration
+            assert segments[0].start == 0.0  # Includes 1 look-back window
+            assert segments[1].start == 0.128  # Includes 2 look-back windows
 
     def test_wall_clock_timestamps_propagated(self):
         """Test that wall clock timestamps are correctly propagated to segments."""

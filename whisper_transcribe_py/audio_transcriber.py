@@ -220,7 +220,7 @@ def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCall
     def _save(segment: AudioSegment):
         audio = segment.audio
         start_timestamp = f"{segment.start:08.3f}"
-        end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):012.3f}"
+        end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):08.3f}"
 
         sf.write(os.path.join(directory, f"{start_timestamp}-{end_timestamp}.wav"), segment.audio, TARGET_SAMPLE_RATE)
 

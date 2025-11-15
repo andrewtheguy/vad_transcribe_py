@@ -201,12 +201,22 @@ class SpeechDetector:
         self._has_speech_begin_wall_clock = wall_clock_timestamp
 
         # Add look-back buffer if available
+        prepended_duration = 0.0
         if self._look_back_buffer:
+            prepended_duration = self._look_back_buffer_duration
             for prev_window in self._look_back_buffer:
                 self._speech_section.extend(prev_window)
             self._look_back_buffer.clear()
             self._look_back_buffer_duration = 0.0
             self._pending_non_speech_seconds = 0.0
+
+        # Adjust segment start to account for prepended audio
+        if prepended_duration > 0 and self._has_speech_begin_timestamp is not None:
+            self._has_speech_begin_timestamp = max(
+                0.0, self._has_speech_begin_timestamp - prepended_duration
+            )
+            if self._has_speech_begin_wall_clock is not None:
+                self._has_speech_begin_wall_clock -= prepended_duration
 
         # Add current window
         self._speech_section.extend(audio_window)
