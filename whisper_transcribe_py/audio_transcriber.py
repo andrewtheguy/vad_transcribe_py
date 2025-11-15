@@ -223,9 +223,13 @@ def create_audio_file_saver(show_name: str, directory: str = "./tmp/speech") -> 
 
         # Use wall clock timestamps for livestream mode, relative timestamps for file mode
         if segment.wall_clock_start is not None:
-            # Livestream mode: use Unix timestamps (seconds.microseconds)
-            start_timestamp = f"{segment.wall_clock_start:.6f}"
-            end_timestamp = f"{(segment.wall_clock_start + len(audio) / TARGET_SAMPLE_RATE):.6f}"
+            # Livestream mode: use yyyymmddhhmmss.microseconds UTC format
+            start_dt = datetime.fromtimestamp(segment.wall_clock_start, timezone.utc)
+            start_timestamp = start_dt.strftime("%Y%m%d%H%M%S.%f")
+
+            end_ts = segment.wall_clock_start + len(audio) / TARGET_SAMPLE_RATE
+            end_dt = datetime.fromtimestamp(end_ts, timezone.utc)
+            end_timestamp = end_dt.strftime("%Y%m%d%H%M%S.%f")
         else:
             # File mode: use relative timestamps
             start_timestamp = f"{segment.start:08.3f}"
