@@ -50,7 +50,7 @@ def process_vad_only(audio_input_queue, stop_event=None):
 
     def on_segment_complete(segment: AudioSegment):
         """Called when VAD detects a complete speech segment."""
-        audio_segment_callback(segment.audio, segment.start)
+        audio_segment_callback(segment)
         print(f"Saved audio segment at {segment.start:.2f}s", file=sys.stderr)
 
     speech_detector = SpeechDetector(

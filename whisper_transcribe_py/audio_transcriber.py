@@ -208,15 +208,15 @@ class TranscribedSegment:
     end_timestamp: Optional[datetime]
 
 
-AudioSegmentCallback = Callable[[npt.NDArray[np.float32], float], None]
+AudioSegmentCallback = Callable[[AudioSegment], None]
 TranscriptPersistenceCallback = Callable[[TranscribedSegment], None]
 
 
 def create_audio_file_saver(directory: str = "./tmp/speech") -> AudioSegmentCallback:
     os.makedirs(directory, exist_ok=True)
 
-    def _save(audio: npt.NDArray[np.float32], start_timestamp: float):
-        sf.write(os.path.join(directory, f"{start_timestamp}.wav"), audio, TARGET_SAMPLE_RATE)
+    def _save(segment: AudioSegment):
+        sf.write(os.path.join(directory, f"{segment.start}.wav"), segment.audio, TARGET_SAMPLE_RATE)
 
     return _save
 
@@ -726,7 +726,7 @@ class AudioTranscriber:
     def _handle_vad_segment(self, segment: AudioSegment) -> None:
         """Callback from SpeechDetector when speech segment completes."""
         if self.audio_segment_callback is not None:
-            self.audio_segment_callback(segment.audio, segment.start)
+            self.audio_segment_callback(segment)
 
         # Queue the segment for transcription
         self.transcribe_queue.put(segment)

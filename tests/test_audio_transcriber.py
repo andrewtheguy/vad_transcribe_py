@@ -297,10 +297,10 @@ def test_segments_after_drop_use_notice_timestamp(make_transcriber):
 
 def test_audio_segment_callback_invoked(make_transcriber):
     """Test that audio_segment_callback is invoked when VAD segment completes."""
-    captured_audio = []
+    captured_segments = []
 
-    def audio_callback(audio, start_ts):
-        captured_audio.append((audio, start_ts))
+    def audio_callback(segment):
+        captured_segments.append(segment)
 
     transcriber = make_transcriber(
         language="en",
@@ -312,10 +312,10 @@ def test_audio_segment_callback_invoked(make_transcriber):
     segment = AudioSegment(start=10.5, audio=audio, wall_clock_start=1010.5, duration_seconds=0.1)
     transcriber._handle_vad_segment(segment)
 
-    assert len(captured_audio) == 1
-    captured, start = captured_audio[0]
-    assert np.array_equal(captured, audio)
-    assert start == 10.5
+    assert len(captured_segments) == 1
+    captured_segment = captured_segments[0]
+    assert np.array_equal(captured_segment.audio, audio)
+    assert captured_segment.start == 10.5
 
 
 def test_handle_vad_segment_queues_for_transcription(make_transcriber, recorded_transcribe):
