@@ -846,108 +846,114 @@ if __name__ == '__main__':
 
         # Connect to database and get snapshot
         # Use timeout for concurrent access while stream is writing
-        conn = sqlite3.connect(args.database, timeout=30.0, isolation_level=None)
-        conn.execute("PRAGMA busy_timeout=10000")
-        max_id = get_max_speech_id(conn)
-        print(f"Processing {max_id} speech segments (snapshot)")
+        def _open_sqlite_connection(path: str) -> sqlite3.Connection:
+            connection = sqlite3.connect(path, timeout=30.0, isolation_level=None)
+            connection.execute("PRAGMA busy_timeout=10000")
+            return connection
 
-        # Read last transcribed ID from metadata (resume capability)
-        cursor = conn.execute("SELECT value FROM metadata WHERE key = 'last_transcribed_id'")
-        result = cursor.fetchone()
-        start_from_id = int(result[0]) + 1 if result else 1
-        print(f"Resuming transcription from ID {start_from_id}")
-
-        # Initialize direct transcriber for already-segmented audio
-        segment_text_buffer: list[str] = []
-
-        def sqlite_segment_callback(start, end, text):
-            segment_text_buffer.append(text)
-
-        direct_transcriber = AudioTranscriber(
-            audio_input_queue=queue.Queue(),
-            language=args.lang,
-            mode='file',
-            show_name=show_name,
-            model=args.model if args.model is not None else 'large-v3-turbo',
-            segment_callback=sqlite_segment_callback,
-            n_threads=args.n_threads if args.n_threads is not None else 1,
-            backend=args.backend,
-        )
-
-        # Process speech segments
-        audio_segments_raw = []  # Collect raw audio for concatenation
-        ts = 0  # Relative timestamp for transcription
+        read_conn = _open_sqlite_connection(args.database)
+        write_conn = _open_sqlite_connection(args.database)
+        audio_segments_raw = []
+        ts = 0
         segment_count = 0
         transcribed_count = 0
 
         try:
-            for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(conn, max_id):
-                # Check if this is a notice entry (text-only, no audio)
-                if audio_data is None and text is not None:
-                    # Notice entry - already has text, just collect audio marker
-                    audio_segments_raw.append(None)
+            max_id = get_max_speech_id(read_conn)
+            print(f"Processing {max_id} speech segments (snapshot)")
+
+            # Read last transcribed ID from metadata (resume capability)
+            cursor = read_conn.execute("SELECT value FROM metadata WHERE key = 'last_transcribed_id'")
+            result = cursor.fetchone()
+            start_from_id = int(result[0]) + 1 if result else 1
+            print(f"Resuming transcription from ID {start_from_id}")
+
+            # Initialize direct transcriber for already-segmented audio
+            segment_text_buffer: list[str] = []
+
+            def sqlite_segment_callback(start, end, text):
+                segment_text_buffer.append(text)
+
+            direct_transcriber = AudioTranscriber(
+                audio_input_queue=queue.Queue(),
+                language=args.lang,
+                mode='file',
+                show_name=show_name,
+                model=args.model if args.model is not None else 'large-v3-turbo',
+                segment_callback=sqlite_segment_callback,
+                n_threads=args.n_threads if args.n_threads is not None else 1,
+                backend=args.backend,
+            )
+
+            try:
+                for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(read_conn, max_id):
+                    # Check if this is a notice entry (text-only, no audio)
+                    if audio_data is None and text is not None:
+                        # Notice entry - already has text, just collect audio marker
+                        audio_segments_raw.append(None)
+                        segment_count += 1
+                        continue
+
+                    # Store raw audio for concatenation
+                    audio_segments_raw.append(audio_data)
                     segment_count += 1
-                    continue
 
-                # Store raw audio for concatenation
-                audio_segments_raw.append(audio_data)
-                segment_count += 1
+                    # Skip if already transcribed
+                    if speech_id < start_from_id:
+                        continue
 
-                # Skip if already transcribed
-                if speech_id < start_from_id:
-                    continue
+                    # Audio entry - decode and transcribe
+                    audio_float32 = decode_audio_segment(audio_data, audio_format)
 
-                # Audio entry - decode and transcribe
-                audio_float32 = decode_audio_segment(audio_data, audio_format)
+                    if audio_float32 is None:
+                        continue
 
-                if audio_float32 is None:
-                    continue
+                    # Directly transcribe the decoded audio without VAD
+                    segment_text_buffer.clear()
+                    direct_transcriber.transcribe_audio_segment(audio_float32, start_offset=ts)
+                    transcribed_text = " ".join(segment_text_buffer).strip()
 
-                # Directly transcribe the decoded audio without VAD
-                segment_text_buffer.clear()
-                direct_transcriber.transcribe_audio_segment(audio_float32, start_offset=ts)
-                transcribed_text = " ".join(segment_text_buffer).strip()
+                    # Update relative timestamp after transcription completes
+                    ts += len(audio_float32) / TARGET_SAMPLE_RATE
 
-                # Update relative timestamp after transcription completes
-                ts += len(audio_float32) / TARGET_SAMPLE_RATE
+                    # Update database with transcription (single transaction for atomicity)
+                    max_db_attempts = 5
+                    for attempt in range(1, max_db_attempts + 1):
+                        try:
+                            write_conn.execute("BEGIN IMMEDIATE")
+                            write_conn.execute(
+                                "UPDATE speech SET text = ? WHERE id = ?",
+                                (transcribed_text, speech_id)
+                            )
+                            write_conn.execute(
+                                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_transcribed_id', ?)",
+                                (str(speech_id),)
+                            )
+                            write_conn.commit()
+                            break
+                        except sqlite3.OperationalError as exc:
+                            write_conn.rollback()
+                            if "locked" in str(exc).lower() and attempt < max_db_attempts:
+                                backoff = 0.5 * attempt
+                                print(f"Database locked when updating ID {speech_id}, retrying in {backoff:.1f}s...", file=sys.stderr)
+                                time.sleep(backoff)
+                                continue
+                            raise
+                        except Exception:
+                            write_conn.rollback()
+                            raise
 
-                # Update database with transcription (single transaction for atomicity)
-                max_db_attempts = 5
-                for attempt in range(1, max_db_attempts + 1):
-                    try:
-                        conn.execute("BEGIN IMMEDIATE")
-                        conn.execute(
-                            "UPDATE speech SET text = ? WHERE id = ?",
-                            (transcribed_text, speech_id)
-                        )
-                        conn.execute(
-                            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_transcribed_id', ?)",
-                            (str(speech_id),)
-                        )
-                        conn.commit()
-                        break
-                    except sqlite3.OperationalError as exc:
-                        conn.rollback()
-                        if "locked" in str(exc).lower() and attempt < max_db_attempts:
-                            backoff = 0.5 * attempt
-                            print(f"Database locked when updating ID {speech_id}, retrying in {backoff:.1f}s...", file=sys.stderr)
-                            time.sleep(backoff)
-                            continue
-                        raise
-                    except Exception:
-                        conn.rollback()
-                        raise
+                    transcribed_count += 1
 
-                transcribed_count += 1
+                    if transcribed_count % 10 == 0:
+                        print(f"Transcribed {transcribed_count} segments (ID {speech_id}/{max_id})")
 
-                if transcribed_count % 10 == 0:
-                    print(f"Transcribed {transcribed_count} segments (ID {speech_id}/{max_id})")
-
-        except KeyboardInterrupt:
-            print("\nCtrl+C received, stopping processing...", file=sys.stderr)
-            conn.close()
-            sys.exit(1)
-        conn.close()
+            except KeyboardInterrupt:
+                print("\nCtrl+C received, stopping processing...", file=sys.stderr)
+                sys.exit(1)
+        finally:
+            read_conn.close()
+            write_conn.close()
 
         print(f"Transcribed {transcribed_count} new segments (total in DB: {segment_count})")
 

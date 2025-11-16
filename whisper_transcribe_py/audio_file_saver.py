@@ -200,7 +200,6 @@ def _set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
         'INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)',
         (key, value)
     )
-    conn.commit()
 
 
 def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name: str) -> None:
@@ -219,7 +218,6 @@ def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name:
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     )''')
-    conn.commit()
 
     # Check if metadata already exists
     existing_version = _get_metadata(conn, 'version')
@@ -329,7 +327,6 @@ def _save_notice_to_sqlite(conn: sqlite3.Connection, notice) -> None:
             'INSERT INTO speech (start_ts, end_ts, audio_data, text) VALUES (?, ?, NULL, ?)',
             (start_ts_str, end_ts_str, notice.text)
         )
-        conn.commit()
     except Exception as e:
         raise RuntimeError(f"Failed to save TranscriptionNotice to SQLite: {e}")
 
@@ -361,7 +358,6 @@ def _create_sqlite_saver(
 
     # Enable WAL mode for better concurrent read/write access
     conn.execute('PRAGMA journal_mode=WAL')
-    conn.commit()
 
     # Initialize metadata table and validate format and show name
     _initialize_metadata(conn, OUTPUT_FORMAT, show_name)
@@ -376,7 +372,6 @@ def _create_sqlite_saver(
         CHECK (audio_data IS NOT NULL OR text IS NOT NULL)
     )''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_start_ts ON speech(start_ts)')
-    conn.commit()
 
     def _save_impl(segment: AudioSegment):
         audio = segment.audio
@@ -427,7 +422,6 @@ def _create_sqlite_saver(
                 'INSERT INTO speech (start_ts, end_ts, audio_data, text) VALUES (?, ?, ?, NULL)',
                 (start_ts_str, end_ts_str, audio_data)
             )
-            conn.commit()
         except Exception as e:
             raise RuntimeError(f"Failed to save audio segment to SQLite: {e}")
 
