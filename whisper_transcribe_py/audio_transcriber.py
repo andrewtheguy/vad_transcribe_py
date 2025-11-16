@@ -16,7 +16,7 @@ import scipy
 
 from zhconv_rs import zhconv
 from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment
-from whisper_transcribe_py.audio_file_saver import AudioSegmentCallback, create_audio_file_saver
+from whisper_transcribe_py.audio_data_saver import AudioSegmentCallback, create_audio_data_saver
 
 TARGET_SAMPLE_RATE = 16000
 

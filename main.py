@@ -19,7 +19,7 @@ import numpy as np
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     AudioTranscriber, AudioSegment, stream_url_thread, TranscribedSegment, QueueBacklogLimiter, \
     TranscriptPersistenceCallback, create_default_queue_limiter
-from whisper_transcribe_py.audio_file_saver import create_audio_file_saver
+from whisper_transcribe_py.audio_data_saver import create_audio_data_saver
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_samples
 from file_lock import acquire_lock, LockError
@@ -75,7 +75,7 @@ def process_vad_only(audio_input_queue, show_name, stop_event=None):
     """
     exception_handler = ThreadExceptionHandler()
     try:
-        audio_segment_callback = create_audio_file_saver(show_name, exception_handler=exception_handler)
+        audio_segment_callback = create_audio_data_saver(show_name, exception_handler=exception_handler)
     except Exception as e:
         print(f"FATAL ERROR during audio saver initialization: {e}", file=sys.stderr)
         exception_handler.set_exception(e)
@@ -137,7 +137,7 @@ def process_vad_only_livestream(audio_input_queue, show_name, input_sample_rate,
     if exception_handler is None:
         exception_handler = ThreadExceptionHandler()
     try:
-        audio_segment_callback = create_audio_file_saver(show_name, exception_handler=exception_handler)
+        audio_segment_callback = create_audio_data_saver(show_name, exception_handler=exception_handler)
     except Exception as e:
         print(f"FATAL ERROR during audio saver initialization: {e}", file=sys.stderr)
         exception_handler.set_exception(e)
@@ -358,7 +358,7 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
         if show_name is None:
             raise ValueError("show_name is required when save_audio=True and no audio_segment_callback provided")
         try:
-            audio_segment_callback = create_audio_file_saver(show_name, exception_handler=exception_handler)
+            audio_segment_callback = create_audio_data_saver(show_name, exception_handler=exception_handler)
         except Exception as e:
             print(f"FATAL ERROR during audio saver initialization: {e}", file=sys.stderr)
             if exception_handler:

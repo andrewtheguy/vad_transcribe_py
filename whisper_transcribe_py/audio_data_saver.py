@@ -1,4 +1,4 @@
-"""Audio file saving functionality for transcribed audio segments."""
+"""Audio data saving functionality for transcribed audio segments."""
 
 import os
 import sqlite3
@@ -16,161 +16,13 @@ if TYPE_CHECKING:
     from whisper_transcribe_py.audio_transcriber import TranscriptionNotice
 
 TARGET_SAMPLE_RATE = 16000
-OUTPUT_FORMAT = "m4a"  # Options: "opus", "wav", "m4a"
-STORAGE_TYPE = "sqlite"  # Options: "file", "sqlite"
+OUTPUT_FORMAT = "m4a"  # Options: "wav", "m4a"
 
-# Callback accepts either AudioSegment or TranscriptionNotice (for SQLite storage)
+# Callback accepts either AudioSegment or TranscriptionNotice
 if TYPE_CHECKING:
     AudioSegmentCallback = Callable[[Union[AudioSegment, 'TranscriptionNotice']], None]
 else:
     AudioSegmentCallback = Callable[[Union[AudioSegment, object]], None]
-
-
-def _create_file_saver(
-    show_name: str,
-    directory: str,
-    exception_handler: Optional['ThreadExceptionHandler'] = None
-) -> AudioSegmentCallback:
-    """Create a callback that saves audio segments to individual files.
-
-    Args:
-        show_name: Name of the show (used for organizing files)
-        directory: Base directory for saving audio files
-        exception_handler: Optional handler to capture exceptions for main thread
-
-    Returns:
-        Callback function that accepts AudioSegment and saves it to disk
-    """
-    # Base directory for this show
-    base_show_directory = os.path.join(directory, show_name)
-
-    def _save_impl(segment: AudioSegment):
-        audio = segment.audio
-
-        # Use wall clock timestamps for livestream mode, relative timestamps for file mode
-        if segment.wall_clock_start is not None:
-            # Livestream mode: use yyyymmddhhmmss.microseconds UTC format
-            start_dt = datetime.fromtimestamp(segment.wall_clock_start, timezone.utc)
-            start_timestamp = start_dt.strftime("%Y%m%d%H%M%S.%f")
-
-            end_ts = segment.wall_clock_start + len(audio) / TARGET_SAMPLE_RATE
-            end_dt = datetime.fromtimestamp(end_ts, timezone.utc)
-            end_timestamp = end_dt.strftime("%Y%m%d%H%M%S.%f")
-
-            # Organize by date: tmp/speech/showname/yyyy/mm/dd/
-            date_path = start_dt.strftime("%Y/%m/%d")
-            target_directory = os.path.join(base_show_directory, date_path)
-        else:
-            # File mode: use relative timestamps, no date subdirectories
-            start_timestamp = f"{segment.start:08.3f}"
-            end_timestamp = f"{(segment.start + len(audio) / TARGET_SAMPLE_RATE):08.3f}"
-            target_directory = base_show_directory
-
-        # Create target directory if it doesn't exist
-        os.makedirs(target_directory, exist_ok=True)
-
-        # Convert float32 audio to int16 for encoding
-        max_int16 = np.iinfo(np.int16).max
-        audio_int16 = (audio * max_int16).astype(np.int16)
-
-        # Create final audio file path with format-specific extension
-        final_path = os.path.join(target_directory, f"{start_timestamp}-{end_timestamp}.{OUTPUT_FORMAT}")
-
-        # Create temporary file path with proper extension for atomic save
-        temp_path = f"{final_path}.tmp"
-
-        # Build ffmpeg command based on output format
-        if OUTPUT_FORMAT == "wav":
-            # WAV: Uncompressed PCM format
-            command = [
-                "ffmpeg",
-                "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
-                "-acodec", "pcm_s16le",  # Input codec
-                "-ac", "1",  # Number of channels (1 = mono)
-                "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
-                "-i", "pipe:",  # Input from stdin
-                "-c:a", "pcm_s16le",  # Output codec: uncompressed PCM
-                "-f", "wav",  # Container format: WAV
-                "-y",  # Overwrite output file if it exists
-                temp_path
-            ]
-        elif OUTPUT_FORMAT == "opus":
-            # Opus: Compressed format (8kbps)
-            command = [
-                "ffmpeg",
-                "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
-                "-acodec", "pcm_s16le",  # Input codec
-                "-ac", "1",  # Number of channels (1 = mono)
-                "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
-                "-i", "pipe:",  # Input from stdin
-                "-c:a", "libopus",  # Audio codec: Opus
-                "-b:a", "8k",  # Audio bitrate: 8kbps
-                "-f", "ogg",  # Container format: OGG
-                "-y",  # Overwrite output file if it exists
-                temp_path
-            ]
-        elif OUTPUT_FORMAT == "m4a":
-            # M4A: AAC compressed format (8kbps)
-            command = [
-                "ffmpeg",
-                "-f", "s16le",  # Input format: raw PCM, signed 16-bit little-endian
-                "-acodec", "pcm_s16le",  # Input codec
-                "-ac", "1",  # Number of channels (1 = mono)
-                "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
-                "-i", "pipe:",  # Input from stdin
-                "-c:a", "aac",  # Audio codec: AAC
-                "-b:a", "8k",  # Audio bitrate: 8kbps
-                "-f", "ipod",  # Container format: iPod (M4A)
-                "-y",  # Overwrite output file if it exists
-                temp_path
-            ]
-        else:
-            raise ValueError(f"Unsupported OUTPUT_FORMAT: {OUTPUT_FORMAT}. Supported formats: 'opus', 'wav', 'm4a'")
-
-        process = None
-        try:
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-
-            # Write audio data to ffmpeg stdin
-            process.stdin.write(audio_int16.tobytes())
-            process.stdin.close()
-
-            # Wait for ffmpeg to finish
-            returncode = process.wait()
-            if returncode != 0:
-                stderr_output = process.stderr.read().decode('utf-8', errors='replace')
-                raise ValueError(f"ffmpeg {OUTPUT_FORMAT} encoding failed with return code {returncode}. Error: {stderr_output}")
-
-            # Atomically rename temp file to final file
-            os.rename(temp_path, final_path)
-
-        except Exception as e:
-            # Clean up temporary file if it exists
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass  # Ignore cleanup errors
-            raise RuntimeError(f"Failed to save {OUTPUT_FORMAT} audio: {e}")
-        finally:
-            if process and process.stderr:
-                process.stderr.close()
-
-    def _save(segment: AudioSegment):
-        """Wrapper that captures exceptions for the exception handler."""
-        try:
-            _save_impl(segment)
-        except Exception as e:
-            if exception_handler:
-                exception_handler.set_exception(e)
-            raise
-
-    return _save
 
 
 def _get_metadata(conn: sqlite3.Connection, key: str) -> str | None:
@@ -331,18 +183,33 @@ def _save_notice_to_sqlite(conn: sqlite3.Connection, notice) -> None:
         raise RuntimeError(f"Failed to save TranscriptionNotice to SQLite: {e}")
 
 
-def _create_sqlite_saver(
+def create_audio_data_saver(
     show_name: str,
     exception_handler: Optional['ThreadExceptionHandler'] = None
 ) -> AudioSegmentCallback:
     """Create a callback that saves audio segments to an SQLite database.
+
+    Output format is determined by the OUTPUT_FORMAT module constant:
+    - "wav": Uncompressed PCM format
+    - "m4a": AAC compressed format (8kbps)
+
+    Database details:
+    - Location: ./tmp/speech_sqlite/{show_name}_{format}.sqlite
+    - Table: speech (id, start_ts, end_ts, audio_data, text)
+    - Table: metadata (key, value) - stores version, audio_format, show_name, and database_id
+    - Timestamps: ISO 8601 format with timezone
+    - Audio data: Raw PCM for wav, raw AAC (ADTS) for m4a
+    - Validation: On startup, verifies version, audio_format, and show_name in metadata match current settings
 
     Args:
         show_name: Name of the show (used for database filename)
         exception_handler: Optional handler to capture exceptions for main thread
 
     Returns:
-        Callback function that accepts AudioSegment and saves it to SQLite
+        Callback function that accepts AudioSegment or TranscriptionNotice and saves it
+
+    Raises:
+        ValueError: If OUTPUT_FORMAT is unsupported
     """
     # Create database directory
     db_dir = "./tmp/speech_sqlite"
@@ -383,7 +250,7 @@ def _create_sqlite_saver(
             end_ts_float = segment.wall_clock_start + len(audio) / TARGET_SAMPLE_RATE
             end_dt = datetime.fromtimestamp(end_ts_float, timezone.utc)
         else:
-            # File mode: use relative timestamps (convert to datetime from start of epoch)
+            # Prerecorded mode: use relative timestamps (convert to datetime from start of epoch)
             # Note: This is less common for SQLite storage, mainly for livestream
             start_dt = datetime.fromtimestamp(segment.start, timezone.utc)
             end_ts_float = segment.start + len(audio) / TARGET_SAMPLE_RATE
@@ -401,13 +268,6 @@ def _create_sqlite_saver(
         if OUTPUT_FORMAT == "wav":
             # WAV mode: store raw PCM samples (no WAV header, just audio data)
             audio_data = audio_int16.tobytes()
-
-        elif OUTPUT_FORMAT == "opus":
-            # raw opus mode not supported by ffmpeg
-            raise ValueError(
-                "OUTPUT_FORMAT='opus' is not supported with SQLite storage. "
-                "This combination is blocked by validation in create_audio_file_saver()."
-            )
 
         elif OUTPUT_FORMAT == "m4a":
             # M4A mode: encode to raw AAC stream (ADTS format)
@@ -443,54 +303,3 @@ def _create_sqlite_saver(
             raise
 
     return _save
-
-
-def create_audio_file_saver(
-    show_name: str,
-    directory: str = "./tmp/speech",
-    exception_handler: Optional['ThreadExceptionHandler'] = None
-) -> AudioSegmentCallback:
-    """Create a callback that saves audio segments.
-
-    Storage backend is determined by the STORAGE_TYPE module constant:
-    - "file": Save segments as individual files (opus, wav, or m4a)
-    - "sqlite": Save segments to SQLite database (wav or m4a)
-
-    Output format is determined by the OUTPUT_FORMAT module constant:
-    - "opus": Compressed Opus format (8kbps) - file storage only
-    - "wav": Uncompressed PCM format
-    - "m4a": AAC compressed format (8kbps)
-
-    For SQLite storage:
-    - Database location: ./tmp/speech_sqlite/{show_name}_{format}.sqlite
-    - Table: speech (id, start_ts, end_ts, audio_data)
-    - Table: metadata (key, value) - stores version, audio_format, show_name, and database_id
-    - Timestamps: ISO 8601 format with timezone
-    - Audio data: Raw PCM for wav, raw AAC (ADTS) for m4a
-    - Validation: On startup, verifies version, audio_format, and show_name in metadata match current settings
-    - Note: Opus format not currently supported with SQLite storage
-
-    Args:
-        show_name: Name of the show (used for organizing files/database)
-        directory: Base directory for file storage (ignored for sqlite mode)
-        exception_handler: Optional handler to capture exceptions for main thread
-
-    Returns:
-        Callback function that accepts AudioSegment and saves it
-
-    Raises:
-        ValueError: If STORAGE_TYPE or OUTPUT_FORMAT is unsupported or incompatible
-    """
-    # Validate STORAGE_TYPE and OUTPUT_FORMAT combination
-    if STORAGE_TYPE == "sqlite" and OUTPUT_FORMAT == "opus":
-        raise ValueError(
-            "STORAGE_TYPE='sqlite' with OUTPUT_FORMAT='opus' is not currently supported. "
-            "Please use OUTPUT_FORMAT='wav' or 'm4a' with SQLite storage, or use STORAGE_TYPE='file' for Opus format."
-        )
-
-    if STORAGE_TYPE == "file":
-        return _create_file_saver(show_name, directory, exception_handler)
-    elif STORAGE_TYPE == "sqlite":
-        return _create_sqlite_saver(show_name, exception_handler)
-    else:
-        raise ValueError(f"Unsupported STORAGE_TYPE: {STORAGE_TYPE}. Supported: 'file', 'sqlite'")
