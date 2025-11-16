@@ -436,7 +436,9 @@ def periodic_backup(show_name: str, db_path: str) -> None:
         backup_max_id = None
         backup_max_id_conn = None
         try:
-            backup_max_id_conn = sqlite3.connect(backup_path)
+            # Open backup read-only to avoid creating WAL/SHM alongside the snapshot
+            ro_uri = f"file:{backup_path}?mode=ro&immutable=1"
+            backup_max_id_conn = sqlite3.connect(ro_uri, uri=True)
             cursor = backup_max_id_conn.execute("SELECT MAX(id) FROM speech")
             result = cursor.fetchone()
             backup_max_id = result[0] if result and result[0] is not None else None
