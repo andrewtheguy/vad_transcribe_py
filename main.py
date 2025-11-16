@@ -433,7 +433,7 @@ if __name__ == '__main__':
     parser.add_argument('action', type=str, choices=['file','mic','stream','web','sqlite'])
     parser.add_argument('--file', type=str, required=False)
     parser.add_argument('--database', type=str, required=False, help='SQLite database path for sqlite action')
-    parser.add_argument('--audio-output', type=str, required=False, help='Output path for concatenated audio file (sqlite action)')
+    parser.add_argument('--audio-output', type=str, required=False, help='Output path for concatenated audio file (sqlite action for debugging)')
     parser.add_argument('--lang', type=str, required=False)
     parser.add_argument('--config', type=str, required=False) # for url live streaming
     parser.add_argument('--output', type=str, required=False)
@@ -820,9 +820,6 @@ if __name__ == '__main__':
         if not os.path.exists(args.database):
             print(f"Database {args.database} does not exist")
             exit(1)
-        if not args.audio_output:
-            print("Please provide --audio-output path for the concatenated audio file")
-            exit(1)
         if not args.lang:
             print("Please provide --lang for transcription")
             exit(1)
@@ -853,10 +850,11 @@ if __name__ == '__main__':
 
         read_conn = _open_sqlite_connection(args.database)
         write_conn = _open_sqlite_connection(args.database)
-        audio_segments_raw = []
         ts = 0
         segment_count = 0
         transcribed_count = 0
+        if args.audio_output:
+            audio_segments_raw = []
 
         try:
             max_id = get_max_speech_id(read_conn)
@@ -889,13 +887,15 @@ if __name__ == '__main__':
                 for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(read_conn, max_id):
                     # Check if this is a notice entry (text-only, no audio)
                     if audio_data is None and text is not None:
-                        # Notice entry - already has text, just collect audio marker
-                        audio_segments_raw.append(None)
+                        if args.audio_output:
+                            # Notice entry - already has text, just collect audio marker
+                            audio_segments_raw.append(None)
                         segment_count += 1
                         continue
 
-                    # Store raw audio for concatenation
-                    audio_segments_raw.append(audio_data)
+                    if args.audio_output:
+                        # Store raw audio for concatenation
+                        audio_segments_raw.append(audio_data)
                     segment_count += 1
 
                     # Skip if already transcribed
@@ -957,18 +957,21 @@ if __name__ == '__main__':
 
         print(f"Transcribed {transcribed_count} new segments (total in DB: {segment_count})")
 
-        # Concatenate and save audio
-        print(f"Concatenating {len(audio_segments_raw)} audio segments...")
-        created_files = concatenate_and_save_audio(audio_segments_raw, args.audio_output, audio_format)
+        # Concatenate and save audio (optional)
+        if args.audio_output:
+            print(f"Concatenating {len(audio_segments_raw)} audio segments...")
+            created_files = concatenate_and_save_audio(audio_segments_raw, args.audio_output, audio_format)
 
-        if len(created_files) == 0:
-            print("No audio segments to save (all entries were notices)")
-        elif len(created_files) == 1:
-            print(f"Audio written to {created_files[0]}")
+            if len(created_files) == 0:
+                print("No audio segments to save (all entries were notices)")
+            elif len(created_files) == 1:
+                print(f"Audio written to {created_files[0]}")
+            else:
+                print(f"Audio split into {len(created_files)} files due to notice entries:")
+                for file_path in created_files:
+                    print(f"  - {file_path}")
         else:
-            print(f"Audio split into {len(created_files)} files due to notice entries:")
-            for file_path in created_files:
-                print(f"  - {file_path}")
+            print("Skipping audio output (--audio-output not provided)")
 
     else:
         raise ValueError("Invalid action {}".format(args.action))
