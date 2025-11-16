@@ -1090,6 +1090,9 @@ def stream_url_thread(
         stop_event=None,
         queue_limiter: Optional["QueueBacklogLimiter"] = None,
 ):
+    # # TODO: REMOVE THIS - Test mode hard-coded to trigger errors every 20 seconds
+    # test_thread_start_time = time.time()
+
     while True:
         if stop_event is not None and stop_event.is_set():
             break
@@ -1101,6 +1104,14 @@ def stream_url_thread(
                 while True:
                     if stop_event is not None and stop_event.is_set():
                         break
+
+                    # # TODO: REMOVE THIS - Test mode: trigger error after 20 seconds
+                    # elapsed = time.time() - test_thread_start_time
+                    # if elapsed >= 20.0:
+                    #     # Reset timer for next cycle
+                    #     test_thread_start_time = time.time()
+                    #     raise ValueError(f"Test mode: triggered error after {elapsed:.1f} seconds")
+
                     chunk = stdout.read(TARGET_SAMPLE_RATE*2) # 1 second
                     if not chunk:
                         break

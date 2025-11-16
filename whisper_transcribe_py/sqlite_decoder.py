@@ -4,7 +4,7 @@ import os
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
-from typing import Iterator, Tuple
+from typing import Iterator, Tuple, Optional
 
 import numpy as np
 
@@ -36,11 +36,11 @@ def read_database_metadata(db_path: str) -> Tuple[str, str, str]:
             raise ValueError("version not found in metadata table")
         version = result[0]
 
-        if version != "1":
+        if version != "2":
             raise ValueError(
                 f"Database version mismatch: database was created with version '{version}' "
-                f"but current version is '1'. "
-                f"Please upgrade the database or use a compatible version of the application."
+                f"but current version is '2'. "
+                f"No backward compatibility - please create a new database."
             )
 
         cursor = conn.execute("SELECT value FROM metadata WHERE key = 'audio_format'")
@@ -88,7 +88,7 @@ def get_max_speech_id(conn: sqlite3.Connection) -> int:
     return result[0]
 
 
-def read_speech_segments(conn: sqlite3.Connection, max_id: int) -> Iterator[Tuple[int, str, str, bytes]]:
+def read_speech_segments(conn: sqlite3.Connection, max_id: int) -> Iterator[Tuple[int, str, str, Optional[bytes], Optional[str]]]:
     """Read speech segments from database up to max_id.
 
     Args:
@@ -96,41 +96,48 @@ def read_speech_segments(conn: sqlite3.Connection, max_id: int) -> Iterator[Tupl
         max_id: Maximum ID to read (inclusive)
 
     Yields:
-        Tuples of (id, start_ts, end_ts, audio_data)
+        Tuples of (id, start_ts, end_ts, audio_data, text)
+        - audio_data is None for notice entries (text-only)
+        - text is None for audio entries (audio-only)
     """
     cursor = conn.execute(
-        "SELECT id, start_ts, end_ts, audio_data FROM speech WHERE id <= ? ORDER BY id",
+        "SELECT id, start_ts, end_ts, audio_data, text FROM speech WHERE id <= ? ORDER BY id",
         (max_id,)
     )
     for row in cursor:
         yield row
 
 
-def decode_audio_segment_wav(audio_data: bytes) -> np.ndarray:
+def decode_audio_segment_wav(audio_data: Optional[bytes]) -> Optional[np.ndarray]:
     """Decode WAV audio segment from database.
 
     Args:
-        audio_data: Raw PCM int16 samples
+        audio_data: Raw PCM int16 samples, or None for notice entries
 
     Returns:
-        Float32 numpy array normalized to [-1.0, 1.0]
+        Float32 numpy array normalized to [-1.0, 1.0], or None if audio_data is None
     """
+    if audio_data is None:
+        return None
     audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
     return audio_int16.astype(np.float32) / np.iinfo(np.int16).max
 
 
-def decode_audio_segment_m4a(audio_data: bytes) -> np.ndarray:
+def decode_audio_segment_m4a(audio_data: Optional[bytes]) -> Optional[np.ndarray]:
     """Decode M4A (ADTS AAC) audio segment from database.
 
     Args:
-        audio_data: Raw ADTS AAC stream
+        audio_data: Raw ADTS AAC stream, or None for notice entries
 
     Returns:
-        Float32 numpy array normalized to [-1.0, 1.0]
+        Float32 numpy array normalized to [-1.0, 1.0], or None if audio_data is None
 
     Raises:
         RuntimeError: If ffmpeg decoding fails
     """
+    if audio_data is None:
+        return None
+
     command = [
         "ffmpeg",
         "-f", "aac",  # Input format: raw AAC (ADTS)
@@ -164,20 +171,23 @@ def decode_audio_segment_m4a(audio_data: bytes) -> np.ndarray:
         raise RuntimeError(f"Failed to decode M4A audio segment: {e}")
 
 
-def decode_audio_segment(audio_data: bytes, audio_format: str) -> np.ndarray:
+def decode_audio_segment(audio_data: Optional[bytes], audio_format: str) -> Optional[np.ndarray]:
     """Decode audio segment based on format.
 
     Args:
-        audio_data: Raw audio data from database
+        audio_data: Raw audio data from database, or None for notice entries
         audio_format: 'wav' or 'm4a'
 
     Returns:
-        Float32 numpy array normalized to [-1.0, 1.0]
+        Float32 numpy array normalized to [-1.0, 1.0], or None if audio_data is None
 
     Raises:
         ValueError: If audio_format is unsupported
         RuntimeError: If decoding fails
     """
+    if audio_data is None:
+        return None
+
     if audio_format == 'wav':
         return decode_audio_segment_wav(audio_data)
     elif audio_format == 'm4a':
@@ -186,107 +196,202 @@ def decode_audio_segment(audio_data: bytes, audio_format: str) -> np.ndarray:
         raise ValueError(f"Unsupported audio_format: {audio_format}")
 
 
-def concatenate_and_save_audio_wav(audio_segments: list[bytes], output_path: str):
-    """Concatenate WAV segments and save to file.
+def concatenate_and_save_audio_wav(audio_segments: list[Optional[bytes]], output_path: str) -> list[str]:
+    """Concatenate WAV segments and save to file(s).
+
+    None entries (notices) cause the audio to be split into multiple files.
+    Files are named: base_1.wav, base_2.wav, etc.
 
     Args:
-        audio_segments: List of raw PCM int16 audio data
-        output_path: Path to save concatenated WAV file
+        audio_segments: List of raw PCM int16 audio data (None entries cause file splits)
+        output_path: Base path for output files (e.g., "output.wav" -> "output_1.wav", "output_2.wav")
+
+    Returns:
+        List of created file paths
 
     Raises:
         RuntimeError: If ffmpeg encoding fails
     """
-    # Concatenate all PCM data
-    all_pcm = b''.join(audio_segments)
+    # Split segments into groups separated by None entries
+    groups = []
+    current_group = []
 
-    command = [
-        "ffmpeg",
-        "-f", "s16le",  # Input format: raw PCM signed 16-bit little-endian
-        "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
-        "-ac", "1",  # Input channels: mono
-        "-i", "pipe:0",  # Input from stdin
-        "-c:a", "pcm_s16le",  # Output codec: PCM
-        "-f", "wav",  # Output format: WAV
-        "-y",  # Overwrite output file
-        output_path
-    ]
+    for seg in audio_segments:
+        if seg is None:
+            # None entry - save current group and start a new one
+            if current_group:
+                groups.append(current_group)
+                current_group = []
+        else:
+            current_group.append(seg)
 
-    process = None
-    try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
+    # Add final group
+    if current_group:
+        groups.append(current_group)
 
-        _, stderr_output = process.communicate(input=all_pcm)
+    if not groups:
+        return []
 
-        if process.returncode != 0:
-            stderr_text = stderr_output.decode('utf-8', errors='replace')
-            raise RuntimeError(f"ffmpeg WAV encoding failed: {stderr_text}")
+    # Generate output file paths
+    base_path = output_path.rsplit('.', 1)[0] if '.' in output_path else output_path
+    extension = output_path.rsplit('.', 1)[1] if '.' in output_path else 'wav'
 
-    except Exception as e:
-        raise RuntimeError(f"Failed to save concatenated WAV: {e}")
+    created_files = []
+
+    for i, group in enumerate(groups, start=1):
+        # Concatenate PCM data for this group
+        all_pcm = b''.join(group)
+
+        # Generate output path
+        if len(groups) == 1:
+            # Only one group - use original path
+            file_path = output_path
+        else:
+            # Multiple groups - add suffix
+            file_path = f"{base_path}_{i}.{extension}"
+
+        command = [
+            "ffmpeg",
+            "-f", "s16le",  # Input format: raw PCM signed 16-bit little-endian
+            "-ar", str(TARGET_SAMPLE_RATE),  # Input sample rate
+            "-ac", "1",  # Input channels: mono
+            "-i", "pipe:0",  # Input from stdin
+            "-c:a", "pcm_s16le",  # Output codec: PCM
+            "-f", "wav",  # Output format: WAV
+            "-y",  # Overwrite output file
+            file_path
+        ]
+
+        process = None
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+            _, stderr_output = process.communicate(input=all_pcm)
+
+            if process.returncode != 0:
+                stderr_text = stderr_output.decode('utf-8', errors='replace')
+                raise RuntimeError(f"ffmpeg WAV encoding failed: {stderr_text}")
+
+            created_files.append(file_path)
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to save concatenated WAV: {e}")
+
+    return created_files
 
 
-def concatenate_and_save_audio_m4a(audio_segments: list[bytes], output_path: str):
-    """Concatenate M4A (ADTS AAC) segments and save to file.
+def concatenate_and_save_audio_m4a(audio_segments: list[Optional[bytes]], output_path: str) -> list[str]:
+    """Concatenate M4A (ADTS AAC) segments and save to file(s).
+
+    None entries (notices) cause the audio to be split into multiple files.
+    Files are named: base_1.m4a, base_2.m4a, etc.
 
     Args:
-        audio_segments: List of raw ADTS AAC streams
-        output_path: Path to save concatenated M4A file
+        audio_segments: List of raw ADTS AAC streams (None entries cause file splits)
+        output_path: Base path for output files (e.g., "output.m4a" -> "output_1.m4a", "output_2.m4a")
+
+    Returns:
+        List of created file paths
 
     Raises:
         RuntimeError: If ffmpeg encoding fails
     """
-    # Concatenate all ADTS streams (ADTS format supports direct concatenation)
-    all_adts = b''.join(audio_segments)
+    # Split segments into groups separated by None entries
+    groups = []
+    current_group = []
 
-    command = [
-        "ffmpeg",
-        "-f", "aac",  # Input format: raw AAC (ADTS)
-        "-i", "pipe:0",  # Input from stdin
-        "-c:a", "copy",  # Copy codec (no re-encoding)
-        "-f", "ipod",  # Output format: M4A (iPod)
-        "-y",  # Overwrite output file
-        output_path
-    ]
+    for seg in audio_segments:
+        if seg is None:
+            # None entry - save current group and start a new one
+            if current_group:
+                groups.append(current_group)
+                current_group = []
+        else:
+            current_group.append(seg)
 
-    process = None
-    try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
+    # Add final group
+    if current_group:
+        groups.append(current_group)
 
-        _, stderr_output = process.communicate(input=all_adts)
+    if not groups:
+        return []
 
-        if process.returncode != 0:
-            stderr_text = stderr_output.decode('utf-8', errors='replace')
-            raise RuntimeError(f"ffmpeg M4A encoding failed: {stderr_text}")
+    # Generate output file paths
+    base_path = output_path.rsplit('.', 1)[0] if '.' in output_path else output_path
+    extension = output_path.rsplit('.', 1)[1] if '.' in output_path else 'm4a'
 
-    except Exception as e:
-        raise RuntimeError(f"Failed to save concatenated M4A: {e}")
+    created_files = []
+
+    for i, group in enumerate(groups, start=1):
+        # Concatenate ADTS data for this group (ADTS format supports direct concatenation)
+        all_adts = b''.join(group)
+
+        # Generate output path
+        if len(groups) == 1:
+            # Only one group - use original path
+            file_path = output_path
+        else:
+            # Multiple groups - add suffix
+            file_path = f"{base_path}_{i}.{extension}"
+
+        command = [
+            "ffmpeg",
+            "-f", "aac",  # Input format: raw AAC (ADTS)
+            "-i", "pipe:0",  # Input from stdin
+            "-c:a", "copy",  # Copy codec (no re-encoding)
+            "-f", "ipod",  # Output format: M4A (iPod)
+            "-y",  # Overwrite output file
+            file_path
+        ]
+
+        process = None
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+            _, stderr_output = process.communicate(input=all_adts)
+
+            if process.returncode != 0:
+                stderr_text = stderr_output.decode('utf-8', errors='replace')
+                raise RuntimeError(f"ffmpeg M4A encoding failed: {stderr_text}")
+
+            created_files.append(file_path)
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to save concatenated M4A: {e}")
+
+    return created_files
 
 
-def concatenate_and_save_audio(audio_segments: list[bytes], output_path: str, audio_format: str):
-    """Concatenate audio segments and save to file.
+def concatenate_and_save_audio(audio_segments: list[Optional[bytes]], output_path: str, audio_format: str) -> list[str]:
+    """Concatenate audio segments and save to file(s).
+
+    None entries (notices) cause the audio to be split into multiple files.
 
     Args:
-        audio_segments: List of raw audio data from database
-        output_path: Path to save concatenated audio file
+        audio_segments: List of raw audio data from database (None entries cause file splits)
+        output_path: Base path for output files
         audio_format: 'wav' or 'm4a'
+
+    Returns:
+        List of created file paths
 
     Raises:
         ValueError: If audio_format is unsupported
         RuntimeError: If encoding fails
     """
     if audio_format == 'wav':
-        concatenate_and_save_audio_wav(audio_segments, output_path)
+        return concatenate_and_save_audio_wav(audio_segments, output_path)
     elif audio_format == 'm4a':
-        concatenate_and_save_audio_m4a(audio_segments, output_path)
+        return concatenate_and_save_audio_m4a(audio_segments, output_path)
     else:
         raise ValueError(f"Unsupported audio_format: {audio_format}")

@@ -109,6 +109,23 @@ class SqliteTranscriptWriter:
             'end_ts': end_ts
         })
 
+    def add_notice(self, speech_id: int, start_ts: str, end_ts: str, text: str):
+        """Add notice entry directly to output (no transcription needed).
+
+        Used for TranscriptionNotice entries that have text but no audio.
+        Immediately writes to temporary JSONL file.
+        """
+        notice_entry = {
+            "id": speech_id,
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "content": text,
+        }
+
+        # Write to temporary JSONL file immediately
+        with open(self.temp_jsonl_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(notice_entry, ensure_ascii=False) + "\n")
+
     def add_segment(self, *, start: float, end: float, text: str):
         """Add transcribed segment with associated speech ID.
 
@@ -143,6 +160,9 @@ class SqliteTranscriptWriter:
                 line = line.strip()
                 if line:
                     speeches.append(json.loads(line))
+
+        # Sort by ID to ensure proper chronological order (notices and transcribed segments may be interleaved)
+        speeches.sort(key=lambda x: x['id'])
 
         # Create final output
         output = {
@@ -302,6 +322,10 @@ def process_vad_only_livestream(audio_input_queue, show_name, input_sample_rate,
         # Handle TranscriptionNotice (for stream recovery)
         from whisper_transcribe_py.audio_transcriber import TranscriptionNotice
         if isinstance(segment, TranscriptionNotice):
+            # Save notice to database if callback provided
+            if audio_segment_callback:
+                audio_segment_callback(segment)
+
             # Reset VAD state
             speech_detector.reset()
             buffer.clear()
@@ -992,7 +1016,17 @@ if __name__ == '__main__':
         segment_count = 0
 
         try:
-            for speech_id, start_ts, end_ts, audio_data in read_speech_segments(conn, max_id):
+            for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(conn, max_id):
+                # Check if this is a notice entry (text-only, no audio)
+                if audio_data is None and text is not None:
+                    # Notice entry - add directly to transcript writer with text
+                    transcript_writer.add_notice(speech_id, start_ts, end_ts, text)
+                    # Store None in audio_segments_raw to mark the split point
+                    audio_segments_raw.append(None)
+                    segment_count += 1
+                    continue
+
+                # Audio entry - decode and transcribe
                 # Decode audio segment
                 audio_float32 = decode_audio_segment(audio_data, audio_format)
 
@@ -1047,8 +1081,16 @@ if __name__ == '__main__':
 
         # Concatenate and save audio
         print(f"Concatenating {len(audio_segments_raw)} audio segments...")
-        concatenate_and_save_audio(audio_segments_raw, args.audio_output, audio_format)
-        print(f"Audio written to {args.audio_output}")
+        created_files = concatenate_and_save_audio(audio_segments_raw, args.audio_output, audio_format)
+
+        if len(created_files) == 0:
+            print("No audio segments to save (all entries were notices)")
+        elif len(created_files) == 1:
+            print(f"Audio written to {created_files[0]}")
+        else:
+            print(f"Audio split into {len(created_files)} files due to notice entries:")
+            for file_path in created_files:
+                print(f"  - {file_path}")
 
     else:
         raise ValueError("Invalid action {}".format(args.action))
