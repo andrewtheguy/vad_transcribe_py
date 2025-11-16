@@ -121,7 +121,7 @@ def test_notice_at_beginning_before_segments(make_transcriber, recorded_transcri
 
     transcriber = make_transcriber()
     transcriber.audio_input_queue = audio_queue
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Notice should appear first in transcribe queue
     assert len(recorded_transcribe) >= 2
@@ -144,7 +144,7 @@ def test_notice_at_end_after_segments(make_transcriber, recorded_transcribe):
 
     transcriber = make_transcriber()
     transcriber.audio_input_queue = audio_queue
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Find notice in recorded items (should be after segment but before None)
     notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]
@@ -168,7 +168,7 @@ def test_multiple_consecutive_notices(make_transcriber, recorded_transcribe):
 
     transcriber = make_transcriber()
     transcriber.audio_input_queue = audio_queue
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # All notices should be in transcribe queue in order
     notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]
@@ -198,7 +198,7 @@ def test_alternating_segments_and_notices(make_transcriber, recorded_transcribe)
 
     transcriber = make_transcriber()
     transcriber.audio_input_queue = audio_queue
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Verify notices are in transcribe queue in correct order
     notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]
@@ -237,7 +237,7 @@ def test_notice_triggers_reset(make_transcriber, recorded_transcribe, monkeypatc
 
     transcriber = make_transcriber()
     transcriber.audio_input_queue = audio_queue
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Reset should have been called when notice was processed
     assert len(reset_called) > 0, "Expected SpeechDetector.reset() to be called when TranscriptionNotice is processed"
@@ -252,7 +252,7 @@ def test_notice_only_queue(make_transcriber, recorded_transcribe):
 
     transcriber = make_transcriber()
     transcriber.audio_input_queue = audio_queue
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Should have notice in transcribe queue
     notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]

@@ -89,4 +89,4 @@ class MicRecorder:
                 transcript_persistence_callback=self.transcript_persistence_callback,
                 audio_segment_callback=self.audio_segment_callback,
                 backend=self.backend,
-            ).process_input(input_sample_rate)
+            )._process_input_livestream(input_sample_rate)

@@ -127,7 +127,7 @@ def test_process_input_handles_transcription_notice(make_transcriber, recorded_t
     audio_queue.put(None)
 
     transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     assert recorded_transcribe[0] is notice
     assert recorded_transcribe[-1] is None
@@ -142,7 +142,7 @@ def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_
     audio_queue.put(None)
 
     transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     calls = transcriber.speech_detector.calls
     assert len(calls) == 2
@@ -176,7 +176,7 @@ def test_drop_notice_in_audio_input_queue(monkeypatch, make_transcriber, recorde
         (False, False),  # This triggers segment completion
     ])
 
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Should have one TranscriptionNotice processed
     notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]
@@ -254,7 +254,7 @@ def test_drop_notice_positions_between_segments(make_transcriber, recorded_trans
         (False, False, True),  # no speech, not in speech, COMPLETE segment
     ])
 
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Find items in recorded_transcribe
     segments = [item for item in recorded_transcribe if isinstance(item, AudioSegment)]
@@ -288,7 +288,7 @@ def test_segments_after_drop_use_notice_timestamp(make_transcriber):
     audio_queue.put(segment)
     audio_queue.put(None)
 
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     assert transcriber.speech_detector.calls, "expected windows"
     _, wall_clock, _ = transcriber.speech_detector.calls[0]
@@ -331,7 +331,7 @@ def test_handle_vad_segment_queues_for_transcription(make_transcriber, recorded_
     transcriber._handle_vad_segment(segment)
 
     # Process input to trigger transcription thread
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Check that segment was queued
     assert any(isinstance(item, AudioSegment) for item in recorded_transcribe)
@@ -352,7 +352,7 @@ def test_process_input_with_resampling(make_transcriber, recorded_transcribe):
     audio_queue.put(None)
 
     transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber.process_input(input_sample_rate)
+    transcriber._process_input_livestream(input_sample_rate)
 
     # Verify speech detector received windows
     assert len(transcriber.speech_detector.calls) > 0
@@ -383,7 +383,7 @@ def test_process_input_respects_stop_event(make_transcriber):
     stop_event.set()
 
     # Process should exit quickly
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Verify it stopped early (should have minimal calls)
     assert len(transcriber.speech_detector.calls) == 0
@@ -409,7 +409,7 @@ def test_process_input_handles_wall_clock_timestamps(make_transcriber, recorded_
         language="en",
         wall_clock_reference=wall_clock_start,
     )
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Verify wall clock timestamp was passed to speech detector
     calls = transcriber.speech_detector.calls
@@ -561,7 +561,7 @@ def test_process_input_flushes_incomplete_segment(make_transcriber, recorded_tra
 
     transcriber.speech_detector.flush = mock_flush
 
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Verify flush was called
     assert flush_called[0]
@@ -584,7 +584,7 @@ def test_timestamp_continuity_across_segments(make_transcriber, recorded_transcr
     audio_queue.put(None)
 
     transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber.process_input(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
 
     # Verify timestamps are correct
     calls = transcriber.speech_detector.calls

@@ -479,7 +479,7 @@ class AudioTranscriber:
             self,
             audio_input_queue: queue.Queue[AudioSegment],
             language: str,
-            mode: Literal['file', 'livestream'] = 'livestream',
+            mode: Literal['prerecorded', 'livestream'] = 'livestream',
             show_name="unknown",
             model="large-v3-turbo",
             audio_segment_callback: Optional[AudioSegmentCallback] = None,
@@ -513,7 +513,7 @@ class AudioTranscriber:
             self.wall_clock_reference = wall_clock_reference
             self.queue_backlog_limiter = queue_backlog_limiter
             self._last_transcript_wall_clock: Optional[float] = None
-        else:  # file mode
+        else:  # prerecorded mode
             self.wall_clock_reference = None
             self.queue_backlog_limiter = None
             self._last_transcript_wall_clock = None
@@ -634,7 +634,7 @@ class AudioTranscriber:
 
             self.current_audio_offset = segment_offset
 
-            # File mode: wall_clock_start will be None
+            # Prerecorded mode: wall_clock_start will be None
             # Livestream mode: wall_clock_start is required
             if self.mode == 'livestream':
                 if queued_item.wall_clock_start is None:
@@ -644,7 +644,7 @@ class AudioTranscriber:
                     )
                 self.ts_transcribe_start = queued_item.wall_clock_start
             else:
-                # File mode doesn't use wall_clock_start
+                # Prerecorded mode doesn't use wall_clock_start
                 self.ts_transcribe_start = None
 
             self._backend_transcribe(audio)
@@ -698,8 +698,8 @@ class AudioTranscriber:
 
         text_for_storage = zhconv(segment.text, DEFAULT_CHINESE_LOCALE) if self.language in ['yue', 'zh'] else segment.text
 
-        # File mode: only relative timestamps, no wall_clock
-        if self.mode == 'file':
+        # Prerecorded mode: only relative timestamps, no wall_clock
+        if self.mode == 'prerecorded':
             print("[%.2f -> %.2f] %s" % (relative_start, relative_end, segment.text))
 
             if self.transcript_persistence_callback is not None:
@@ -889,10 +889,11 @@ class AudioTranscriber:
         # Note: buffer will be cleared by returning from the TranscriptionNotice handler
         # Note: timestamps will be re-initialized from next segment
 
-    def _process_input_file(self, input_sample_rate: int) -> None:
+    def _process_input_prerecorded(self, input_sample_rate: int) -> None:
         """
-        Process audio input in file mode (no wall_clock timestamps, no backlog limiting).
+        Process audio input in prerecorded mode (no wall_clock timestamps, no backlog limiting).
 
+        Used for processing pre-recorded audio from files or databases.
         Simple flow: VAD speech detection → transcribe → output to JSON
         """
         window_size_samples = get_window_size_samples()
@@ -914,7 +915,7 @@ class AudioTranscriber:
                 print(f"end of audio, ts={ts}", file=sys.stderr)
                 break
 
-            # File mode doesn't handle TranscriptionNotice
+            # Prerecorded mode doesn't handle TranscriptionNotice
             if isinstance(segment, TranscriptionNotice):
                 continue
 
@@ -941,7 +942,7 @@ class AudioTranscriber:
                 buffer = buffer[window_size_samples:]
                 data_slice = np.asarray(arr)
 
-                # Process window through speech detector (no wall_clock_timestamp for file mode)
+                # Process window through speech detector (no wall_clock_timestamp for prerecorded mode)
                 has_speech = self.speech_detector.process_window(data_slice, ts, wall_clock_timestamp=None)
 
                 # Advance timestamp
@@ -1074,27 +1075,18 @@ class AudioTranscriber:
         self.transcribe_queue.put(None)
         transcribing_thread.join()
 
-    def process_input(self, input_sample_rate: int) -> None:
-        """
-        Dispatch to mode-specific process_input method.
-        """
-        if self.mode == 'file':
-            self._process_input_file(input_sample_rate)
-        else:  # livestream
-            self._process_input_livestream(input_sample_rate)
-
     def transcribe_audio_segment(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> None:
         """
         Transcribe an already-isolated float32 audio buffer directly without running VAD.
 
-        Intended for pre-segmented audio (e.g., database rows). Only supported in file mode.
+        Intended for pre-segmented audio (e.g., database rows). Only supported in prerecorded mode.
 
         Args:
             audio: Float32 numpy array normalized to [-1.0, 1.0]
             start_offset: Relative start timestamp used for callbacks
         """
-        if self.mode != 'file':
-            raise ValueError("transcribe_audio_segment is only supported in file mode")
+        if self.mode != 'prerecorded':
+            raise ValueError("transcribe_audio_segment is only supported in prerecorded mode")
         if audio is None or len(audio) == 0:
             return
 

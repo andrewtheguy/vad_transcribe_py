@@ -366,7 +366,7 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
             # Exit this thread/function immediately - main thread will detect the exception
             return
 
-    AudioTranscriber(audio_input_queue=q,
+    transcriber = AudioTranscriber(audio_input_queue=q,
                      language=language,
                      mode=mode,
                      show_name=show_name,
@@ -378,7 +378,11 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                      stop_event=stop_event,
                      queue_backlog_limiter=queue_backlog_limiter,
                      backend=backend,
-                     ).process_input(TARGET_SAMPLE_RATE)
+                     )
+    if mode == 'prerecorded':
+        transcriber._process_input_prerecorded(TARGET_SAMPLE_RATE)
+    else:  # livestream
+        transcriber._process_input_livestream(TARGET_SAMPLE_RATE)
 
 def process_mic(
         q,
@@ -514,7 +518,7 @@ if __name__ == '__main__':
                         'model': args.model if args.model is not None else 'large-v3-turbo',
                         'n_threads': args.n_threads if args.n_threads is not None else 1,
                         'stop_event': stop_event,
-                        'mode': 'file',  # File mode: no wall_clock timestamps
+                        'mode': 'prerecorded',  # Prerecorded mode: no wall_clock timestamps
                         'backend': args.backend,
                         'exception_handler': exception_handler,
                     })
@@ -894,7 +898,7 @@ if __name__ == '__main__':
             direct_transcriber = AudioTranscriber(
                 audio_input_queue=queue.Queue(),
                 language=args.lang,
-                mode='file',
+                mode='prerecorded',
                 show_name=show_name,
                 model=args.model if args.model is not None else 'large-v3-turbo',
                 segment_callback=sqlite_segment_callback,
