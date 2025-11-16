@@ -418,7 +418,9 @@ def periodic_backup(show_name: str, db_path: str) -> None:
         backup_dir = f"./tmp/speech_sqlite_backup/{show_name}"
         os.makedirs(backup_dir, exist_ok=True)
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        now = datetime.now(timezone.utc)
+
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
         backup_filename = f"{show_name}_{timestamp}.sqlite"
         backup_path = os.path.join(backup_dir, backup_filename)
 
@@ -452,7 +454,7 @@ def periodic_backup(show_name: str, db_path: str) -> None:
 
         # Step 3: Upload with rclone
         remote = "remote"
-        remote_dest = f"{remote}:{dest_dir}/{show_name}/"
+        remote_dest = f"{remote}:{dest_dir}/{show_name}/{now.strftime('%Y/%m/%d')}/"
 
         try:
             result = subprocess.run(
