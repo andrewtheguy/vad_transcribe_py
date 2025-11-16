@@ -1,8 +1,11 @@
 """Audio data saving functionality for transcribed audio segments."""
 
+import logging
 import os
 import sqlite3
 import subprocess
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Callable, TYPE_CHECKING, Optional, Union
@@ -23,6 +26,32 @@ if TYPE_CHECKING:
     AudioSegmentCallback = Callable[[Union[AudioSegment, 'TranscriptionNotice']], None]
 else:
     AudioSegmentCallback = Callable[[Union[AudioSegment, object]], None]
+
+# Module-level setup for periodic backup
+logger = logging.getLogger(__name__)
+_backup_lock = threading.Lock()
+_active_show_name = None
+_active_db_path = None
+_backup_thread = None
+_backup_thread_lock = threading.Lock()
+
+
+class NonBlockingLock:
+    """Context manager for non-blocking lock acquisition."""
+
+    def __init__(self, lock: threading.Lock):
+        self.lock = lock
+        self.acquired = False
+
+    def __enter__(self) -> bool:
+        """Try to acquire lock without blocking. Returns True if acquired."""
+        self.acquired = self.lock.acquire(blocking=False)
+        return self.acquired
+
+    def __exit__(self, *args):
+        """Release lock if it was acquired."""
+        if self.acquired:
+            self.lock.release()
 
 
 def _get_metadata(conn: sqlite3.Connection, key: str) -> str | None:
@@ -52,6 +81,21 @@ def _set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
         'INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)',
         (key, value)
     )
+
+
+def _create_db_connection(db_path: str) -> sqlite3.Connection:
+    """Create a configured SQLite connection for the database.
+
+    Args:
+        db_path: Path to the SQLite database file
+
+    Returns:
+        Configured SQLite connection with WAL mode and timeouts
+    """
+    conn = sqlite3.connect(db_path, timeout=30.0, isolation_level=None)
+    conn.execute("PRAGMA busy_timeout=10000")
+    conn.execute('PRAGMA journal_mode=WAL')
+    return conn
 
 
 def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name: str) -> None:
@@ -218,13 +262,8 @@ def create_audio_data_saver(
     # Database file path includes format to distinguish different encodings
     db_path = os.path.join(db_dir, f"{show_name}_{OUTPUT_FORMAT}.sqlite")
 
-    # Initialize database and schema
-    # Set timeout for database locks and enable WAL mode for concurrent access
-    conn = sqlite3.connect(db_path, timeout=30.0, isolation_level=None)
-    conn.execute("PRAGMA busy_timeout=10000")
-
-    # Enable WAL mode for better concurrent read/write access
-    conn.execute('PRAGMA journal_mode=WAL')
+    # Initialize database connection with WAL mode and timeouts
+    conn = _create_db_connection(db_path)
 
     # Initialize metadata table and validate format and show name
     _initialize_metadata(conn, OUTPUT_FORMAT, show_name)
@@ -302,4 +341,261 @@ def create_audio_data_saver(
                 exception_handler.set_exception(e)
             raise
 
+    # Register database for periodic backup
+    global _active_show_name, _active_db_path
+    _active_show_name = show_name
+    _active_db_path = db_path
+    _ensure_backup_thread_started()
+
     return _save
+
+def periodic_backup(show_name: str, db_path: str) -> None:
+    """
+    Backup a specific SQLite database and upload to remote storage.
+
+    Creates a new database connection in the backup thread to avoid
+    SQLite thread-safety issues.
+
+    Process:
+    1. Record max id from database before backup
+    2. Create backup using SQLite's backup API
+    3. Upload backup to remote using rclone
+    4. If upload succeeds, delete old records from source database
+
+    Args:
+        show_name: Name of the show (used for organizing backups)
+        db_path: Path to the SQLite database file
+    """
+    # Check if periodic backup is enabled
+    if os.getenv("PERIODIC_UPLOAD_ENABLED") != "yes":
+        logger.debug(f"Skipping backup for {show_name} - periodic backup disabled")
+        return
+
+    # Get destination directory from environment
+    dest_dir = os.getenv("SQLITE_BACKUP_DEST_DIR")
+    if not dest_dir:
+        logger.error("SQLITE_BACKUP_DEST_DIR not set in environment")
+        return
+
+    # Try to acquire lock (non-blocking)
+    with NonBlockingLock(_backup_lock) as lock_acquired:
+        if not lock_acquired:
+            logger.debug(f"Skipping backup for {show_name} - another backup in progress")
+            return
+
+        logger.info(f"Starting backup for {show_name}")
+
+        # Create a new connection for this thread (SQLite thread-safety requirement)
+        db_conn = None
+        try:
+            db_conn = _create_db_connection(db_path)
+        except Exception as e:
+            logger.error(f"Failed to create database connection for {show_name}: {e}")
+            return
+
+        # Step 1: Record max id before backup
+        max_id = None
+        try:
+            cursor = db_conn.execute("SELECT MAX(id) FROM speech")
+            result = cursor.fetchone()
+            max_id = result[0] if result and result[0] is not None else None
+
+            if max_id is None:
+                logger.info(f"No records to backup for {show_name}")
+                if db_conn:
+                    db_conn.close()
+                return
+
+            logger.info(f"Max ID before backup for {show_name}: {max_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to get max id for {show_name}: {e}")
+            if db_conn:
+                db_conn.close()
+            return
+
+        # Step 2: Create backup file
+        backup_dir = f"./tmp/speech_sqlite_backup/{show_name}"
+        os.makedirs(backup_dir, exist_ok=True)
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"{show_name}_{timestamp}.sqlite"
+        backup_path = os.path.join(backup_dir, backup_filename)
+
+        backup_conn = None
+
+        try:
+            # Create backup connection
+            backup_conn = sqlite3.connect(backup_path)
+
+            # Use SQLite's backup API to copy database
+            db_conn.backup(backup_conn)
+
+            backup_conn.close()
+            backup_conn = None
+
+            logger.info(f"Backup created: {backup_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to create backup for {show_name}: {e}")
+            if backup_conn:
+                backup_conn.close()
+            if db_conn:
+                db_conn.close()
+            # Clean up partial backup file
+            if os.path.exists(backup_path):
+                try:
+                    os.remove(backup_path)
+                except:
+                    pass
+            return
+
+        # Step 3: Upload with rclone
+        remote = "remote"
+        remote_dest = f"{remote}:{dest_dir}/{show_name}/"
+
+        try:
+            result = subprocess.run(
+                ['rclone', '--config', '/notfound', '-v', 'move', backup_dir, remote_dest],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+
+            if result.returncode != 0:
+                logger.error(f"rclone upload failed for {show_name}: {result.stderr}")
+                # Keep backup file for retry
+                if db_conn:
+                    db_conn.close()
+                return
+
+            logger.info(f"Upload success for {show_name}: {backup_filename}")
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"rclone upload timed out for {show_name}")
+            if db_conn:
+                db_conn.close()
+            return
+        except Exception as e:
+            logger.error(f"rclone upload error for {show_name}: {e}")
+            if db_conn:
+                db_conn.close()
+            return
+
+        # Step 4: Delete old records from source database (only if upload succeeded)
+        try:
+            cursor = db_conn.execute("DELETE FROM speech WHERE id <= ?", (max_id,))
+            deleted_count = cursor.rowcount
+            db_conn.commit()
+
+            logger.info(f"Deleted {deleted_count} records from {show_name} (id <= {max_id})")
+
+        except Exception as e:
+            logger.error(f"Failed to delete old records from {show_name}: {e}")
+            # Don't fail the backup - records will accumulate and get backed up next time
+        finally:
+            # Always close the connection created in this thread
+            if db_conn:
+                db_conn.close()
+
+
+def _test_remote_connection() -> bool:
+    """Test rclone remote connection.
+
+    Returns:
+        True if connection test succeeds, False otherwise
+    """
+    try:
+        # Test connection by listing remote directory
+        result = subprocess.run(
+            ['rclone', '--config', '/notfound', 'lsd', 'remote:'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            logger.error(f"Remote connection test failed: {result.stderr}")
+            return False
+
+        logger.info("Remote connection test successful")
+        return True
+
+    except subprocess.TimeoutExpired:
+        logger.error("Remote connection test timed out")
+        return False
+    except Exception as e:
+        logger.error(f"Remote connection test error: {e}")
+        return False
+
+
+def _backup_scheduler_thread():
+    """Background thread that runs periodic backups every hour."""
+    logger.info("Backup scheduler thread started")
+
+    while True:
+        try:
+            time.sleep(3600)
+
+            # Check if backups are enabled
+            if os.getenv("PERIODIC_UPLOAD_ENABLED") != "yes":
+                continue
+
+            # Backup the active database if one is registered
+            if _active_show_name and _active_db_path:
+                try:
+                    # Check if database file still exists
+                    if not os.path.exists(_active_db_path):
+                        logger.warning(f"Database no longer exists: {_active_db_path}")
+                        continue
+
+                    periodic_backup(_active_show_name, _active_db_path)
+
+                except Exception as e:
+                    logger.error(f"Backup failed for {_active_show_name}: {e}", exc_info=True)
+
+        except Exception as e:
+            logger.error(f"Backup scheduler error: {e}", exc_info=True)
+
+
+def _ensure_backup_thread_started():
+    """Ensure the backup scheduler thread is running (start it if not).
+
+    Tests configuration and remote connection before starting the thread to fail fast.
+
+    Raises:
+        RuntimeError: If backup is enabled but configuration is invalid or remote connection fails
+    """
+    global _backup_thread
+
+    # Check if backups are enabled
+    if os.getenv("PERIODIC_UPLOAD_ENABLED") != "yes":
+        return
+
+    with _backup_thread_lock:
+        if _backup_thread is None or not _backup_thread.is_alive():
+            # Check required environment variables (fail fast)
+            dest_dir = os.getenv("SQLITE_BACKUP_DEST_DIR")
+            if not dest_dir:
+                raise RuntimeError(
+                    "SQLITE_BACKUP_DEST_DIR environment variable is not set. "
+                    "Please set it to the remote backup destination directory, "
+                    "or set PERIODIC_UPLOAD_ENABLED=no to disable backups."
+                )
+
+            # Test remote connection before starting backup thread (fail fast)
+            logger.info("Testing remote connection before starting backup thread...")
+            if not _test_remote_connection():
+                raise RuntimeError(
+                    "Failed to connect to remote storage. "
+                    "Please check rclone configuration and remote connectivity. "
+                    "Set PERIODIC_UPLOAD_ENABLED=no to disable backups."
+                )
+
+            _backup_thread = threading.Thread(
+                target=_backup_scheduler_thread,
+                daemon=True,
+                name="backup-scheduler"
+            )
+            _backup_thread.start()
+            logger.info("Started backup scheduler thread")
