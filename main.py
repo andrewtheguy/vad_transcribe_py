@@ -429,34 +429,59 @@ def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
 
 if __name__ == '__main__':
     load_dotenv()
-    parser = argparse.ArgumentParser()
-    parser.add_argument('action', type=str, choices=['file','mic','stream','web','sqlite'])
-    parser.add_argument('--file', type=str, required=False)
-    parser.add_argument('--database', type=str, required=False, help='SQLite database path for sqlite action')
-    parser.add_argument('--audio-output', type=str, required=False, help='Output path for concatenated audio file (sqlite action for debugging)')
-    parser.add_argument('--lang', type=str, required=False)
-    parser.add_argument('--config', type=str, required=False) # for url live streaming
-    parser.add_argument('--output', type=str, required=False)
-    parser.add_argument('--n-threads', type=int, required=False, default=None, help='Number of threads for whisper model (default: 1 or from config file)')
+    parser = argparse.ArgumentParser(
+        description='Whisper transcription tool with multiple input modes'
+    )
+
+    # Global arguments (available to all actions)
     # https://absadiki.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
-    parser.add_argument('--model', type=str, required=False, default=None, help='Whisper model name (default: large-v3-turbo or from config file)')
+    parser.add_argument('--model', type=str, default=None, help='Whisper model name (default: large-v3-turbo or from config file)')
+    parser.add_argument('--n-threads', type=int, default=None, help='Number of threads for whisper model (default: 1 or from config file)')
     parser.add_argument('--backend', type=str, choices=['whisper_cpp', 'faster_whisper'], default='whisper_cpp', help='Transcription backend (default: whisper_cpp)')
-    # Web server options
-    parser.add_argument('--host', type=str, required=False, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
-    parser.add_argument('--port', type=int, required=False, default=5002, help='Port to bind web server to (default: 5002)')
-    parser.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
-    parser.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
-    parser.add_argument('--transcribe-api-url', type=str, required=False, help='Alternate transcribe API endpoint URL (for future use)')
+
+    # Create subparsers for each action
+    subparsers = parser.add_subparsers(dest='action', required=True, help='Action to perform')
+
+    # FILE subcommand
+    parser_file = subparsers.add_parser('file', help='Transcribe audio from a file')
+    parser_file.add_argument('--file', type=str, required=True, help='Path to audio file')
+    parser_file.add_argument('--output', type=str, help='Output path for JSON transcript (required if --transcribe)')
+    parser_file.add_argument('--lang', type=str, help='Language code for transcription')
+    parser_file.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
+
+    # MIC subcommand
+    parser_mic = subparsers.add_parser('mic', help='Transcribe audio from microphone')
+    parser_mic.add_argument('--lang', type=str, help='Language code for transcription')
+    parser_mic.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
+
+    # STREAM subcommand
+    parser_stream = subparsers.add_parser('stream', help='Transcribe audio from live stream')
+    parser_stream.add_argument('--config', type=str, required=True, help='Path to TOML config file for stream settings')
+    parser_stream.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
+
+    # WEB subcommand
+    parser_web = subparsers.add_parser('web', help='Start web server for transcription')
+    parser_web.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
+    parser_web.add_argument('--port', type=int, default=5002, help='Port to bind web server to (default: 5002)')
+    parser_web.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
+    parser_web.add_argument('--transcribe-api-url', type=str, help='Alternate transcribe API endpoint URL (for future use)')
+    parser_web.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
+
+    # SQLITE subcommand (no --transcribe flag, always transcribes)
+    parser_sqlite = subparsers.add_parser('sqlite', help='Transcribe audio segments from SQLite database')
+    parser_sqlite.add_argument('--database', type=str, required=True, help='Path to SQLite database')
+    parser_sqlite.add_argument('--lang', type=str, required=True, help='Language code for transcription')
+    parser_sqlite.add_argument('--audio-output', type=str, help='Output path for concatenated audio file (for debugging)')
+
     args = parser.parse_args()
 
     if args.action == 'file':
-        if not args.file:
-            print("Please provide a file path")
-            exit(1)
+        # Validate file exists
         if not os.path.exists(args.file):
             print(f"File {args.file} does not exist")
             exit(1)
 
+        # Conditional validation: --output required when --transcribe is enabled
         if args.transcribe and not args.output:
             print("Please provide an --output path for the JSON transcript")
             exit(1)
@@ -645,7 +670,8 @@ if __name__ == '__main__':
             print(str(e), file=sys.stderr)
             exit(1)
     elif args.action == 'stream':
-        if args.lang:
+        # Defensive check: --lang not available in stream subparser, but verify it's not set
+        if hasattr(args, 'lang') and args.lang:
             raise ValueError("Language should be provided in the config file rather than as a command line argument")
 
         # Load config first to get show_name for lock
@@ -813,15 +839,9 @@ if __name__ == '__main__':
             print(str(e), file=sys.stderr)
             exit(1)
     elif args.action == 'sqlite':
-        # Validate required arguments
-        if not args.database:
-            print("Please provide --database path to SQLite database")
-            exit(1)
+        # Validate database exists
         if not os.path.exists(args.database):
             print(f"Database {args.database} does not exist")
-            exit(1)
-        if not args.lang:
-            print("Please provide --lang for transcription")
             exit(1)
 
         # Import sqlite_decoder module
@@ -853,8 +873,7 @@ if __name__ == '__main__':
         ts = 0
         segment_count = 0
         transcribed_count = 0
-        if args.audio_output:
-            audio_segments_raw = []
+        audio_segments_raw = []  # Only used if args.audio_output is set
 
         try:
             max_id = get_max_speech_id(read_conn)
