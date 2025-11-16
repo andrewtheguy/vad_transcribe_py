@@ -68,125 +68,6 @@ class JsonTranscriptWriter:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
 
 
-class SqliteTranscriptWriter:
-    """Transcript writer for SQLite export with metadata and speech segment tracking.
-
-    Saves temporary transcription results to a JSONL file as they complete,
-    then combines them into the final JSON output.
-    """
-
-    def __init__(self, output_path: str, database_id: str, audio_format: str, max_id: int, show_name: str):
-        self.output_path = output_path
-        self.database_id = database_id
-        self.audio_format = audio_format
-        self.max_id = max_id
-        self.show_name = show_name
-
-        # Track segments in order (more reliable than float key lookup)
-        self.segment_metadata = []  # List of (speech_id, start_ts, end_ts) tuples
-        self.segment_index = 0  # Current position in segment_metadata list
-
-        # Temporary JSONL file for incremental results
-        self.temp_jsonl_path = f"{output_path}.jsonl.tmp"
-
-        # Create directory and initialize temp file
-        directory = os.path.dirname(self.output_path)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-
-        # Clear/create temp JSONL file
-        with open(self.temp_jsonl_path, "w", encoding="utf-8") as f:
-            pass  # Just create empty file
-
-    def set_segment_id(self, start: float, speech_id: int, start_ts: str, end_ts: str):
-        """Associate a speech segment ID with its relative start time.
-
-        Segments are expected to be added in order.
-        """
-        self.segment_metadata.append({
-            'id': speech_id,
-            'start_ts': start_ts,
-            'end_ts': end_ts
-        })
-
-    def add_notice(self, speech_id: int, start_ts: str, end_ts: str, text: str):
-        """Add notice entry directly to output (no transcription needed).
-
-        Used for TranscriptionNotice entries that have text but no audio.
-        Immediately writes to temporary JSONL file.
-        """
-        notice_entry = {
-            "id": speech_id,
-            "start_ts": start_ts,
-            "end_ts": end_ts,
-            "content": text,
-        }
-
-        # Write to temporary JSONL file immediately
-        with open(self.temp_jsonl_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(notice_entry, ensure_ascii=False) + "\n")
-
-    def add_segment(self, *, start: float, end: float, text: str):
-        """Add transcribed segment with associated speech ID.
-
-        Immediately writes to temporary JSONL file for crash recovery.
-        Assumes segments are transcribed in the same order they were queued.
-        """
-        # Get next segment metadata
-        if self.segment_index < len(self.segment_metadata):
-            speech_info = self.segment_metadata[self.segment_index]
-            self.segment_index += 1
-
-            speech_entry = {
-                "id": speech_info['id'],
-                "start_ts": speech_info['start_ts'],
-                "end_ts": speech_info['end_ts'],
-                "content": text,
-            }
-
-            # Write to temporary JSONL file immediately
-            with open(self.temp_jsonl_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(speech_entry, ensure_ascii=False) + "\n")
-
-    def flush(self):
-        """Write final JSON output with metadata and speeches.
-
-        Reads from temporary JSONL file and combines into final JSON format.
-        """
-        # Read all speeches from temporary JSONL file
-        speeches = []
-        with open(self.temp_jsonl_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    speeches.append(json.loads(line))
-
-        # Sort by ID to ensure proper chronological order (notices and transcribed segments may be interleaved)
-        speeches.sort(key=lambda x: x['id'])
-
-        # Create final output
-        output = {
-            "metadata": {
-                "database_id": self.database_id,
-                "show_name": self.show_name,
-                "audio_format": self.audio_format,
-                "max_id": self.max_id,
-                "export_timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-            "speeches": speeches
-        }
-
-        # Write final JSON
-        with open(self.output_path, "w", encoding="utf-8") as f:
-            json.dump(output, f, ensure_ascii=False, indent=2)
-
-        # Clean up temporary JSONL file
-        try:
-            os.remove(self.temp_jsonl_path)
-        except OSError:
-            pass  # Ignore if cleanup fails
-
-
 def process_vad_only(audio_input_queue, show_name, stop_event=None):
     """
     Process audio through VAD only, saving detected speech segments without transcription.
@@ -939,9 +820,6 @@ if __name__ == '__main__':
         if not os.path.exists(args.database):
             print(f"Database {args.database} does not exist")
             exit(1)
-        if not args.output:
-            print("Please provide --output path for the JSON transcript")
-            exit(1)
         if not args.audio_output:
             print("Please provide --audio-output path for the concatenated audio file")
             exit(1)
@@ -968,116 +846,110 @@ if __name__ == '__main__':
 
         # Connect to database and get snapshot
         # Use timeout for concurrent access while stream is writing
-        conn = sqlite3.connect(args.database, timeout=30.0)
+        conn = sqlite3.connect(args.database, timeout=30.0, isolation_level=None)
+        conn.execute("PRAGMA busy_timeout=10000")
         max_id = get_max_speech_id(conn)
         print(f"Processing {max_id} speech segments (snapshot)")
 
-        # Create transcript writer
-        transcript_writer = SqliteTranscriptWriter(
-            output_path=args.output,
-            database_id=database_id,
-            audio_format=audio_format,
-            max_id=max_id,
-            show_name=show_name
+        # Read last transcribed ID from metadata (resume capability)
+        cursor = conn.execute("SELECT value FROM metadata WHERE key = 'last_transcribed_id'")
+        result = cursor.fetchone()
+        start_from_id = int(result[0]) + 1 if result else 1
+        print(f"Resuming transcription from ID {start_from_id}")
+
+        # Initialize direct transcriber for already-segmented audio
+        segment_text_buffer: list[str] = []
+
+        def sqlite_segment_callback(start, end, text):
+            segment_text_buffer.append(text)
+
+        direct_transcriber = AudioTranscriber(
+            audio_input_queue=queue.Queue(),
+            language=args.lang,
+            mode='file',
+            show_name=show_name,
+            model=args.model if args.model is not None else 'large-v3-turbo',
+            segment_callback=sqlite_segment_callback,
+            n_threads=args.n_threads if args.n_threads is not None else 1,
+            backend=args.backend,
         )
-
-        # Create audio queue and processing thread
-        audio_input_queue = queue.Queue()
-        stop_event = threading.Event()
-        exception_handler = ThreadExceptionHandler()
-
-        thread_transcribe = threading.Thread(target=process_queue, kwargs={
-            'q': audio_input_queue,
-            'language': args.lang,
-            'save_audio': False,  # Don't save audio files - already in database
-            'segment_callback': transcript_writer.add_segment,
-            'model': args.model if args.model is not None else 'large-v3-turbo',
-            'n_threads': args.n_threads if args.n_threads is not None else 1,
-            'stop_event': stop_event,
-            'mode': 'file',  # File mode: no wall_clock timestamps
-            'backend': args.backend,
-            'exception_handler': exception_handler,
-        })
-
-        thread_transcribe.start()
-
-        # Give thread a moment to initialize and check for immediate errors
-        time.sleep(0.1)
-        if exception_handler.has_exception():
-            exc = exception_handler.get_exception()
-            print(f"FATAL ERROR in transcribe thread during initialization: {exc}", file=sys.stderr)
-            thread_transcribe.join()
-            conn.close()
-            sys.exit(1)
 
         # Process speech segments
         audio_segments_raw = []  # Collect raw audio for concatenation
         ts = 0  # Relative timestamp for transcription
         segment_count = 0
+        transcribed_count = 0
 
         try:
             for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(conn, max_id):
                 # Check if this is a notice entry (text-only, no audio)
                 if audio_data is None and text is not None:
-                    # Notice entry - add directly to transcript writer with text
-                    transcript_writer.add_notice(speech_id, start_ts, end_ts, text)
-                    # Store None in audio_segments_raw to mark the split point
+                    # Notice entry - already has text, just collect audio marker
                     audio_segments_raw.append(None)
                     segment_count += 1
                     continue
 
-                # Audio entry - decode and transcribe
-                # Decode audio segment
-                audio_float32 = decode_audio_segment(audio_data, audio_format)
-
                 # Store raw audio for concatenation
                 audio_segments_raw.append(audio_data)
-
-                # Associate segment ID with relative timestamp
-                transcript_writer.set_segment_id(ts, speech_id, start_ts, end_ts)
-
-                # Queue for transcription
-                audio_input_queue.put(AudioSegment(
-                    audio=audio_float32,
-                    start=ts,
-                    wall_clock_start=None
-                ))
-
-                # Update relative timestamp
-                ts += len(audio_float32) / TARGET_SAMPLE_RATE
                 segment_count += 1
 
-                if segment_count % 10 == 0:
-                    print(f"Queued {segment_count}/{max_id} segments for transcription")
+                # Skip if already transcribed
+                if speech_id < start_from_id:
+                    continue
 
-                # Check for exceptions
-                if exception_handler.has_exception():
-                    exc = exception_handler.get_exception()
-                    print(f"FATAL ERROR in transcribe thread: {exc}", file=sys.stderr)
-                    _request_shutdown(stop_event, audio_input_queue)
-                    thread_transcribe.join()
-                    conn.close()
-                    sys.exit(1)
+                # Audio entry - decode and transcribe
+                audio_float32 = decode_audio_segment(audio_data, audio_format)
+
+                if audio_float32 is None:
+                    continue
+
+                # Directly transcribe the decoded audio without VAD
+                segment_text_buffer.clear()
+                direct_transcriber.transcribe_audio_segment(audio_float32, start_offset=ts)
+                transcribed_text = " ".join(segment_text_buffer).strip()
+
+                # Update relative timestamp after transcription completes
+                ts += len(audio_float32) / TARGET_SAMPLE_RATE
+
+                # Update database with transcription (single transaction for atomicity)
+                max_db_attempts = 5
+                for attempt in range(1, max_db_attempts + 1):
+                    try:
+                        conn.execute("BEGIN IMMEDIATE")
+                        conn.execute(
+                            "UPDATE speech SET text = ? WHERE id = ?",
+                            (transcribed_text, speech_id)
+                        )
+                        conn.execute(
+                            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_transcribed_id', ?)",
+                            (str(speech_id),)
+                        )
+                        conn.commit()
+                        break
+                    except sqlite3.OperationalError as exc:
+                        conn.rollback()
+                        if "locked" in str(exc).lower() and attempt < max_db_attempts:
+                            backoff = 0.5 * attempt
+                            print(f"Database locked when updating ID {speech_id}, retrying in {backoff:.1f}s...", file=sys.stderr)
+                            time.sleep(backoff)
+                            continue
+                        raise
+                    except Exception:
+                        conn.rollback()
+                        raise
+
+                transcribed_count += 1
+
+                if transcribed_count % 10 == 0:
+                    print(f"Transcribed {transcribed_count} segments (ID {speech_id}/{max_id})")
 
         except KeyboardInterrupt:
             print("\nCtrl+C received, stopping processing...", file=sys.stderr)
-            _request_shutdown(stop_event, audio_input_queue)
-            thread_transcribe.join()
             conn.close()
             sys.exit(1)
-        finally:
-            # Signal end of queue
-            audio_input_queue.put(None)
-
-        # Wait for transcription to complete
-        thread_transcribe.join()
         conn.close()
 
-        print(f"Processed {segment_count} segments")
-
-        # Write transcript
-        transcript_writer.flush()
-        print(f"Transcript written to {args.output}")
+        print(f"Transcribed {transcribed_count} new segments (total in DB: {segment_count})")
 
         # Concatenate and save audio
         print(f"Concatenating {len(audio_segments_raw)} audio segments...")

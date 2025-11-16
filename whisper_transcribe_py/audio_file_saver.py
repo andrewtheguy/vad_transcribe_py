@@ -356,7 +356,8 @@ def _create_sqlite_saver(
 
     # Initialize database and schema
     # Set timeout for database locks and enable WAL mode for concurrent access
-    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn = sqlite3.connect(db_path, timeout=30.0, isolation_level=None)
+    conn.execute("PRAGMA busy_timeout=10000")
 
     # Enable WAL mode for better concurrent read/write access
     conn.execute('PRAGMA journal_mode=WAL')

@@ -28,7 +28,8 @@ def read_database_metadata(db_path: str) -> Tuple[str, str, str]:
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"Database not found: {db_path}")
 
-    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn = sqlite3.connect(db_path, timeout=30.0, isolation_level=None)
+    conn.execute("PRAGMA busy_timeout=10000")
     try:
         cursor = conn.execute("SELECT value FROM metadata WHERE key = 'version'")
         result = cursor.fetchone()

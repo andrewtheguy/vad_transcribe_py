@@ -1083,6 +1083,26 @@ class AudioTranscriber:
         else:  # livestream
             self._process_input_livestream(input_sample_rate)
 
+    def transcribe_audio_segment(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> None:
+        """
+        Transcribe an already-isolated float32 audio buffer directly without running VAD.
+
+        Intended for pre-segmented audio (e.g., database rows). Only supported in file mode.
+
+        Args:
+            audio: Float32 numpy array normalized to [-1.0, 1.0]
+            start_offset: Relative start timestamp used for callbacks
+        """
+        if self.mode != 'file':
+            raise ValueError("transcribe_audio_segment is only supported in file mode")
+        if audio is None or len(audio) == 0:
+            return
+
+        # Reset timestamps for direct transcription path
+        self.current_audio_offset = start_offset
+        self.ts_transcribe_start = None
+        self._backend_transcribe(audio)
+
 
 def stream_url_thread(
         url,
@@ -1149,4 +1169,3 @@ def stream_url_thread(
         print("stream_stopped, restarting", file=sys.stderr)
         sleep(0.5)
     print("stream_url_thread exiting", file=sys.stderr)
-
