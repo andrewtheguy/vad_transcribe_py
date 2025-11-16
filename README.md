@@ -303,12 +303,90 @@ The web interface provides a modern, user-friendly way to interact with Whisper 
   - Not required for: `file` command (saves to JSON instead)
 - `DATABASE_TIMEOUT` (optional): Connection timeout in seconds (default: 10)
 
+**SQLite Periodic Backup (optional)**
+
+For SQLite storage mode, you can enable automatic periodic backups to remote storage:
+
+- `PERIODIC_UPLOAD_ENABLED` (optional): Enable automatic backups
+  - Values: `yes` to enable, any other value to disable
+  - Default: disabled
+  - When enabled, creates SQLite backups at configured intervals and uploads to remote storage via rclone
+
+- `SQLITE_BACKUP_INTERVAL_SECONDS` (optional): Backup interval in seconds
+  - Default: `3600` (1 hour)
+  - Minimum: `1` second
+  - Example: `60` for 1-minute backups, `300` for 5-minute backups
+  - Invalid values fall back to default of 3600 seconds
+
+- `SQLITE_BACKUP_DEST_DIR` (required if backups enabled): Remote backup destination directory
+  - Example: `/backups/audio_transcripts`
+  - Used with rclone remote named `remote` (configured via rclone)
+  - Backups are organized by show name: `{SQLITE_BACKUP_DEST_DIR}/{show_name}/`
+
+**How periodic backups work:**
+1. At each interval (default: 1 hour), records the maximum ID from the database
+2. Creates a SQLite backup with timestamp: `{show_name}_YYYYMMDD_HHMMSS.sqlite`
+3. Uploads the backup to remote storage using `rclone move`
+4. If upload succeeds, deletes backed-up records from the source database to save space
+5. Backups are stored locally in `./tmp/speech_sqlite_backup/{show_name}/` before upload
+
+**Prerequisites:**
+- rclone must be installed and configured
+- The remote connection must be accessible (SFTP, S3, etc.)
+- Connection test is performed at startup to fail fast if remote is not accessible
+
+**Rclone Configuration:**
+
+The application uses rclone environment variables (not config file) to connect to remote storage. You must configure a remote named `remote` using environment variables:
+
+**For SFTP (example):**
+```bash
+RCLONE_CONFIG_REMOTE_TYPE=sftp
+RCLONE_CONFIG_REMOTE_HOST=example.com
+RCLONE_CONFIG_REMOTE_USER=username
+RCLONE_CONFIG_REMOTE_PASS=<obscured_password>  # Use 'rclone obscure' to generate
+RCLONE_CONFIG_REMOTE_PORT=22
+```
+
+**For S3-compatible storage (example):**
+```bash
+RCLONE_CONFIG_REMOTE_TYPE=s3
+RCLONE_CONFIG_REMOTE_PROVIDER=AWS
+RCLONE_CONFIG_REMOTE_ACCESS_KEY_ID=your_access_key
+RCLONE_CONFIG_REMOTE_SECRET_ACCESS_KEY=your_secret_key
+RCLONE_CONFIG_REMOTE_REGION=us-east-1
+RCLONE_CONFIG_REMOTE_ENDPOINT=https://s3.amazonaws.com
+```
+
+**For other storage providers:**
+- See [rclone documentation](https://rclone.org/docs/) for your specific backend
+- All environment variables follow the pattern: `RCLONE_CONFIG_REMOTE_<OPTION>=value`
+- Remote name must be `REMOTE` (case-insensitive)
+
+**Generate obscured password for SFTP:**
+```bash
+rclone obscure "your-password"
+# Copy the output to RCLONE_CONFIG_REMOTE_PASS
+```
+
 You can set these in a `.env` file in the project root:
 
 ```bash
 # .env
 DATABASE_URL=postgresql://user:password@localhost:5432/whisper_db
 DATABASE_TIMEOUT=10
+
+# Optional: Enable SQLite periodic backups
+PERIODIC_UPLOAD_ENABLED=yes
+SQLITE_BACKUP_INTERVAL_SECONDS=3600  # Default: 3600 seconds (1 hour)
+SQLITE_BACKUP_DEST_DIR=/backups/audio_transcripts
+
+# Rclone remote configuration (SFTP example)
+RCLONE_CONFIG_REMOTE_TYPE=sftp
+RCLONE_CONFIG_REMOTE_HOST=backup.example.com
+RCLONE_CONFIG_REMOTE_USER=backup_user
+RCLONE_CONFIG_REMOTE_PASS=<obscured_password>
+RCLONE_CONFIG_REMOTE_PORT=22
 ```
 
 The application will automatically load these values using python-dotenv.

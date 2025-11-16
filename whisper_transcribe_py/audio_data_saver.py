@@ -530,12 +530,22 @@ def _test_remote_connection() -> bool:
 
 
 def _backup_scheduler_thread():
-    """Background thread that runs periodic backups every hour."""
-    logger.info("Backup scheduler thread started")
+    """Background thread that runs periodic backups at configured interval."""
+    # Get backup interval from environment variable (default: 3600 seconds = 1 hour)
+    try:
+        interval = int(os.getenv("SQLITE_BACKUP_INTERVAL_SECONDS", "3600"))
+        if interval < 1:
+            logger.warning(f"Invalid SQLITE_BACKUP_INTERVAL_SECONDS={interval}, using default 3600")
+            interval = 3600
+    except ValueError:
+        logger.warning(f"Invalid SQLITE_BACKUP_INTERVAL_SECONDS, using default 3600")
+        interval = 3600
+
+    logger.info(f"Backup scheduler thread started (interval: {interval}s)")
 
     while True:
         try:
-            time.sleep(3600)
+            time.sleep(interval)
 
             # Check if backups are enabled
             if os.getenv("PERIODIC_UPLOAD_ENABLED") != "yes":
