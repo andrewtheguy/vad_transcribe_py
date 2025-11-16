@@ -5,7 +5,7 @@ import sqlite3
 import subprocess
 import uuid
 from datetime import datetime, timezone
-from typing import Callable, TYPE_CHECKING, Optional
+from typing import Callable, TYPE_CHECKING, Optional, Union
 
 import numpy as np
 
@@ -13,12 +13,17 @@ from whisper_transcribe_py.vad_processor import AudioSegment
 
 if TYPE_CHECKING:
     from __main__ import ThreadExceptionHandler
+    from whisper_transcribe_py.audio_transcriber import TranscriptionNotice
 
 TARGET_SAMPLE_RATE = 16000
 OUTPUT_FORMAT = "m4a"  # Options: "opus", "wav", "m4a"
 STORAGE_TYPE = "sqlite"  # Options: "file", "sqlite"
 
-AudioSegmentCallback = Callable[[AudioSegment], None]
+# Callback accepts either AudioSegment or TranscriptionNotice (for SQLite storage)
+if TYPE_CHECKING:
+    AudioSegmentCallback = Callable[[Union[AudioSegment, 'TranscriptionNotice']], None]
+else:
+    AudioSegmentCallback = Callable[[Union[AudioSegment, object]], None]
 
 
 def _create_file_saver(
@@ -195,7 +200,6 @@ def _set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
         'INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)',
         (key, value)
     )
-    conn.commit()
 
 
 def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name: str) -> None:
@@ -214,7 +218,6 @@ def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name:
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     )''')
-    conn.commit()
 
     # Check if metadata already exists
     existing_version = _get_metadata(conn, 'version')
@@ -223,11 +226,11 @@ def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name:
 
     if existing_version is not None:
         # Metadata exists - validate version, format, and show name match
-        if existing_version != "1":
+        if existing_version != "2":
             raise ValueError(
                 f"Database version mismatch: database was created with version '{existing_version}' "
-                f"but current version is '1'. "
-                f"Please upgrade the database or use a compatible version of the application."
+                f"but current version is '2'. "
+                f"No backward compatibility - please create a new database."
             )
         if existing_format != audio_format:
             raise ValueError(
@@ -245,7 +248,7 @@ def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name:
     else:
         # No metadata exists - initialize it
         database_id = str(uuid.uuid4())
-        _set_metadata(conn, 'version', '1')
+        _set_metadata(conn, 'version', '2')
         _set_metadata(conn, 'audio_format', audio_format)
         _set_metadata(conn, 'show_name', show_name)
         _set_metadata(conn, 'database_id', database_id)
@@ -297,6 +300,37 @@ def _encode_to_raw_aac(audio_int16: np.ndarray) -> bytes:
         raise RuntimeError(f"Failed to encode to raw AAC: {e}")
 
 
+def _save_notice_to_sqlite(conn: sqlite3.Connection, notice) -> None:
+    """Save a TranscriptionNotice to the SQLite database.
+
+    Args:
+        conn: SQLite database connection
+        notice: TranscriptionNotice object to save
+
+    Raises:
+        RuntimeError: If saving fails
+    """
+    # Calculate timestamp - notice.timestamp is wall clock time
+    if notice.timestamp is not None:
+        start_dt = datetime.fromtimestamp(notice.timestamp, timezone.utc)
+    else:
+        # If no timestamp provided, use current time
+        start_dt = datetime.now(timezone.utc)
+
+    # Format as ISO 8601 string
+    start_ts_str = start_dt.isoformat()
+    end_ts_str = start_ts_str  # Same as start_ts for notices (instantaneous event)
+
+    # Insert into database with NULL audio_data
+    try:
+        conn.execute(
+            'INSERT INTO speech (start_ts, end_ts, audio_data, text) VALUES (?, ?, NULL, ?)',
+            (start_ts_str, end_ts_str, notice.text)
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to save TranscriptionNotice to SQLite: {e}")
+
+
 def _create_sqlite_saver(
     show_name: str,
     exception_handler: Optional['ThreadExceptionHandler'] = None
@@ -319,11 +353,11 @@ def _create_sqlite_saver(
 
     # Initialize database and schema
     # Set timeout for database locks and enable WAL mode for concurrent access
-    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn = sqlite3.connect(db_path, timeout=30.0, isolation_level=None)
+    conn.execute("PRAGMA busy_timeout=10000")
 
     # Enable WAL mode for better concurrent read/write access
     conn.execute('PRAGMA journal_mode=WAL')
-    conn.commit()
 
     # Initialize metadata table and validate format and show name
     _initialize_metadata(conn, OUTPUT_FORMAT, show_name)
@@ -333,10 +367,11 @@ def _create_sqlite_saver(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         start_ts TEXT NOT NULL,
         end_ts TEXT NOT NULL,
-        audio_data BLOB NOT NULL
+        audio_data BLOB,
+        text TEXT,
+        CHECK (audio_data IS NOT NULL OR text IS NOT NULL)
     )''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_start_ts ON speech(start_ts)')
-    conn.commit()
 
     def _save_impl(segment: AudioSegment):
         audio = segment.audio
@@ -384,17 +419,24 @@ def _create_sqlite_saver(
         # Insert into database
         try:
             conn.execute(
-                'INSERT INTO speech (start_ts, end_ts, audio_data) VALUES (?, ?, ?)',
+                'INSERT INTO speech (start_ts, end_ts, audio_data, text) VALUES (?, ?, ?, NULL)',
                 (start_ts_str, end_ts_str, audio_data)
             )
-            conn.commit()
         except Exception as e:
             raise RuntimeError(f"Failed to save audio segment to SQLite: {e}")
 
-    def _save(segment: AudioSegment):
-        """Wrapper that captures exceptions for the exception handler."""
+    def _save(item):
+        """Wrapper that captures exceptions for the exception handler.
+
+        Accepts either AudioSegment or TranscriptionNotice.
+        """
         try:
-            _save_impl(segment)
+            if isinstance(item, AudioSegment):
+                _save_impl(item)
+            elif type(item).__name__ == 'TranscriptionNotice':
+                _save_notice_to_sqlite(conn, item)
+            else:
+                raise TypeError(f"Expected AudioSegment or TranscriptionNotice, got {type(item)}")
         except Exception as e:
             if exception_handler:
                 exception_handler.set_exception(e)

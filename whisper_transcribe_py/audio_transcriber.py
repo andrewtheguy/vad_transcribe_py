@@ -1083,6 +1083,26 @@ class AudioTranscriber:
         else:  # livestream
             self._process_input_livestream(input_sample_rate)
 
+    def transcribe_audio_segment(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> None:
+        """
+        Transcribe an already-isolated float32 audio buffer directly without running VAD.
+
+        Intended for pre-segmented audio (e.g., database rows). Only supported in file mode.
+
+        Args:
+            audio: Float32 numpy array normalized to [-1.0, 1.0]
+            start_offset: Relative start timestamp used for callbacks
+        """
+        if self.mode != 'file':
+            raise ValueError("transcribe_audio_segment is only supported in file mode")
+        if audio is None or len(audio) == 0:
+            return
+
+        # Reset timestamps for direct transcription path
+        self.current_audio_offset = start_offset
+        self.ts_transcribe_start = None
+        self._backend_transcribe(audio)
+
 
 def stream_url_thread(
         url,
@@ -1090,6 +1110,9 @@ def stream_url_thread(
         stop_event=None,
         queue_limiter: Optional["QueueBacklogLimiter"] = None,
 ):
+    # # TODO: REMOVE THIS - Test mode hard-coded to trigger errors every 20 seconds
+    # test_thread_start_time = time.time()
+
     while True:
         if stop_event is not None and stop_event.is_set():
             break
@@ -1101,6 +1124,14 @@ def stream_url_thread(
                 while True:
                     if stop_event is not None and stop_event.is_set():
                         break
+
+                    # # TODO: REMOVE THIS - Test mode: trigger error after 20 seconds
+                    # elapsed = time.time() - test_thread_start_time
+                    # if elapsed >= 20.0:
+                    #     # Reset timer for next cycle
+                    #     test_thread_start_time = time.time()
+                    #     raise ValueError(f"Test mode: triggered error after {elapsed:.1f} seconds")
+
                     chunk = stdout.read(TARGET_SAMPLE_RATE*2) # 1 second
                     if not chunk:
                         break
@@ -1138,4 +1169,3 @@ def stream_url_thread(
         print("stream_stopped, restarting", file=sys.stderr)
         sleep(0.5)
     print("stream_url_thread exiting", file=sys.stderr)
-
