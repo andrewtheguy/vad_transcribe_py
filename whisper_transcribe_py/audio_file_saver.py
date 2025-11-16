@@ -199,7 +199,7 @@ def _set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 
 def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name: str) -> None:
-    """Initialize metadata table with format, show name, and database ID.
+    """Initialize metadata table with version, format, show name, and database ID.
 
     Args:
         conn: SQLite database connection
@@ -207,7 +207,7 @@ def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name:
         show_name: Show name for this database
 
     Raises:
-        ValueError: If existing format or show name doesn't match current settings
+        ValueError: If existing version, format, or show name doesn't match current settings
     """
     # Create metadata table if it doesn't exist
     conn.execute('''CREATE TABLE IF NOT EXISTS metadata (
@@ -217,11 +217,18 @@ def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name:
     conn.commit()
 
     # Check if metadata already exists
+    existing_version = _get_metadata(conn, 'version')
     existing_format = _get_metadata(conn, 'audio_format')
     existing_show_name = _get_metadata(conn, 'show_name')
 
-    if existing_format is not None:
-        # Metadata exists - validate format and show name match
+    if existing_version is not None:
+        # Metadata exists - validate version, format, and show name match
+        if existing_version != "1":
+            raise ValueError(
+                f"Database version mismatch: database was created with version '{existing_version}' "
+                f"but current version is '1'. "
+                f"Please upgrade the database or use a compatible version of the application."
+            )
         if existing_format != audio_format:
             raise ValueError(
                 f"Database format mismatch: database was created with format '{existing_format}' "
@@ -234,10 +241,11 @@ def _initialize_metadata(conn: sqlite3.Connection, audio_format: str, show_name:
                 f"but current show name is '{show_name}'. "
                 f"Please use the correct show name or create a new database."
             )
-        # Format and show name match - no action needed, database_id already exists
+        # Version, format, and show name match - no action needed, database_id already exists
     else:
         # No metadata exists - initialize it
         database_id = str(uuid.uuid4())
+        _set_metadata(conn, 'version', '1')
         _set_metadata(conn, 'audio_format', audio_format)
         _set_metadata(conn, 'show_name', show_name)
         _set_metadata(conn, 'database_id', database_id)
@@ -414,10 +422,10 @@ def create_audio_file_saver(
     For SQLite storage:
     - Database location: ./tmp/speech_sqlite/{show_name}_{format}.sqlite
     - Table: speech (id, start_ts, end_ts, audio_data)
-    - Table: metadata (key, value) - stores audio_format, show_name, and database_id
+    - Table: metadata (key, value) - stores version, audio_format, show_name, and database_id
     - Timestamps: ISO 8601 format with timezone
     - Audio data: Raw PCM for wav, raw AAC (ADTS) for m4a
-    - Validation: On startup, verifies audio_format and show_name in metadata match current settings
+    - Validation: On startup, verifies version, audio_format, and show_name in metadata match current settings
     - Note: Opus format not currently supported with SQLite storage
 
     Args:

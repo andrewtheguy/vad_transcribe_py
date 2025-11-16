@@ -30,6 +30,19 @@ def read_database_metadata(db_path: str) -> Tuple[str, str, str]:
 
     conn = sqlite3.connect(db_path, timeout=30.0)
     try:
+        cursor = conn.execute("SELECT value FROM metadata WHERE key = 'version'")
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError("version not found in metadata table")
+        version = result[0]
+
+        if version != "1":
+            raise ValueError(
+                f"Database version mismatch: database was created with version '{version}' "
+                f"but current version is '1'. "
+                f"Please upgrade the database or use a compatible version of the application."
+            )
+
         cursor = conn.execute("SELECT value FROM metadata WHERE key = 'audio_format'")
         result = cursor.fetchone()
         if not result:
