@@ -357,10 +357,11 @@ def periodic_backup(show_name: str, db_path: str) -> None:
     SQLite thread-safety issues.
 
     Process:
-    1. Record max id from database before backup
-    2. Create backup using SQLite's backup API
+    1. Create backup using SQLite's backup API
+    2. Determine max id from the backup file (ensures consistent snapshot)
     3. Upload backup to remote using rclone
-    4. If upload succeeds, delete old records from source database
+    4. If upload succeeds, delete old records from source database up to the
+       max id that was actually backed up
 
     Args:
         show_name: Name of the show (used for organizing backups)
@@ -393,28 +394,7 @@ def periodic_backup(show_name: str, db_path: str) -> None:
             logger.error(f"Failed to create database connection for {show_name}: {e}")
             return
 
-        # Step 1: Record max id before backup
-        max_id = None
-        try:
-            cursor = db_conn.execute("SELECT MAX(id) FROM speech")
-            result = cursor.fetchone()
-            max_id = result[0] if result and result[0] is not None else None
-
-            if max_id is None:
-                logger.info(f"No records to backup for {show_name}")
-                if db_conn:
-                    db_conn.close()
-                return
-
-            logger.info(f"Max ID before backup for {show_name}: {max_id}")
-
-        except Exception as e:
-            logger.error(f"Failed to get max id for {show_name}: {e}")
-            if db_conn:
-                db_conn.close()
-            return
-
-        # Step 2: Create backup file
+        # Step 1: Create backup file
         backup_dir = f"./tmp/speech_sqlite_backup/{show_name}"
         os.makedirs(backup_dir, exist_ok=True)
 
@@ -452,6 +432,36 @@ def periodic_backup(show_name: str, db_path: str) -> None:
                     pass
             return
 
+        # Step 2: Determine max id from backup to avoid races with new inserts
+        backup_max_id = None
+        backup_max_id_conn = None
+        try:
+            backup_max_id_conn = sqlite3.connect(backup_path)
+            cursor = backup_max_id_conn.execute("SELECT MAX(id) FROM speech")
+            result = cursor.fetchone()
+            backup_max_id = result[0] if result and result[0] is not None else None
+            if backup_max_id is None:
+                logger.info(f"No records to backup for {show_name}")
+                if db_conn:
+                    db_conn.close()
+                # Remove empty backup file
+                try:
+                    os.remove(backup_path)
+                except OSError:
+                    pass
+                return
+            logger.info(f"Max ID in backup for {show_name}: {backup_max_id}")
+        except Exception as e:
+            logger.error(f"Failed to read max id from backup for {show_name}: {e}")
+            if backup_max_id_conn:
+                backup_max_id_conn.close()
+            if db_conn:
+                db_conn.close()
+            return
+        finally:
+            if backup_max_id_conn:
+                backup_max_id_conn.close()
+
         # Step 3: Upload with rclone
         remote = "remote"
         remote_dest = f"{remote}:{dest_dir}/{show_name}/{now.strftime('%Y/%m/%d')}/"
@@ -486,11 +496,13 @@ def periodic_backup(show_name: str, db_path: str) -> None:
 
         # Step 4: Delete old records from source database (only if upload succeeded)
         try:
-            cursor = db_conn.execute("DELETE FROM speech WHERE id <= ?", (max_id,))
+            cursor = db_conn.execute("DELETE FROM speech WHERE id <= ?", (backup_max_id,))
             deleted_count = cursor.rowcount
             db_conn.commit()
 
-            logger.info(f"Deleted {deleted_count} records from {show_name} (id <= {max_id})")
+            logger.info(
+                f"Deleted {deleted_count} records from {show_name} (id <= {backup_max_id})"
+            )
 
         except Exception as e:
             logger.error(f"Failed to delete old records from {show_name}: {e}")
