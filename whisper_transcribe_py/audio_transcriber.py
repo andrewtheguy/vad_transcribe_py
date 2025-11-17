@@ -683,7 +683,7 @@ class AudioTranscriber:
 
             # Iterate through segments and manually call the callback
             for segment in segments:
-                print("new segment from faster-whisper:", segment)
+                #print("new segment from faster-whisper:", segment)
                 # Create a compatible segment object that matches whisper.cpp's format
                 # faster-whisper segments have: start (float), end (float), text (str)
                 # whisper.cpp segments have: t0 (int ms), t1 (int ms), text (str)
@@ -699,7 +699,7 @@ class AudioTranscriber:
             raise ValueError(f"Unsupported backend: {self.backend}")
 
     def _new_segment_callback(self, segment):
-        print("New segment from wispercpp:", segment)
+        #print("New segment from wispercpp:", segment)
         relative_start = self.current_audio_offset + segment.t0 / 1000
         relative_end = self.current_audio_offset + segment.t1 / 1000
 
