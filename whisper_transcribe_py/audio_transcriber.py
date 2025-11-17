@@ -332,7 +332,6 @@ class QueueBacklogLimiter:
             )
 
             # Completely reset the limiter state
-            old_backlog = self.current_seconds
             self.current_seconds = 0.0
             self._drop_mode = False
             self._drop_notice_active = False
