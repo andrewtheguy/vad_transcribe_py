@@ -197,15 +197,16 @@ def decode_audio_segment(audio_data: Optional[bytes], audio_format: str) -> Opti
         raise ValueError(f"Unsupported audio_format: {audio_format}")
 
 
-def concatenate_and_save_audio_wav(audio_segments: list[Optional[bytes]], output_path: str) -> list[str]:
+def concatenate_and_save_audio_wav(audio_segments: list[Optional[bytes]], output_path: str, timestamps: Optional[list[Optional[tuple[str, str]]]] = None) -> list[str]:
     """Concatenate WAV segments and save to file(s).
 
     None entries (notices) cause the audio to be split into multiple files.
-    Files are named: base_1.wav, base_2.wav, etc.
+    Files are named with timestamps if provided, otherwise: base_1.wav, base_2.wav, etc.
 
     Args:
         audio_segments: List of raw PCM int16 audio data (None entries cause file splits)
         output_path: Base path for output files (e.g., "output.wav" -> "output_1.wav", "output_2.wav")
+        timestamps: Optional list of (start_ts, end_ts) tuples for each segment (None entries for notices)
 
     Returns:
         List of created file paths
@@ -213,22 +214,35 @@ def concatenate_and_save_audio_wav(audio_segments: list[Optional[bytes]], output
     Raises:
         RuntimeError: If ffmpeg encoding fails
     """
-    # Split segments into groups separated by None entries
+    # Split segments into groups separated by None entries, tracking timestamps
     groups = []
+    group_timestamps = []
     current_group = []
+    current_group_start_ts = None
+    current_group_end_ts = None
 
-    for seg in audio_segments:
+    for idx, seg in enumerate(audio_segments):
         if seg is None:
             # None entry - save current group and start a new one
             if current_group:
                 groups.append(current_group)
+                group_timestamps.append((current_group_start_ts, current_group_end_ts))
                 current_group = []
+                current_group_start_ts = None
+                current_group_end_ts = None
         else:
             current_group.append(seg)
+            # Track timestamps for this group
+            if timestamps and idx < len(timestamps) and timestamps[idx]:
+                start_ts, end_ts = timestamps[idx]
+                if current_group_start_ts is None:
+                    current_group_start_ts = start_ts
+                current_group_end_ts = end_ts
 
     # Add final group
     if current_group:
         groups.append(current_group)
+        group_timestamps.append((current_group_start_ts, current_group_end_ts))
 
     if not groups:
         return []
@@ -245,11 +259,25 @@ def concatenate_and_save_audio_wav(audio_segments: list[Optional[bytes]], output
 
         # Generate output path
         if len(groups) == 1:
-            # Only one group - use original path
-            file_path = output_path
+            # Only one group - use original path with timestamps if available
+            if timestamps and group_timestamps[0][0] and group_timestamps[0][1]:
+                start_ts, end_ts = group_timestamps[0]
+                # Sanitize timestamps for filename (replace : with -)
+                start_ts_safe = start_ts.replace(':', '-').replace('.', '-')
+                end_ts_safe = end_ts.replace(':', '-').replace('.', '-')
+                file_path = f"{base_path}_{start_ts_safe}_to_{end_ts_safe}.{extension}"
+            else:
+                file_path = output_path
         else:
-            # Multiple groups - add suffix
-            file_path = f"{base_path}_{i}.{extension}"
+            # Multiple groups - add suffix with timestamps if available
+            if timestamps and group_timestamps[i-1][0] and group_timestamps[i-1][1]:
+                start_ts, end_ts = group_timestamps[i-1]
+                # Sanitize timestamps for filename (replace : with -)
+                start_ts_safe = start_ts.replace(':', '-').replace('.', '-')
+                end_ts_safe = end_ts.replace(':', '-').replace('.', '-')
+                file_path = f"{base_path}_{i}_{start_ts_safe}_to_{end_ts_safe}.{extension}"
+            else:
+                file_path = f"{base_path}_{i}.{extension}"
 
         command = [
             "ffmpeg",
@@ -286,15 +314,16 @@ def concatenate_and_save_audio_wav(audio_segments: list[Optional[bytes]], output
     return created_files
 
 
-def concatenate_and_save_audio_m4a(audio_segments: list[Optional[bytes]], output_path: str) -> list[str]:
+def concatenate_and_save_audio_m4a(audio_segments: list[Optional[bytes]], output_path: str, timestamps: Optional[list[Optional[tuple[str, str]]]] = None) -> list[str]:
     """Concatenate M4A (ADTS AAC) segments and save to file(s).
 
     None entries (notices) cause the audio to be split into multiple files.
-    Files are named: base_1.m4a, base_2.m4a, etc.
+    Files are named with timestamps if provided, otherwise: base_1.m4a, base_2.m4a, etc.
 
     Args:
         audio_segments: List of raw ADTS AAC streams (None entries cause file splits)
         output_path: Base path for output files (e.g., "output.m4a" -> "output_1.m4a", "output_2.m4a")
+        timestamps: Optional list of (start_ts, end_ts) tuples for each segment (None entries for notices)
 
     Returns:
         List of created file paths
@@ -302,22 +331,35 @@ def concatenate_and_save_audio_m4a(audio_segments: list[Optional[bytes]], output
     Raises:
         RuntimeError: If ffmpeg encoding fails
     """
-    # Split segments into groups separated by None entries
+    # Split segments into groups separated by None entries, tracking timestamps
     groups = []
+    group_timestamps = []
     current_group = []
+    current_group_start_ts = None
+    current_group_end_ts = None
 
-    for seg in audio_segments:
+    for idx, seg in enumerate(audio_segments):
         if seg is None:
             # None entry - save current group and start a new one
             if current_group:
                 groups.append(current_group)
+                group_timestamps.append((current_group_start_ts, current_group_end_ts))
                 current_group = []
+                current_group_start_ts = None
+                current_group_end_ts = None
         else:
             current_group.append(seg)
+            # Track timestamps for this group
+            if timestamps and idx < len(timestamps) and timestamps[idx]:
+                start_ts, end_ts = timestamps[idx]
+                if current_group_start_ts is None:
+                    current_group_start_ts = start_ts
+                current_group_end_ts = end_ts
 
     # Add final group
     if current_group:
         groups.append(current_group)
+        group_timestamps.append((current_group_start_ts, current_group_end_ts))
 
     if not groups:
         return []
@@ -334,11 +376,25 @@ def concatenate_and_save_audio_m4a(audio_segments: list[Optional[bytes]], output
 
         # Generate output path
         if len(groups) == 1:
-            # Only one group - use original path
-            file_path = output_path
+            # Only one group - use original path with timestamps if available
+            if timestamps and group_timestamps[0][0] and group_timestamps[0][1]:
+                start_ts, end_ts = group_timestamps[0]
+                # Sanitize timestamps for filename (replace : with -)
+                start_ts_safe = start_ts.replace(':', '-').replace('.', '-')
+                end_ts_safe = end_ts.replace(':', '-').replace('.', '-')
+                file_path = f"{base_path}_{start_ts_safe}_to_{end_ts_safe}.{extension}"
+            else:
+                file_path = output_path
         else:
-            # Multiple groups - add suffix
-            file_path = f"{base_path}_{i}.{extension}"
+            # Multiple groups - add suffix with timestamps if available
+            if timestamps and group_timestamps[i-1][0] and group_timestamps[i-1][1]:
+                start_ts, end_ts = group_timestamps[i-1]
+                # Sanitize timestamps for filename (replace : with -)
+                start_ts_safe = start_ts.replace(':', '-').replace('.', '-')
+                end_ts_safe = end_ts.replace(':', '-').replace('.', '-')
+                file_path = f"{base_path}_{i}_{start_ts_safe}_to_{end_ts_safe}.{extension}"
+            else:
+                file_path = f"{base_path}_{i}.{extension}"
 
         command = [
             "ffmpeg",
@@ -373,7 +429,7 @@ def concatenate_and_save_audio_m4a(audio_segments: list[Optional[bytes]], output
     return created_files
 
 
-def concatenate_and_save_audio(audio_segments: list[Optional[bytes]], output_path: str, audio_format: str) -> list[str]:
+def concatenate_and_save_audio(audio_segments: list[Optional[bytes]], output_path: str, audio_format: str, timestamps: Optional[list[Optional[tuple[str, str]]]] = None) -> list[str]:
     """Concatenate audio segments and save to file(s).
 
     None entries (notices) cause the audio to be split into multiple files.
@@ -382,6 +438,7 @@ def concatenate_and_save_audio(audio_segments: list[Optional[bytes]], output_pat
         audio_segments: List of raw audio data from database (None entries cause file splits)
         output_path: Base path for output files
         audio_format: 'wav' or 'm4a'
+        timestamps: Optional list of (start_ts, end_ts) tuples for each segment (None entries for notices)
 
     Returns:
         List of created file paths
@@ -391,8 +448,8 @@ def concatenate_and_save_audio(audio_segments: list[Optional[bytes]], output_pat
         RuntimeError: If encoding fails
     """
     if audio_format == 'wav':
-        return concatenate_and_save_audio_wav(audio_segments, output_path)
+        return concatenate_and_save_audio_wav(audio_segments, output_path, timestamps)
     elif audio_format == 'm4a':
-        return concatenate_and_save_audio_m4a(audio_segments, output_path)
+        return concatenate_and_save_audio_m4a(audio_segments, output_path, timestamps)
     else:
         raise ValueError(f"Unsupported audio_format: {audio_format}")

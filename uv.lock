@@ -709,22 +709,12 @@ wheels = [
 [[package]]
 name = "pywhispercpp"
 version = "1.3.3"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/absadiki/pywhispercpp?tag=v1.3.3#2b09b82f681d3b01b25cdb1b314c57d7cc193179" }
 dependencies = [
     { name = "numpy" },
     { name = "platformdirs" },
     { name = "requests" },
     { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/07/03719ae0e88463a187a12fad31c7ea6f254dbe2bc6e90f671faa5788b59e/pywhispercpp-1.3.3.tar.gz", hash = "sha256:3a6a6d35d9dfd4ed9379cec9329cdfc24855ec2eeac07d20241f958b3c8dc0db", size = 1285595, upload-time = "2025-07-01T19:07:12.989Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/a6/9707aff0dc4691353fa8089aedb031fd561bee42045cda488f83d18cb8e7/pywhispercpp-1.3.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:8ee5b4fc1e9e0cfdd21ab11909062c354bb95751d9300599bb250adcc00205f0", size = 1777373, upload-time = "2025-07-01T19:06:45.275Z" },
-    { url = "https://files.pythonhosted.org/packages/69/2f/c6887b56dd6c793986ef341c32e00dfe06651329cc8ea1c89945a4cb728c/pywhispercpp-1.3.3-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c251327558b371ab28a5d084ff2474c9a72b7c8ac1ae48fbd522920174988a19", size = 1988494, upload-time = "2025-07-01T19:06:46.441Z" },
-    { url = "https://files.pythonhosted.org/packages/eb/b1/18904643c8d509a886dcbf4d7f4be636bf36ba265200877b97eaa4f6529c/pywhispercpp-1.3.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6f896990f242f62656a7bcb4fdd11fa2512bdf3b957745f2cf5066a9662eec40", size = 2137121, upload-time = "2025-07-01T19:06:47.791Z" },
-    { url = "https://files.pythonhosted.org/packages/48/39/749f9212d21c707695f5bed531dec10c7031018a5b612c60c266a635c13a/pywhispercpp-1.3.3-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:afb65cb91eab3beb6c6cd751933bbd6c0d91c54b7c8b78b2ea179c4baaf96427", size = 2892842, upload-time = "2025-07-01T19:06:48.971Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/21/ae8b89ddbe7c8a2ace0c1cea1f133bc23fc4b83a362e527a97ca4b306a54/pywhispercpp-1.3.3-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:427a36f8f2de20672f75449ea05a4cddfa48d7c03f58881d22f5ebc203a6ab2b", size = 3065075, upload-time = "2025-07-01T19:06:50.254Z" },
-    { url = "https://files.pythonhosted.org/packages/4d/99/8fb025b8647075845550b64a3e11c747f0fd4e2d6145bd7f24c728435d18/pywhispercpp-1.3.3-cp312-cp312-win32.whl", hash = "sha256:1398ee12db7a2c86e07615fc4044e7d7e47bc875b82d16885c04b069a1319d20", size = 833820, upload-time = "2025-07-01T19:06:51.541Z" },
-    { url = "https://files.pythonhosted.org/packages/19/8f/b0729eec2102f57545ac75a03739708b294e13b0890da455ba4e0556b7ad/pywhispercpp-1.3.3-cp312-cp312-win_amd64.whl", hash = "sha256:78569581997c6be30f4d952571cf35ad04de2936e1440e62da0f81101e163dfb", size = 973249, upload-time = "2025-07-01T19:06:52.76Z" },
 ]
 
 [[package]]
@@ -1131,7 +1121,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.3,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0,<10" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
-    { name = "pywhispercpp", marker = "extra == 'transcribe'", specifier = ">=1.3.3,<1.4" },
+    { name = "pywhispercpp", marker = "extra == 'transcribe'", git = "https://github.com/absadiki/pywhispercpp?tag=v1.3.3" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
     { name = "sounddevice", marker = "extra == 'mic'", specifier = ">=0.5.1,<0.6" },

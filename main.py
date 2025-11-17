@@ -471,11 +471,17 @@ if __name__ == '__main__':
     parser_web.add_argument('--transcribe-api-url', type=str, help='Alternate transcribe API endpoint URL (for future use)')
     parser_web.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
 
-    # SQLITE subcommand (no --transcribe flag, always transcribes)
-    parser_sqlite = subparsers.add_parser('sqlite', help='Transcribe audio segments from SQLite database')
-    parser_sqlite.add_argument('--database', type=str, required=True, help='Path to SQLite database')
-    parser_sqlite.add_argument('--lang', type=str, required=True, help='Language code for transcription')
-    parser_sqlite.add_argument('--audio-output', type=str, help='Output path for concatenated audio file (for debugging)')
+    # SQLITE-EXPORT-AUDIO subcommand - Export audio from database
+    parser_sqlite_export = subparsers.add_parser('sqlite-export-audio', help='Export audio segments from SQLite database to audio file(s)')
+    parser_sqlite_export.add_argument('--database', type=str, required=True, help='Path to SQLite database')
+    parser_sqlite_export.add_argument('--output', type=str, required=True, help='Output directory for audio file(s) (filename auto-generated with show name and timestamps)')
+    parser_sqlite_export.add_argument('--start-id', type=int, help='Starting segment ID (default: 1)')
+    parser_sqlite_export.add_argument('--end-id', type=int, help='Ending segment ID (default: max ID in database)')
+
+    # SQLITE-TRANSCRIBE subcommand - Transcribe audio from database
+    parser_sqlite_transcribe = subparsers.add_parser('sqlite-transcribe', help='Transcribe audio segments from SQLite database')
+    parser_sqlite_transcribe.add_argument('--database', type=str, required=True, help='Path to SQLite database')
+    parser_sqlite_transcribe.add_argument('--lang', type=str, required=True, help='Language code for transcription')
 
     args = parser.parse_args()
 
@@ -842,7 +848,94 @@ if __name__ == '__main__':
         except LockError as e:
             print(str(e), file=sys.stderr)
             exit(1)
-    elif args.action == 'sqlite':
+    elif args.action == 'sqlite-export-audio':
+        # Validate database exists
+        if not os.path.exists(args.database):
+            print(f"Database {args.database} does not exist")
+            exit(1)
+
+        # Import sqlite_decoder module
+        from whisper_transcribe_py.sqlite_decoder import (
+            read_database_metadata,
+            get_max_speech_id,
+            read_speech_segments,
+            concatenate_and_save_audio
+        )
+
+        print(f"Reading database: {args.database}")
+
+        # Read metadata
+        audio_format, database_id, show_name = read_database_metadata(args.database)
+        print(f"Database ID: {database_id}")
+        print(f"Show name: {show_name}")
+        print(f"Audio format: {audio_format}")
+
+        # Connect to database (read-only)
+        def _open_sqlite_connection(path: str) -> sqlite3.Connection:
+            connection = sqlite3.connect(path, timeout=30.0, isolation_level=None)
+            connection.execute("PRAGMA busy_timeout=10000")
+            return connection
+
+        read_conn = _open_sqlite_connection(args.database)
+        audio_segments_raw = []
+        segment_timestamps = []  # Track (start_ts, end_ts) for each segment
+
+        try:
+            max_id = get_max_speech_id(read_conn)
+
+            # Determine ID range
+            start_id = args.start_id if args.start_id is not None else 1
+            end_id = args.end_id if args.end_id is not None else max_id
+
+            print(f"Exporting audio segments from ID {start_id} to {end_id} (total: {max_id} in database)")
+
+            try:
+                for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(read_conn, end_id):
+                    # Skip segments before start_id
+                    if speech_id < start_id:
+                        continue
+
+                    # Check if this is a notice entry (text-only, no audio)
+                    if audio_data is None and text is not None:
+                        # Notice entry - add None marker to split files
+                        audio_segments_raw.append(None)
+                        segment_timestamps.append(None)
+                        continue
+
+                    # Store raw audio and timestamps for concatenation
+                    audio_segments_raw.append(audio_data)
+                    segment_timestamps.append((start_ts, end_ts))
+
+            except KeyboardInterrupt:
+                print("\nCtrl+C received, stopping export...", file=sys.stderr)
+                sys.exit(1)
+        finally:
+            read_conn.close()
+
+        # Concatenate and save audio
+        print(f"Concatenating {len(audio_segments_raw)} audio segments...")
+
+        # --output is always a directory - create it if it doesn't exist
+        output_dir = args.output
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Generate base filename: {output_dir}/{show_name}.{extension}
+        # The concatenate function will add timestamps to create the final filename
+        ext = 'wav' if audio_format == 'wav' else 'm4a'
+        output_path = os.path.join(output_dir, f"{show_name}.{ext}")
+
+        created_files = concatenate_and_save_audio(audio_segments_raw, output_path, audio_format, segment_timestamps)
+
+        if len(created_files) == 0:
+            print("No audio segments to save (all entries were notices)")
+        elif len(created_files) == 1:
+            print(f"Audio written to {created_files[0]}")
+        else:
+            print(f"Audio split into {len(created_files)} files due to notice entries:")
+            for file_path in created_files:
+                print(f"  - {file_path}")
+
+    elif args.action == 'sqlite-transcribe':
         # Validate database exists
         if not os.path.exists(args.database):
             print(f"Database {args.database} does not exist")
@@ -854,7 +947,6 @@ if __name__ == '__main__':
             get_max_speech_id,
             read_speech_segments,
             decode_audio_segment,
-            concatenate_and_save_audio
         )
 
         print(f"Reading database: {args.database}")
@@ -877,7 +969,6 @@ if __name__ == '__main__':
         ts = 0
         segment_count = 0
         transcribed_count = 0
-        audio_segments_raw = []  # Only used if args.audio_output is set
 
         try:
             max_id = get_max_speech_id(read_conn)
@@ -910,15 +1001,10 @@ if __name__ == '__main__':
                 for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(read_conn, max_id):
                     # Check if this is a notice entry (text-only, no audio)
                     if audio_data is None and text is not None:
-                        if args.audio_output:
-                            # Notice entry - already has text, just collect audio marker
-                            audio_segments_raw.append(None)
+                        # Notice entry - already has text, skip
                         segment_count += 1
                         continue
 
-                    if args.audio_output:
-                        # Store raw audio for concatenation
-                        audio_segments_raw.append(audio_data)
                     segment_count += 1
 
                     # Skip if already transcribed
@@ -979,22 +1065,6 @@ if __name__ == '__main__':
             write_conn.close()
 
         print(f"Transcribed {transcribed_count} new segments (total in DB: {segment_count})")
-
-        # Concatenate and save audio (optional)
-        if args.audio_output:
-            print(f"Concatenating {len(audio_segments_raw)} audio segments...")
-            created_files = concatenate_and_save_audio(audio_segments_raw, args.audio_output, audio_format)
-
-            if len(created_files) == 0:
-                print("No audio segments to save (all entries were notices)")
-            elif len(created_files) == 1:
-                print(f"Audio written to {created_files[0]}")
-            else:
-                print(f"Audio split into {len(created_files)} files due to notice entries:")
-                for file_path in created_files:
-                    print(f"  - {file_path}")
-        else:
-            print("Skipping audio output (--audio-output not provided)")
 
     else:
         raise ValueError("Invalid action {}".format(args.action))
