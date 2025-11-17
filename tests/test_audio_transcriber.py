@@ -636,7 +636,7 @@ def test_stream_url_thread_basic_operation(monkeypatch):
     thread = threading.Thread(
         target=audio_transcriber.stream_url_thread,
         args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event}
+        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
     )
     thread.start()
 
@@ -689,7 +689,7 @@ def test_stream_url_thread_stop_event(monkeypatch):
     thread = threading.Thread(
         target=audio_transcriber.stream_url_thread,
         args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event}
+        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
     )
     thread.start()
 
@@ -739,7 +739,7 @@ def test_stream_url_thread_queue_limiter_drops(monkeypatch):
     thread = threading.Thread(
         target=audio_transcriber.stream_url_thread,
         args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "queue_limiter": limiter}
+        kwargs={"stop_event": stop_event, "queue_limiter": limiter, "retry_sleep_duration": 0.01}
     )
     thread.start()
     time.sleep(0.3)
@@ -783,7 +783,7 @@ def test_stream_url_thread_queue_limiter_accepts_when_below_limit(monkeypatch):
     thread = threading.Thread(
         target=audio_transcriber.stream_url_thread,
         args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "queue_limiter": limiter}
+        kwargs={"stop_event": stop_event, "queue_limiter": limiter, "retry_sleep_duration": 0.01}
     )
     thread.start()
     time.sleep(0.5)
@@ -830,12 +830,12 @@ def test_stream_url_thread_retry_on_error(monkeypatch):
     thread = threading.Thread(
         target=audio_transcriber.stream_url_thread,
         args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event}
+        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
     )
     thread.start()
 
-    # Wait for retry
-    time.sleep(1.0)
+    # Wait for retry (faster since retry_sleep_duration is 0.01)
+    time.sleep(0.1)
     stop_event.set()
     thread.join(timeout=2.0)
 
@@ -883,7 +883,7 @@ def test_stream_url_thread_timestamp_continuity(monkeypatch):
     thread = threading.Thread(
         target=audio_transcriber.stream_url_thread,
         args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event}
+        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
     )
     thread.start()
     time.sleep(0.5)
@@ -943,7 +943,7 @@ def test_stream_url_thread_eof_handling(monkeypatch):
     thread = threading.Thread(
         target=audio_transcriber.stream_url_thread,
         args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event}
+        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
     )
     thread.start()
 
@@ -960,7 +960,7 @@ def test_stream_url_thread_stop_during_retry_wait(monkeypatch):
     """Test that stop_event is checked during retry sleep."""
     import threading
     import time
-    from unittest.mock import Mock, MagicMock, patch
+    from unittest.mock import Mock, MagicMock
 
     audio_queue = queue.Queue()
     stop_event = threading.Event()
@@ -971,28 +971,19 @@ def test_stream_url_thread_stop_during_retry_wait(monkeypatch):
 
     monkeypatch.setattr(audio_transcriber, "stream_url", mock_stream_url_error)
 
-    # Mock sleep to track if it's called
-    sleep_called = [False]
-    original_sleep = time.sleep
+    thread = threading.Thread(
+        target=audio_transcriber.stream_url_thread,
+        args=("fake://url", audio_queue),
+        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
+    )
+    thread.start()
 
-    def tracked_sleep(duration):
-        sleep_called[0] = True
-        # Use shorter sleep for testing
-        original_sleep(0.1)
+    # Let it fail and start retry
+    time.sleep(0.05)
+    stop_event.set()
+    thread.join(timeout=2.0)
 
-    with patch('whisper_transcribe_py.audio_transcriber.sleep', tracked_sleep):
-        thread = threading.Thread(
-            target=audio_transcriber.stream_url_thread,
-            args=("fake://url", audio_queue),
-            kwargs={"stop_event": stop_event}
-        )
-        thread.start()
-
-        # Let it fail and start retry
-        time.sleep(0.2)
-        stop_event.set()
-        thread.join(timeout=2.0)
-
-        # Should have entered retry logic
-        assert sleep_called[0]
-        assert not thread.is_alive()
+    # Should have entered retry logic and stopped
+    assert not thread.is_alive()
+    # Should have error notice in queue
+    assert not audio_queue.empty()

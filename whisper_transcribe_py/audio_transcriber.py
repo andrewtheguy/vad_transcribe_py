@@ -1101,6 +1101,7 @@ def stream_url_thread(
         audio_input_queue,
         stop_event=None,
         queue_limiter: Optional["QueueBacklogLimiter"] = None,
+        retry_sleep_duration: float = 0.5,
 ):
     # # TODO: REMOVE THIS - Test mode hard-coded to trigger errors every 20 seconds
     # test_thread_start_time = time.time()
@@ -1159,5 +1160,5 @@ def stream_url_thread(
         error_wall_clock = base_wall_clock + ts
         audio_input_queue.put(TranscriptionNotice("(transcript source temporary error)", error_wall_clock))
         print("stream_stopped, restarting", file=sys.stderr)
-        sleep(0.5)
+        sleep(retry_sleep_duration)
     print("stream_url_thread exiting", file=sys.stderr)
