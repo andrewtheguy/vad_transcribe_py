@@ -169,7 +169,7 @@ def _encode_to_raw_aac(audio_int16: np.ndarray) -> bytes:
         "-ac", "1",  # Number of channels (1 = mono)
         "-i", "pipe:",  # Input from stdin
         "-c:a", "aac",  # Audio codec: AAC
-        "-b:a", "8k",  # Audio bitrate: 8kbps
+        "-b:a", "16k",  # Audio bitrate: 16kbps
         "-f", "adts",  # Output format: ADTS (raw AAC with headers for concatenation)
         "pipe:1"  # Output to stdout
     ]
