@@ -9,8 +9,13 @@ Tests cover:
 
 import os
 import pytest
+import sys
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
+
+# Mock psycopg module before importing server to avoid dependency
+sys.modules['psycopg'] = Mock()
+sys.modules['psycopg.rows'] = Mock()
 
 from whisper_transcribe_py.api.server import create_app
 
