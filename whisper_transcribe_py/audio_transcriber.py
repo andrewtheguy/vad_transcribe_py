@@ -678,7 +678,7 @@ class AudioTranscriber:
                                                                   beam_size=5,
                                                                   language=self.language,
                                                                   vad_filter=False,
-                                                                  without_timestamps=True, # no extra timestamp for prerecorded
+                                                                  without_timestamps=self.mode == 'prerecorded', # no extra timestamp for prerecorded
                                                                   )
 
             # Iterate through segments and manually call the callback
