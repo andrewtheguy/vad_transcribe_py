@@ -573,6 +573,7 @@ class AudioTranscriber:
                                        print_progress=False,
                                        print_timestamps=False,
                                        n_threads=self.n_threads,
+                                       single_segment=self.mode == 'prerecorded' # no extra timestamp for prerecorded
 
                                        )
 
@@ -673,10 +674,16 @@ class AudioTranscriber:
             # faster-whisper backend (iterator-based)
             # faster-whisper returns an iterator of segments
             # vad_filter=False to disable built-in VAD since we use custom VAD logic
-            segments, info = self.faster_whisper_model.transcribe(audio, beam_size=5, language=self.language, vad_filter=False)
+            segments, info = self.faster_whisper_model.transcribe(audio,
+                                                                  beam_size=5,
+                                                                  language=self.language,
+                                                                  vad_filter=False,
+                                                                  without_timestamps=True, # no extra timestamp for prerecorded
+                                                                  )
 
             # Iterate through segments and manually call the callback
             for segment in segments:
+                print("new segment from faster-whisper:", segment)
                 # Create a compatible segment object that matches whisper.cpp's format
                 # faster-whisper segments have: start (float), end (float), text (str)
                 # whisper.cpp segments have: t0 (int ms), t1 (int ms), text (str)
@@ -692,6 +699,7 @@ class AudioTranscriber:
             raise ValueError(f"Unsupported backend: {self.backend}")
 
     def _new_segment_callback(self, segment):
+        print("New segment from wispercpp:", segment)
         relative_start = self.current_audio_offset + segment.t0 / 1000
         relative_end = self.current_audio_offset + segment.t1 / 1000
 
