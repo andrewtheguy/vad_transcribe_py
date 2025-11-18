@@ -18,7 +18,7 @@ import numpy as np
 
 from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
     AudioTranscriber, AudioSegment, stream_url_thread, TranscribedSegment, QueueBacklogLimiter, \
-    SegmentCallback, create_default_queue_limiter
+    TranscriptionCallback, create_default_queue_limiter
 from whisper_transcribe_py.audio_data_saver import create_audio_data_saver
 from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
 from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_samples
@@ -53,12 +53,13 @@ class JsonTranscriptWriter:
         self.output_path = output_path
         self.segments = []
 
-    def add_segment(self, segment: TranscribedSegment):
-        self.segments.append({
-            "start": segment.relative_start,
-            "end": segment.relative_end,
-            "text": segment.text,
-        })
+    def add_segments(self, segments: list[TranscribedSegment]):
+        for segment in segments:
+            self.segments.append({
+                "start": segment.relative_start,
+                "end": segment.relative_end,
+                "text": segment.text,
+            })
 
     def flush(self):
         directory = os.path.dirname(self.output_path)
@@ -348,7 +349,7 @@ def capture_mic_to_queue(audio_input_queue, stop_event, queue_limiter: Optional[
 
 
 def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
-                  segment_callback: Optional[SegmentCallback] = None,model='large-v3-turbo',
+                  transcription_callback: Optional[TranscriptionCallback] = None,model='large-v3-turbo',
                   n_threads=1, stop_event=None,
                   queue_backlog_limiter: Optional[QueueBacklogLimiter] = None,
                   mode='livestream', backend='whisper_cpp',
@@ -372,7 +373,7 @@ def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callba
                      show_name=show_name,
                      model=model,
                      audio_segment_callback=audio_segment_callback,
-                     segment_callback=segment_callback,
+                     transcription_callback=transcription_callback,
                      n_threads=n_threads,
                      stop_event=stop_event,
                      queue_backlog_limiter=queue_backlog_limiter,
@@ -390,7 +391,7 @@ def process_mic(
         max_queue_seconds: Optional[float] = None,
         n_threads: int = 1,
         show_name: str = "microphone",
-        segment_callback: Optional[SegmentCallback] = None,
+        transcription_callback: Optional[TranscriptionCallback] = None,
         audio_segment_callback=None,
         backend: str = 'whisper_cpp',
 ):
@@ -415,7 +416,7 @@ def process_mic(
         queue_limiter=limiter,
         n_threads=n_threads,
         show_name=show_name,
-        segment_callback=segment_callback,
+        transcription_callback=transcription_callback,
         audio_segment_callback=audio_segment_callback,
         backend=backend,
     ).record(language=language)
@@ -519,7 +520,7 @@ if __name__ == '__main__':
                     thread_transcribe = threading.Thread(target=process_queue, kwargs={
                         'q': audio_input_queue,
                         'language': args.lang,
-                        'segment_callback': transcript_writer.add_segment,
+                        'transcription_callback': transcript_writer.add_segments,
                         'model': args.model if args.model is not None else 'large-v3-turbo',
                         'n_threads': args.n_threads if args.n_threads is not None else 1,
                         'stop_event': stop_event,
@@ -655,7 +656,7 @@ if __name__ == '__main__':
                                 'stop_event': stop_event,
                                 'n_threads': args.n_threads if args.n_threads is not None else 1,
                                 'show_name': show_name,
-                                'segment_callback': transcript_writer,
+                                'transcription_callback': transcript_writer,
                                 'backend': args.backend,
                             },
                         )
@@ -761,7 +762,7 @@ if __name__ == '__main__':
                             'language': data['language'],
                             'save_audio': False,
                             'show_name': data['show_name'],
-                            'segment_callback': db_writer,
+                            'transcription_callback': db_writer,
                             'model': args.model if args.model is not None else data.get('model', 'large-v3-turbo'),
                             'n_threads': args.n_threads if args.n_threads is not None else int(data.get('n_threads', 1)),
                             'stop_event': stop_event,
@@ -982,8 +983,9 @@ if __name__ == '__main__':
             # Initialize direct transcriber for already-segmented audio
             segment_text_buffer: list[str] = []
 
-            def sqlite_segment_callback(segment: TranscribedSegment):
-                segment_text_buffer.append(segment.text)
+            def sqlite_transcription_callback(segments: list[TranscribedSegment]):
+                for segment in segments:
+                    segment_text_buffer.append(segment.text)
 
             direct_transcriber = AudioTranscriber(
                 audio_input_queue=queue.Queue(),
@@ -991,7 +993,7 @@ if __name__ == '__main__':
                 mode='prerecorded',
                 show_name=show_name,
                 model=args.model if args.model is not None else 'large-v3-turbo',
-                segment_callback=sqlite_segment_callback,
+                transcription_callback=sqlite_transcription_callback,
                 n_threads=args.n_threads if args.n_threads is not None else 1,
                 backend=args.backend,
             )

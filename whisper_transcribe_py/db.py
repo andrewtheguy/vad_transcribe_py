@@ -45,22 +45,21 @@ def initialize_database_schema(conn):
 def build_database_writer(conn, show_name: str):
     """Return a callback that persists transcribed segments."""
 
-    def _persist(segment: TranscribedSegment):
-        if segment.start_timestamp is None:
-            raise ValueError("Database writes require wall clock timestamps.")
-        with conn.cursor() as cur:
-            cur.execute(
-                '''INSERT INTO transcripts (show_name, start_timestamp, end_timestamp, content)
-                   VALUES (%s, %s, %s, %s)
-                   RETURNING id''',
-                (
-                    show_name,
-                    segment.start_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f'),
-                    segment.end_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f') if segment.end_timestamp else None,
-                    segment.text,
-                ),
-            )
-            row = cur.fetchone()
-        return row[0] if row else None
+    def _persist(segments: list[TranscribedSegment]):
+        for segment in segments:
+            if segment.start_timestamp is None:
+                raise ValueError("Database writes require wall clock timestamps.")
+            with conn.cursor() as cur:
+                cur.execute(
+                    '''INSERT INTO transcripts (show_name, start_timestamp, end_timestamp, content)
+                       VALUES (%s, %s, %s, %s)
+                       RETURNING id''',
+                    (
+                        show_name,
+                        segment.start_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f'),
+                        segment.end_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f') if segment.end_timestamp else None,
+                        segment.text,
+                    ),
+                )
 
     return _persist

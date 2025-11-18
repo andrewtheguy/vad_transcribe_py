@@ -15,7 +15,7 @@ from whisper_transcribe_py.audio_transcriber import (
     AudioSegment,
     AudioTranscriber,
     QueueBacklogLimiter,
-    SegmentCallback,
+    TranscriptionCallback,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class StreamingSession:
     wall_clock_reference: Optional[float] = None
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
-    segment_callback: Optional[SegmentCallback] = None
+    transcription_callback: Optional[TranscriptionCallback] = None
     persistence_cleanup: Optional[Callable[[], None]] = None
     first_transcript_id: Optional[int] = None
     n_threads: int = 1
@@ -61,7 +61,7 @@ class StreamingSession:
             mode='livestream',  # Web API uses livestream mode
             stop_event=self.stop_event,
             wall_clock_reference=self.wall_clock_reference,
-            segment_callback=self.segment_callback,
+            transcription_callback=self.transcription_callback,
             queue_backlog_limiter=self.queue_limiter,
             n_threads=self.n_threads,
         )
@@ -116,7 +116,7 @@ class StreamingSession:
 
 PersistenceFactory = Callable[
     [],
-    Tuple[Optional[SegmentCallback], Optional[Callable[[], None]]],
+    Tuple[Optional[TranscriptionCallback], Optional[Callable[[], None]]],
 ]
 
 
@@ -159,13 +159,13 @@ class StreamingSessionManager:
         )
 
         if persistence_callback is not None:
-            def _wrapped(segment, *, _session=session, _writer=persistence_callback):
-                inserted_id = _writer(segment)
-                if inserted_id is not None and _session.first_transcript_id is None:
-                    _session.first_transcript_id = inserted_id
-                return inserted_id
+            def _wrapped(segments, *, _session=session, _writer=persistence_callback):
+                for segment in segments:
+                    inserted_id = _writer(segment)
+                    if inserted_id is not None and _session.first_transcript_id is None:
+                        _session.first_transcript_id = inserted_id
 
-            session.segment_callback = _wrapped
+            session.transcription_callback = _wrapped
 
         self._sessions[session_id] = session
         session.ensure_running()

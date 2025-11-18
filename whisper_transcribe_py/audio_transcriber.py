@@ -208,7 +208,7 @@ class TranscribedSegment:
     end_timestamp: Optional[datetime]
 
 
-SegmentCallback = Callable[[TranscribedSegment], None]
+TranscriptionCallback = Callable[[list[TranscribedSegment]], None]
 
 
 class QueueBacklogLimiter:
@@ -482,7 +482,7 @@ class AudioTranscriber:
             show_name="unknown",
             model="large-v3-turbo",
             audio_segment_callback: Optional[AudioSegmentCallback] = None,
-            segment_callback: Optional[SegmentCallback] = None,
+            transcription_callback: Optional[TranscriptionCallback] = None,
             n_threads: int = 1,
             stop_event: Optional[threading.Event] = None,
             wall_clock_reference: Optional[float] = None,
@@ -497,7 +497,7 @@ class AudioTranscriber:
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.audio_segment_callback = audio_segment_callback
-        self.segment_callback = segment_callback
+        self.transcription_callback = transcription_callback
         self.ts_transcribe_start = None
         self.show_name = show_name
         self.model = model
@@ -658,46 +658,93 @@ class AudioTranscriber:
             ):
                 self.queue_backlog_limiter.consume(segment_duration_seconds)
 
-    def _backend_transcribe(self, audio: npt.NDArray[np.float32]) -> None:
+    def _backend_transcribe(self, audio: npt.NDArray[np.float32]) -> list[TranscribedSegment]:
         """
         Backend-specific transcription method.
 
-        For whisper.cpp: Uses callback-based transcription
-        For faster-whisper: Iterates through returned segments and calls callback manually
+        For whisper.cpp: Uses callback for progress printing, collects results from return value
+        For faster-whisper: Iterates through segments, prints progress, collects results
+
+        Returns list of TranscribedSegment objects for batch processing.
         """
+        # SegmentWrapper to normalize segment format (t0/t1 in milliseconds)
+        class SegmentWrapper:
+            def __init__(self, t0_ms: int, t1_ms: int, text: str):
+                self.t0 = t0_ms
+                self.t1 = t1_ms
+                self.text = text
+
+        raw_segments: list[SegmentWrapper] = []
+
         if self.backend == 'whisper_cpp':
-            # whisper.cpp backend (callback-based)
-            self.whisper_cpp_model.transcribe(audio, new_segment_callback=self._new_segment_callback, language=self.language)
+            # whisper.cpp backend - callback for printing only, results from return value
+            def print_segment(segment):
+                relative_start = self.current_audio_offset + segment.t0 / 1000
+                relative_end = self.current_audio_offset + segment.t1 / 1000
+                if self.mode == 'prerecorded':
+                    print("[%.2f -> %.2f] %s" % (relative_start, relative_end, segment.text))
+                else:
+                    ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
+                    ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
+                    print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
+
+            whispercpp_results = self.whisper_cpp_model.transcribe(
+                audio, new_segment_callback=print_segment, language=self.language
+            )
+            # Convert whisper.cpp results to normalized format
+            for segment in whispercpp_results:
+                raw_segments.append(SegmentWrapper(segment.t0, segment.t1, segment.text))
+
         elif self.backend == 'faster_whisper':
             # faster-whisper backend (iterator-based)
-            # faster-whisper returns an iterator of segments
             # vad_filter=False to disable built-in VAD since we use custom VAD logic
-            segments, info = self.faster_whisper_model.transcribe(audio,
-                                                                  beam_size=5,
-                                                                  language=self.language,
-                                                                  vad_filter=False,
-                                                                  without_timestamps=self.mode == 'prerecorded', # no extra timestamp for prerecorded
-                                                                  )
+            segments, info = self.faster_whisper_model.transcribe(
+                audio,
+                beam_size=5,
+                language=self.language,
+                vad_filter=False,
+                without_timestamps=self.mode == 'prerecorded',
+            )
 
-            # Iterate through segments and manually call the callback
+            # Iterate through segments, print progress, and collect
             for segment in segments:
-                #print("new segment from faster-whisper:", segment)
-                # Create a compatible segment object that matches whisper.cpp's format
-                # faster-whisper segments have: start (float), end (float), text (str)
-                # whisper.cpp segments have: t0 (int ms), t1 (int ms), text (str)
-                class SegmentWrapper:
-                    def __init__(self, start, end, text):
-                        self.t0 = int(start * 1000)  # Convert seconds to milliseconds
-                        self.t1 = int(end * 1000)
-                        self.text = text
+                # Print progress
+                relative_start = self.current_audio_offset + segment.start
+                relative_end = self.current_audio_offset + segment.end
+                if self.mode == 'prerecorded':
+                    print("[%.2f -> %.2f] %s" % (relative_start, relative_end, segment.text))
+                else:
+                    ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.start, timezone.utc)
+                    ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.end, timezone.utc)
+                    print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
 
-                wrapped_segment = SegmentWrapper(segment.start, segment.end, segment.text)
-                self._new_segment_callback(wrapped_segment)
+                # Convert to normalized format (seconds to milliseconds)
+                raw_segments.append(SegmentWrapper(
+                    int(segment.start * 1000),
+                    int(segment.end * 1000),
+                    segment.text
+                ))
         else:
             raise ValueError(f"Unsupported backend: {self.backend}")
 
-    def _new_segment_callback(self, segment):
-        #print("New segment from wispercpp:", segment)
+        # Transform all raw segments to TranscribedSegment objects
+        transcribed_segments = [self._transform_segment(seg) for seg in raw_segments]
+
+        # Call batch callback with all segments
+        if self.transcription_callback is not None and transcribed_segments:
+            self.transcription_callback(transcribed_segments)
+
+        return transcribed_segments
+
+    def _transform_segment(self, segment) -> TranscribedSegment:
+        """Transform a raw segment to TranscribedSegment object.
+
+        Args:
+            segment: Object with t0 (ms), t1 (ms), and text attributes
+
+        Returns:
+            TranscribedSegment with computed timestamps and processed text
+        """
         relative_start = self.current_audio_offset + segment.t0 / 1000
         relative_end = self.current_audio_offset + segment.t1 / 1000
 
@@ -705,40 +752,33 @@ class AudioTranscriber:
 
         # Prerecorded mode: only relative timestamps, no wall_clock
         if self.mode == 'prerecorded':
-            print("[%.2f -> %.2f] %s" % (relative_start, relative_end, segment.text))
-
-            if self.segment_callback is not None:
-                segment_payload = TranscribedSegment(
-                    show_name=self.show_name,
-                    language=self.language,
-                    text=text_for_storage,
-                    relative_start=relative_start,
-                    relative_end=relative_end,
-                    start_timestamp=None,
-                    end_timestamp=None,
-                )
-                self.segment_callback(segment_payload)
+            return TranscribedSegment(
+                show_name=self.show_name,
+                language=self.language,
+                text=text_for_storage,
+                relative_start=relative_start,
+                relative_end=relative_end,
+                start_timestamp=None,
+                end_timestamp=None,
+            )
 
         # Livestream mode: use wall clock timestamps
         else:
             ts_start_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t0 / 1000, timezone.utc)
             ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
-            print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
-
-            if self.segment_callback is not None:
-                segment_payload = TranscribedSegment(
-                    show_name=self.show_name,
-                    language=self.language,
-                    text=text_for_storage,
-                    relative_start=relative_start,
-                    relative_end=relative_end,
-                    start_timestamp=ts_start_dt,
-                    end_timestamp=ts_end_dt,
-                )
-                self.segment_callback(segment_payload)
 
             # Update last transcript wall clock time
             self._last_transcript_wall_clock = ts_end_dt.timestamp()
+
+            return TranscribedSegment(
+                show_name=self.show_name,
+                language=self.language,
+                text=text_for_storage,
+                relative_start=relative_start,
+                relative_end=relative_end,
+                start_timestamp=ts_start_dt,
+                end_timestamp=ts_end_dt,
+            )
 
     def _handle_vad_segment(self, segment: AudioSegment) -> None:
         """Callback from SpeechDetector when speech segment completes."""
@@ -823,7 +863,7 @@ class AudioTranscriber:
         self.transcribe_queue.put(notice)
         self._last_transcript_wall_clock = ts_seconds
 
-    def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> None:
+    def _emit_notice(self, text: str, wall_clock_ts: Optional[float]) -> float:
         ts_seconds = wall_clock_ts if wall_clock_ts is not None else self._last_transcript_wall_clock
         if ts_seconds is None:
             raise ValueError(
@@ -836,7 +876,7 @@ class AudioTranscriber:
         if self.wall_clock_reference is not None:
             relative_time = max(0.0, ts_seconds - self.wall_clock_reference)
         print(f"[{ts_dt} -> {ts_dt}] {text}")
-        if self.segment_callback is not None:
+        if self.transcription_callback is not None:
             segment_payload = TranscribedSegment(
                 show_name=self.show_name,
                 language=self.language,
@@ -846,7 +886,7 @@ class AudioTranscriber:
                 start_timestamp=ts_dt,
                 end_timestamp=ts_dt,
             )
-            self.segment_callback(segment_payload)
+            self.transcription_callback([segment_payload])
         self._last_transcript_wall_clock = ts_seconds
         return ts_seconds
 

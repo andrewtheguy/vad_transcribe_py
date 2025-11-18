@@ -18,7 +18,7 @@ from whisper_transcribe_py.audio_transcriber import (
     AudioTranscriber,
     TARGET_SAMPLE_RATE,
     QueueBacklogLimiter,
-    SegmentCallback,
+    TranscriptionCallback,
 )
 
 
@@ -30,7 +30,7 @@ class MicRecorder:
             queue_limiter: Optional[QueueBacklogLimiter] = None,
             n_threads: int = 1,
             show_name: str = "unknown",
-            segment_callback: Optional[SegmentCallback] = None,
+            transcription_callback: Optional[TranscriptionCallback] = None,
             audio_segment_callback: Optional[AudioSegmentCallback] = None,
             backend: str = 'whisper_cpp',
     ):
@@ -41,7 +41,7 @@ class MicRecorder:
         self.approx_input_sample_rate = TARGET_SAMPLE_RATE
         self.stream = sd.InputStream(callback=self.audio_callback)
         self.show_name = show_name
-        self.segment_callback = segment_callback
+        self.transcription_callback = transcription_callback
         self.audio_segment_callback = audio_segment_callback
         self.backend = backend
 
@@ -86,7 +86,7 @@ class MicRecorder:
                 queue_backlog_limiter=self.queue_limiter,
                 n_threads=self.n_threads,
                 show_name=self.show_name,
-                segment_callback=self.segment_callback,
+                transcription_callback=self.transcription_callback,
                 audio_segment_callback=self.audio_segment_callback,
                 backend=self.backend,
             )._process_input_livestream(input_sample_rate)
