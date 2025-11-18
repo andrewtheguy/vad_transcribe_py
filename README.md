@@ -411,3 +411,15 @@ See the [Web Setup Guide](WEB_SETUP.md) for detailed instructions on setting up 
 - TypeScript - Type safety
 - Tailwind CSS - Utility-first styling
 - shadcn/ui - High-quality component library
+
+## Known Limitations
+
+### Error Handling in Callbacks
+
+**TODO:** The current implementation lacks proper error handling for failures in VAD processing and transcription callbacks:
+
+- **Non-livestream mode (file transcription):** Errors in the transcription callback should abort the program immediately with an appropriate error message, since partial results may be inconsistent or incomplete.
+
+- **Livestream mode (mic/stream commands):** Errors in the transcription callback should reset the transcription state and emit a `TranscriptionNotice` to indicate a gap in the transcript. This allows the stream to continue processing new audio while clearly marking the disruption in the transcript timeline.
+
+Currently, exceptions in callbacks may cause silent failures or undefined behavior. Implementing proper error boundaries would improve reliability for long-running transcription sessions.
