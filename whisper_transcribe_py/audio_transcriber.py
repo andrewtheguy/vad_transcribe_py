@@ -890,9 +890,6 @@ class AudioTranscriber:
         self._last_transcript_wall_clock = ts_seconds
         return ts_seconds
 
-    def _emit_drop_notice(self, wall_clock_ts: Optional[float]) -> None:
-        self._emit_notice("(transcript temporarily dropped)", wall_clock_ts)
-
     def _reset_transcription_context(self) -> None:
         """
         Reset full transcription context (livestream mode only).
