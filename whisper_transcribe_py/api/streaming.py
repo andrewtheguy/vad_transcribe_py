@@ -160,10 +160,9 @@ class StreamingSessionManager:
 
         if persistence_callback is not None:
             def _wrapped(segments, *, _session=session, _writer=persistence_callback):
-                for segment in segments:
-                    inserted_id = _writer(segment)
-                    if inserted_id is not None and _session.first_transcript_id is None:
-                        _session.first_transcript_id = inserted_id
+                first_id = _writer(segments)
+                if first_id is not None and _session.first_transcript_id is None:
+                    _session.first_transcript_id = first_id
 
             session.transcription_callback = _wrapped
 

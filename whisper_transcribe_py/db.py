@@ -43,23 +43,38 @@ def initialize_database_schema(conn):
 
 
 def build_database_writer(conn, show_name: str):
-    """Return a callback that persists transcribed segments."""
+    """Return a callback that persists transcribed segments.
 
-    def _persist(segments: list[TranscribedSegment]):
-        for segment in segments:
-            if segment.start_timestamp is None:
-                raise ValueError("Database writes require wall clock timestamps.")
+    Returns the first inserted ID for tracking purposes, or None if no segments.
+    All segments are inserted in a single transaction.
+    """
+
+    def _persist(segments: list[TranscribedSegment]) -> int | None:
+        if not segments:
+            return None
+
+        first_id = None
+        with conn.transaction():
             with conn.cursor() as cur:
-                cur.execute(
-                    '''INSERT INTO transcripts (show_name, start_timestamp, end_timestamp, content)
-                       VALUES (%s, %s, %s, %s)
-                       RETURNING id''',
-                    (
-                        show_name,
-                        segment.start_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f'),
-                        segment.end_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f') if segment.end_timestamp else None,
-                        segment.text,
-                    ),
-                )
+                for segment in segments:
+                    if segment.start_timestamp is None:
+                        raise ValueError("Database writes require wall clock timestamps.")
+                    cur.execute(
+                        '''INSERT INTO transcripts (show_name, start_timestamp, end_timestamp, content)
+                           VALUES (%s, %s, %s, %s)
+                           RETURNING id''',
+                        (
+                            show_name,
+                            segment.start_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f'),
+                            segment.end_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f') if segment.end_timestamp else None,
+                            segment.text,
+                        ),
+                    )
+                    if first_id is None:
+                        result = cur.fetchone()
+                        if result:
+                            first_id = result[0]
+
+        return first_id
 
     return _persist
