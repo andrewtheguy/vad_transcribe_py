@@ -192,32 +192,24 @@ def test_drop_notice_in_audio_input_queue(monkeypatch, make_transcriber, recorde
 
 
 def test_new_segment_callback_emits_callbacks(make_transcriber):
-    captured_segments: list[dict] = []
     captured_payloads: list = []
 
-    def segment_callback(**kwargs):
-        captured_segments.append(kwargs)
-
-    def persistence_callback(payload):
+    def segment_callback(payload):
         captured_payloads.append(payload)
 
     transcriber = make_transcriber(
         language="en",
         segment_callback=segment_callback,
-        transcript_persistence_callback=persistence_callback,
     )
     transcriber.ts_transcribe_start = 200.0
 
     fake_segment = types.SimpleNamespace(t0=0, t1=1500, text="Hello")
     transcriber._new_segment_callback(fake_segment)
 
-    assert captured_segments[0]["start"] == pytest.approx(0.0)
-    assert captured_segments[0]["end"] == pytest.approx(1.5)
-    assert captured_segments[0]["text"] == "Hello"
-
     payload = captured_payloads[0]
     assert payload.text == "Hello"
     assert payload.relative_start == pytest.approx(0.0)
+    assert payload.relative_end == pytest.approx(1.5)
     assert payload.start_timestamp.timestamp() == pytest.approx(200.0)
     assert payload.end_timestamp.timestamp() == pytest.approx(201.5)
     assert transcriber._last_transcript_wall_clock == pytest.approx(201.5)
@@ -422,12 +414,12 @@ def test_new_segment_callback_chinese_conversion(make_transcriber):
     """Test that Chinese text is converted for storage."""
     captured_payloads: list = []
 
-    def persistence_callback(payload):
+    def segment_callback(payload):
         captured_payloads.append(payload)
 
     transcriber = make_transcriber(
         language="zh",
-        transcript_persistence_callback=persistence_callback,
+        segment_callback=segment_callback,
     )
     transcriber.ts_transcribe_start = 200.0
 
@@ -443,10 +435,10 @@ def test_new_segment_callback_chinese_conversion(make_transcriber):
 
 def test_new_segment_callback_relative_timestamps(make_transcriber):
     """Test segment callback with relative timestamp strategy."""
-    captured_segments: list[dict] = []
+    captured_segments: list = []
 
-    def segment_callback(**kwargs):
-        captured_segments.append(kwargs)
+    def segment_callback(payload):
+        captured_segments.append(payload)
 
     transcriber = make_transcriber(
         language="en",
@@ -459,21 +451,18 @@ def test_new_segment_callback_relative_timestamps(make_transcriber):
     transcriber._new_segment_callback(fake_segment)
 
     # Relative times are still passed to segment callback
-    assert captured_segments[0]["start"] == pytest.approx(100.0)
-    assert captured_segments[0]["end"] == pytest.approx(102.0)
+    assert captured_segments[0].relative_start == pytest.approx(100.0)
+    assert captured_segments[0].relative_end == pytest.approx(102.0)
 
 
 def test_initialization_with_all_params(make_transcriber):
     """Test AudioTranscriber can be initialized with all parameters."""
     audio_queue = queue.Queue()
 
-    def audio_cb(audio, start):
+    def audio_cb(segment):
         pass
 
-    def persist_cb(payload):
-        pass
-
-    def segment_cb(**kwargs):
+    def segment_cb(payload):
         pass
 
     import threading
@@ -485,7 +474,6 @@ def test_initialization_with_all_params(make_transcriber):
         show_name="test_show",
         model="large-v3-turbo",
         audio_segment_callback=audio_cb,
-        transcript_persistence_callback=persist_cb,
         segment_callback=segment_cb,
         n_threads=4,
         stop_event=stop_event,

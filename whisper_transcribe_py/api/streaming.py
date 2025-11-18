@@ -15,7 +15,7 @@ from whisper_transcribe_py.audio_transcriber import (
     AudioSegment,
     AudioTranscriber,
     QueueBacklogLimiter,
-    TranscriptPersistenceCallback,
+    SegmentCallback,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ class StreamingSession:
     wall_clock_reference: Optional[float] = None
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
-    transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None
+    segment_callback: Optional[SegmentCallback] = None
     persistence_cleanup: Optional[Callable[[], None]] = None
     first_transcript_id: Optional[int] = None
     n_threads: int = 1
@@ -61,7 +61,7 @@ class StreamingSession:
             mode='livestream',  # Web API uses livestream mode
             stop_event=self.stop_event,
             wall_clock_reference=self.wall_clock_reference,
-            transcript_persistence_callback=self.transcript_persistence_callback,
+            segment_callback=self.segment_callback,
             queue_backlog_limiter=self.queue_limiter,
             n_threads=self.n_threads,
         )
@@ -116,7 +116,7 @@ class StreamingSession:
 
 PersistenceFactory = Callable[
     [],
-    Tuple[Optional[TranscriptPersistenceCallback], Optional[Callable[[], None]]],
+    Tuple[Optional[SegmentCallback], Optional[Callable[[], None]]],
 ]
 
 
@@ -165,7 +165,7 @@ class StreamingSessionManager:
                     _session.first_transcript_id = inserted_id
                 return inserted_id
 
-            session.transcript_persistence_callback = _wrapped
+            session.segment_callback = _wrapped
 
         self._sessions[session_id] = session
         session.ensure_running()

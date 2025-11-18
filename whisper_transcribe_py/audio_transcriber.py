@@ -208,7 +208,7 @@ class TranscribedSegment:
     end_timestamp: Optional[datetime]
 
 
-TranscriptPersistenceCallback = Callable[[TranscribedSegment], None]
+SegmentCallback = Callable[[TranscribedSegment], None]
 
 
 class QueueBacklogLimiter:
@@ -482,8 +482,7 @@ class AudioTranscriber:
             show_name="unknown",
             model="large-v3-turbo",
             audio_segment_callback: Optional[AudioSegmentCallback] = None,
-            transcript_persistence_callback: Optional[TranscriptPersistenceCallback] = None,
-            segment_callback: Optional[Callable[..., None]] = None,
+            segment_callback: Optional[SegmentCallback] = None,
             n_threads: int = 1,
             stop_event: Optional[threading.Event] = None,
             wall_clock_reference: Optional[float] = None,
@@ -498,11 +497,10 @@ class AudioTranscriber:
         self.audio_input_queue = audio_input_queue
         self.language = language
         self.audio_segment_callback = audio_segment_callback
-        self.transcript_persistence_callback = transcript_persistence_callback
+        self.segment_callback = segment_callback
         self.ts_transcribe_start = None
         self.show_name = show_name
         self.model = model
-        self.segment_callback = segment_callback
         self.current_audio_offset = 0.0
         self.n_threads = n_threads
         self.stop_event = stop_event
@@ -709,7 +707,7 @@ class AudioTranscriber:
         if self.mode == 'prerecorded':
             print("[%.2f -> %.2f] %s" % (relative_start, relative_end, segment.text))
 
-            if self.transcript_persistence_callback is not None:
+            if self.segment_callback is not None:
                 segment_payload = TranscribedSegment(
                     show_name=self.show_name,
                     language=self.language,
@@ -719,10 +717,7 @@ class AudioTranscriber:
                     start_timestamp=None,
                     end_timestamp=None,
                 )
-                self.transcript_persistence_callback(segment_payload)
-
-            if self.segment_callback is not None:
-                self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
+                self.segment_callback(segment_payload)
 
         # Livestream mode: use wall clock timestamps
         else:
@@ -730,7 +725,7 @@ class AudioTranscriber:
             ts_end_dt = datetime.fromtimestamp(self.ts_transcribe_start + segment.t1 / 1000, timezone.utc)
             print("[%s -> %s] %s" % (ts_start_dt, ts_end_dt, segment.text))
 
-            if self.transcript_persistence_callback is not None:
+            if self.segment_callback is not None:
                 segment_payload = TranscribedSegment(
                     show_name=self.show_name,
                     language=self.language,
@@ -740,10 +735,7 @@ class AudioTranscriber:
                     start_timestamp=ts_start_dt,
                     end_timestamp=ts_end_dt,
                 )
-                self.transcript_persistence_callback(segment_payload)
-
-            if self.segment_callback is not None:
-                self.segment_callback(start=relative_start, end=relative_end, text=text_for_storage)
+                self.segment_callback(segment_payload)
 
             # Update last transcript wall clock time
             self._last_transcript_wall_clock = ts_end_dt.timestamp()
@@ -844,7 +836,7 @@ class AudioTranscriber:
         if self.wall_clock_reference is not None:
             relative_time = max(0.0, ts_seconds - self.wall_clock_reference)
         print(f"[{ts_dt} -> {ts_dt}] {text}")
-        if self.transcript_persistence_callback is not None:
+        if self.segment_callback is not None:
             segment_payload = TranscribedSegment(
                 show_name=self.show_name,
                 language=self.language,
@@ -854,9 +846,7 @@ class AudioTranscriber:
                 start_timestamp=ts_dt,
                 end_timestamp=ts_dt,
             )
-            self.transcript_persistence_callback(segment_payload)
-        if self.segment_callback is not None:
-            self.segment_callback(start=relative_time, end=relative_time, text=text)
+            self.segment_callback(segment_payload)
         self._last_transcript_wall_clock = ts_seconds
         return ts_seconds
 
