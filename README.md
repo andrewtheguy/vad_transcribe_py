@@ -422,7 +422,7 @@ See the [Web Setup Guide](WEB_SETUP.md) for detailed instructions on setting up 
 
 - **Livestream mode (mic/stream commands):** Errors in the transcription callback should reset the transcription state and emit a `TranscriptionNotice` to indicate a gap in the transcript. This allows the stream to continue processing new audio while clearly marking the disruption in the transcript timeline.
 
-Currently, exceptions in callbacks may cause silent failures or undefined behavior. Implementing proper error boundaries would improve reliability for long-running transcription sessions.
+Currently, exceptions in callbacks may cause silent failures or undefined behavior, such as the queue got stuck accumulating without being processed when a database error occurs during transcription. Implementing proper error boundaries would improve reliability for long-running transcription sessions.
 
 ### Session Termination Notice
 
