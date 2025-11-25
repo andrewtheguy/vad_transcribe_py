@@ -13,7 +13,6 @@ dependencies = [
     "torch>=2.5.1,<3",
     "numpy>=2.2.1,<3",
     "zhconv-rs>=0.3.2.post2,<0.4",
-    "psycopg[binary]>=3.2.3,<4",
 ]
 
 [project.optional-dependencies]
@@ -21,16 +20,8 @@ transcribe = [
     "pywhispercpp",
     "faster-whisper>=1.0.0,<2",
 ]
-mic = [
-    "sounddevice>=0.5.1,<0.6",
-]
-web = [
-    "fastapi>=0.121.2,<1",
-    "uvicorn[standard]>=0.38.0,<1",
-]
 dev = [
     "pytest>=9.0.0,<10",
-    "httpx>=0.28.1,<1",
 ]
 
 [tool.uv]

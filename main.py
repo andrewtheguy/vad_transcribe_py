@@ -2,58 +2,38 @@ import argparse
 import json
 import os
 import queue
-import sqlite3
+import subprocess
 import sys
 import threading
-import time
-import tomllib
 from datetime import datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
 
-from silero_vad import (load_silero_vad)
-
 import numpy as np
 
-from whisper_transcribe_py.audio_transcriber import TARGET_SAMPLE_RATE, ffmpeg_get_16bit_pcm, pcm_s16le_to_float32, \
-    AudioTranscriber, AudioSegment, stream_url_thread, TranscribedSegment, QueueBacklogLimiter, \
-    TranscriptionCallback, create_default_queue_limiter
-from whisper_transcribe_py.audio_data_saver import create_audio_data_saver
-from whisper_transcribe_py.db import build_database_writer, connect_to_database, initialize_database_schema
+from whisper_transcribe_py.audio_transcriber import (
+    TARGET_SAMPLE_RATE,
+    ffmpeg_get_16bit_pcm,
+    pcm_s16le_to_float32,
+    AudioTranscriber,
+    AudioSegment,
+    TranscribedSegment,
+    TranscriptionCallback,
+)
 from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_samples
 from file_lock import acquire_lock, LockError
 
 
-class ThreadExceptionHandler:
-    """Captures exceptions from worker threads and signals main thread to exit."""
-    def __init__(self):
-        self.exception = None
-        self.lock = threading.Lock()
-
-    def set_exception(self, exc: Exception):
-        """Store the first exception encountered."""
-        with self.lock:
-            if self.exception is None:  # Only capture first exception
-                self.exception = exc
-
-    def has_exception(self) -> bool:
-        """Check if an exception has been captured."""
-        with self.lock:
-            return self.exception is not None
-
-    def get_exception(self) -> Optional[Exception]:
-        """Retrieve the captured exception."""
-        with self.lock:
-            return self.exception
-
-
 class JsonTranscriptWriter:
+    """Writes transcribed segments to a JSON file."""
+
     def __init__(self, output_path: str):
         self.output_path = output_path
         self.segments = []
 
     def add_segments(self, segments: list[TranscribedSegment]):
+        """Add transcribed segments to the output."""
         for segment in segments:
             self.segments.append({
                 "start": segment.relative_start,
@@ -62,6 +42,7 @@ class JsonTranscriptWriter:
             })
 
     def flush(self):
+        """Write accumulated segments to JSON file."""
         directory = os.path.dirname(self.output_path)
         if directory:
             os.makedirs(directory, exist_ok=True)
@@ -69,24 +50,58 @@ class JsonTranscriptWriter:
             json.dump({"segments": self.segments}, f, ensure_ascii=False, indent=2)
 
 
-def process_vad_only(audio_input_queue, show_name, stop_event=None):
+def save_audio_segment_wav(segment: AudioSegment, output_dir: str, index: int) -> str:
+    """Save audio segment as WAV file using ffmpeg."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Create filename with timestamp
+    filename = f"segment_{index:04d}_{segment.start:.2f}s.wav"
+    output_path = os.path.join(output_dir, filename)
+
+    # Convert float32 to int16
+    max_int16 = np.iinfo(np.int16).max
+    audio_int16 = (segment.audio * max_int16).astype(np.int16)
+
+    # Write WAV using ffmpeg
+    command = [
+        "ffmpeg", "-y",
+        "-f", "s16le",
+        "-ar", str(TARGET_SAMPLE_RATE),
+        "-ac", "1",
+        "-i", "pipe:0",
+        "-c:a", "pcm_s16le",
+        output_path
+    ]
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    stdout, stderr = process.communicate(input=audio_int16.tobytes())
+
+    if process.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {stderr.decode()}")
+
+    return output_path
+
+
+def process_vad_only(audio_input_queue, output_dir, stop_event=None):
     """
-    Process audio through VAD only, saving detected speech segments without transcription.
+    Process audio through VAD only, saving detected speech segments as WAV files.
     File mode - no wall clock timestamps, no backlog limiting.
     """
-    exception_handler = ThreadExceptionHandler()
-    try:
-        audio_segment_callback = create_audio_data_saver(show_name, exception_handler=exception_handler)
-    except Exception as e:
-        print(f"FATAL ERROR during audio saver initialization: {e}", file=sys.stderr)
-        exception_handler.set_exception(e)
-        # Exit this thread/function immediately - main thread will detect the exception
-        return
-
     def on_segment_complete(segment: AudioSegment):
         """Called when VAD detects a complete speech segment."""
-        audio_segment_callback(segment)
-        print(f"Saved audio segment at {segment.start:.2f}s", file=sys.stderr)
+        try:
+            path = save_audio_segment_wav(segment, output_dir, on_segment_complete.count)
+            on_segment_complete.count += 1
+            print(f"Saved audio segment at {segment.start:.2f}s to {path}", file=sys.stderr)
+        except Exception as e:
+            print(f"Error saving audio segment: {e}", file=sys.stderr)
+            raise
+
+    on_segment_complete.count = 0
 
     speech_detector = SpeechDetector(
         sample_rate=TARGET_SAMPLE_RATE,
@@ -95,21 +110,14 @@ def process_vad_only(audio_input_queue, show_name, stop_event=None):
 
     window_size_samples = get_window_size_samples()
     buffer = []
-    current_ts = 0  # Track the current timestamp position
+    current_ts = 0.0
 
     while True:
         if stop_event is not None and stop_event.is_set():
             break
 
-        # Check for exceptions from audio saver
-        if exception_handler.has_exception():
-            exc = exception_handler.get_exception()
-            print(f"FATAL ERROR in audio saver: {exc}", file=sys.stderr)
-            sys.exit(1)
-
         item = audio_input_queue.get()
         if item is None:
-            # Sentinel value - process any remaining audio
             break
 
         buffer.extend(item.audio)
@@ -126,321 +134,37 @@ def process_vad_only(audio_input_queue, show_name, stop_event=None):
     print("VAD processing complete", file=sys.stderr)
 
 
-def process_vad_only_livestream(audio_input_queue, show_name, input_sample_rate, stop_event=None,
-                                  queue_backlog_limiter: Optional[QueueBacklogLimiter] = None,
-                                  exception_handler: Optional[ThreadExceptionHandler] = None):
-    """
-    Process audio through VAD only for livestream mode (mic/stream).
-    Handles wall clock timestamps and queue backlog limiting.
-    """
-    import scipy.signal
-
-    if exception_handler is None:
-        exception_handler = ThreadExceptionHandler()
-    try:
-        audio_segment_callback = create_audio_data_saver(show_name, exception_handler=exception_handler)
-    except Exception as e:
-        print(f"FATAL ERROR during audio saver initialization: {e}", file=sys.stderr)
-        exception_handler.set_exception(e)
-        # Exit this thread/function immediately - main thread will detect the exception
-        return
-
-    def on_segment_complete(segment: AudioSegment):
-        """Called when VAD detects a complete speech segment."""
-        audio_segment_callback(segment)
-        timestamp = datetime.fromtimestamp(segment.wall_clock_start, timezone.utc) if segment.wall_clock_start else None
-        print(f"Saved audio segment at {timestamp}", file=sys.stderr)
-
-        # Consume speech segment duration from backlog
-        if queue_backlog_limiter:
-            segment_duration = segment.duration_seconds
-            if segment_duration is None and segment.audio is not None:
-                segment_duration = len(segment.audio) / TARGET_SAMPLE_RATE
-            if segment_duration is not None and segment_duration > 0:
-                queue_backlog_limiter.consume(segment_duration)
-
-        # Consume non-speech gaps from backlog limiter
-        if queue_backlog_limiter:
-            non_speech = speech_detector.consume_non_speech()
-            if non_speech > 0:
-                queue_backlog_limiter.consume(non_speech)
-
-    speech_detector = SpeechDetector(
-        sample_rate=TARGET_SAMPLE_RATE,
-        on_segment_complete=on_segment_complete
-    )
-
-    # Validate queue limit is at least twice the max speech duration
-    if queue_backlog_limiter and hasattr(queue_backlog_limiter, 'max_seconds') and queue_backlog_limiter.max_seconds is not None:
-        min_required_queue_seconds = 2 * speech_detector.max_speech_seconds
-        if queue_backlog_limiter.max_seconds < min_required_queue_seconds:
-            raise ValueError(
-                f"Queue limit ({queue_backlog_limiter.max_seconds}s) must be at least "
-                f"twice the max speech duration ({speech_detector.max_speech_seconds}s). "
-                f"Required minimum: {min_required_queue_seconds}s. "
-                f"Update QUEUE_TIME_LIMIT_SECONDS in audio_transcriber.py or pass a custom limiter."
-            )
-
-    window_size_samples = get_window_size_samples()
-    window_seconds = window_size_samples / TARGET_SAMPLE_RATE
-    buffer = []
-    ts_wall_clock = None
-
-    while True:
-        if stop_event is not None and stop_event.is_set():
-            break
-
-        # Check for exceptions from audio saver
-        if exception_handler.has_exception():
-            exc = exception_handler.get_exception()
-            print(f"FATAL ERROR in audio saver: {exc}", file=sys.stderr)
-            sys.exit(1)
-
-        segment = audio_input_queue.get()
-        if segment is None:
-            print("End of audio stream", file=sys.stderr)
-            break
-
-        # Handle TranscriptionNotice (for stream recovery)
-        from whisper_transcribe_py.audio_transcriber import TranscriptionNotice
-        if isinstance(segment, TranscriptionNotice):
-            # Save notice to database if callback provided
-            if audio_segment_callback:
-                audio_segment_callback(segment)
-
-            # Reset VAD state
-            speech_detector.reset()
-            buffer.clear()
-            ts_wall_clock = None
-            continue
-
-        # Track backlog progress
-        segment_duration = segment.duration_seconds
-        if segment_duration is None and segment.audio is not None:
-            segment_duration = len(segment.audio) / input_sample_rate
-        if queue_backlog_limiter and segment_duration is not None:
-            queue_backlog_limiter.note_timestamp_progress(segment_duration)
-
-        # Initialize wall clock timestamp
-        if ts_wall_clock is None or len(buffer) == 0:
-            ts_wall_clock = segment.wall_clock_start
-            if ts_wall_clock is None:
-                raise ValueError("wall_clock_start is required in livestream mode")
-
-        # Resample if needed
-        if input_sample_rate != TARGET_SAMPLE_RATE:
-            data_q = scipy.signal.resample(
-                segment.audio,
-                int(len(segment.audio) * TARGET_SAMPLE_RATE / input_sample_rate)
-            )
-        else:
-            data_q = segment.audio
-        buffer.extend(data_q)
-
-        # Process complete windows
-        while len(buffer) >= window_size_samples:
-            window = np.array(buffer[:window_size_samples], dtype=np.float32)
-            buffer = buffer[window_size_samples:]
-
-            # Calculate relative timestamp from wall clock
-            ts_relative = ts_wall_clock - (segment.wall_clock_start - segment.start) if segment.wall_clock_start and segment.start is not None else 0.0
-            has_speech = speech_detector.process_window(window, ts_relative, ts_wall_clock)
-
-            # Consume non-speech from backlog
-            if not has_speech and not speech_detector.is_in_speech:
-                if queue_backlog_limiter is not None:
-                    pending_non_speech = speech_detector.pending_non_speech_duration
-                    if pending_non_speech > 0:
-                        queue_backlog_limiter.consume(pending_non_speech)
-
-            # Advance wall clock timestamp
-            if ts_wall_clock is not None:
-                ts_wall_clock += window_seconds
-
-    # Flush any remaining speech segment
-    print("Flushing remaining audio", file=sys.stderr)
-    speech_detector.flush()
-
-    # Consume any remaining non-speech backlog
-    if queue_backlog_limiter:
-        remaining_non_speech = speech_detector.consume_non_speech()
-        if remaining_non_speech > 0:
-            queue_backlog_limiter.consume(remaining_non_speech)
-
-    print("VAD processing complete", file=sys.stderr)
-
-
-def capture_mic_to_queue(audio_input_queue, stop_event, queue_limiter: Optional[QueueBacklogLimiter] = None):
-    """
-    Capture microphone audio and put it into a queue for VAD processing.
-    Simple version for --no-transcribe mode - no model loading.
-    Resamples audio to TARGET_SAMPLE_RATE before queuing.
-    Blocks until stop_event is set.
-    Returns the input sample rate.
-    """
-    import scipy.signal
-
-    try:
-        import sounddevice as sd
-    except ImportError:
-        raise ImportError(
-            "sounddevice is not installed. "
-            "To use microphone recording, install with: uv pip install -e '.[mic]' "
-            "Note: Microphone recording is only supported on desktop platforms (Windows, Mac, Linux)."
-        )
-
-    approx_input_sample_rate = [TARGET_SAMPLE_RATE]  # Use list to allow modification in callback
-
-    def audio_callback(indata, _frames, _t, status):
-        """Called from separate thread for each audio block."""
-        if status:
-            print(status, file=sys.stderr)
-        if stop_event.is_set():
-            return
-
-        data_flattened = indata.squeeze().copy()
-
-        # Resample to TARGET_SAMPLE_RATE if needed
-        if approx_input_sample_rate[0] != TARGET_SAMPLE_RATE:
-            data_resampled = scipy.signal.resample(
-                data_flattened,
-                int(len(data_flattened) * TARGET_SAMPLE_RATE / approx_input_sample_rate[0])
-            )
-        else:
-            data_resampled = data_flattened
-
-        # Duration is based on resampled audio at TARGET_SAMPLE_RATE
-        duration_seconds = len(data_resampled) / TARGET_SAMPLE_RATE
-
-        # Capture timestamp before try_add
-        start_ts = time.time()
-        if queue_limiter and not queue_limiter.try_add(duration_seconds, chunk_wall_clock=start_ts):
-            return
-
-        audio_input_queue.put(
-            AudioSegment(
-                start=start_ts,
-                audio=data_resampled,
-                duration_seconds=duration_seconds if duration_seconds > 0 else None,
-                wall_clock_start=start_ts,
-            )
-        )
-
-    # Start microphone capture
-    with sd.InputStream(dtype='float32', callback=audio_callback) as stream:
-        input_sample_rate = stream.samplerate
-        if stream.channels != 1:
-            raise ValueError("Only support single channel for now")
-        if input_sample_rate:
-            approx_input_sample_rate[0] = input_sample_rate
-
-        print(f"Microphone capture started (sample rate: {input_sample_rate} Hz)", file=sys.stderr)
-
-        # Wait for stop event
-        try:
-            while not stop_event.wait(timeout=1):
-                pass
-        except KeyboardInterrupt:
-            pass
-
-        print("Microphone capture stopping...", file=sys.stderr)
-
-    return approx_input_sample_rate[0]
-
-
-def process_queue(q,language,save_audio=True,show_name=None,audio_segment_callback=None,
-                  transcription_callback: Optional[TranscriptionCallback] = None,model='large-v3-turbo',
-                  n_threads=1, stop_event=None,
-                  queue_backlog_limiter: Optional[QueueBacklogLimiter] = None,
-                  mode='livestream', backend='whisper_cpp',
-                  exception_handler: Optional[ThreadExceptionHandler] = None):
-    print("process_queue")
-    if save_audio and audio_segment_callback is None:
-        if show_name is None:
-            raise ValueError("show_name is required when save_audio=True and no audio_segment_callback provided")
-        try:
-            audio_segment_callback = create_audio_data_saver(show_name, exception_handler=exception_handler)
-        except Exception as e:
-            print(f"FATAL ERROR during audio saver initialization: {e}", file=sys.stderr)
-            if exception_handler:
-                exception_handler.set_exception(e)
-            # Exit this thread/function immediately - main thread will detect the exception
-            return
-
-    transcriber = AudioTranscriber(audio_input_queue=q,
-                     language=language,
-                     mode=mode,
-                     show_name=show_name,
-                     model=model,
-                     audio_segment_callback=audio_segment_callback,
-                     transcription_callback=transcription_callback,
-                     n_threads=n_threads,
-                     stop_event=stop_event,
-                     queue_backlog_limiter=queue_backlog_limiter,
-                     backend=backend,
-                     )
-    if mode == 'prerecorded':
-        transcriber._process_input_prerecorded(TARGET_SAMPLE_RATE)
-    else:  # livestream
-        transcriber._process_input_livestream(TARGET_SAMPLE_RATE)
-
-def process_mic(
+def process_queue(
         q,
         language,
-        stop_event=None,
-        max_queue_seconds: Optional[float] = None,
-        n_threads: int = 1,
-        show_name: str = "microphone",
         transcription_callback: Optional[TranscriptionCallback] = None,
-        audio_segment_callback=None,
-        backend: str = 'whisper_cpp',
+        model='large-v3-turbo',
+        n_threads=1,
+        stop_event=None,
+        backend='whisper_cpp',
 ):
-    try:
-        from whisper_transcribe_py.mic_recorder import MicRecorder
-    except ImportError:
-        raise ImportError(
-            "sounddevice is not installed. "
-            "To use microphone recording, install with: uv pip install -e '.[mic]' "
-            "Note: Microphone recording is only supported on desktop platforms (Windows, Mac, Linux)."
-        )
-
-    if max_queue_seconds is None:
-        limiter = create_default_queue_limiter(show_name)
-    elif max_queue_seconds > 0:
-        limiter = QueueBacklogLimiter(max_queue_seconds, source_label=show_name)
-    else:
-        limiter = None
-    MicRecorder(
-        q,
-        stop_event=stop_event,
-        queue_limiter=limiter,
-        n_threads=n_threads,
-        show_name=show_name,
+    """Process audio queue through transcription."""
+    transcriber = AudioTranscriber(
+        audio_input_queue=q,
+        language=language,
+        model=model,
         transcription_callback=transcription_callback,
-        audio_segment_callback=audio_segment_callback,
+        n_threads=n_threads,
+        stop_event=stop_event,
         backend=backend,
-    ).record(language=language)
-
-
-def _request_shutdown(stop_event: threading.Event, audio_queue: queue.Queue):
-    """
-    Signal worker threads to stop and place a sentinel in the audio queue.
-    """
-    if not stop_event.is_set():
-        stop_event.set()
-        audio_queue.put(None)
+    )
+    transcriber._process_input_prerecorded(TARGET_SAMPLE_RATE)
 
 
 if __name__ == '__main__':
     load_dotenv()
     parser = argparse.ArgumentParser(
-        description='Whisper transcription tool with multiple input modes'
+        description='Whisper file transcription tool'
     )
 
-    # Global arguments (available to all actions)
-    # https://absadiki.github.io/pywhispercpp/#pywhispercpp.constants.AVAILABLE_MODELS
-    parser.add_argument('--model', type=str, default=None, help='Whisper model name (default: large-v3-turbo or from config file)')
-    parser.add_argument('--n-threads', type=int, default=None, help='Number of threads for whisper model (default: 1 or from config file)')
+    # Global arguments
+    parser.add_argument('--model', type=str, default=None, help='Whisper model name (default: large-v3-turbo)')
+    parser.add_argument('--n-threads', type=int, default=None, help='Number of threads for whisper model (default: 1)')
     parser.add_argument('--backend', type=str, choices=['whisper_cpp', 'faster_whisper'], default='whisper_cpp', help='Transcription backend (default: whisper_cpp)')
 
     # Create subparsers for each action
@@ -450,38 +174,8 @@ if __name__ == '__main__':
     parser_file = subparsers.add_parser('file', help='Transcribe audio from a file')
     parser_file.add_argument('--file', type=str, required=True, help='Path to audio file')
     parser_file.add_argument('--output', type=str, help='Output path for JSON transcript (required if --transcribe)')
-    parser_file.add_argument('--lang', type=str, help='Language code for transcription')
+    parser_file.add_argument('--lang', type=str, default='en', help='Language code for transcription (default: en)')
     parser_file.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
-
-    # MIC subcommand
-    parser_mic = subparsers.add_parser('mic', help='Transcribe audio from microphone')
-    parser_mic.add_argument('--lang', type=str, help='Language code for transcription')
-    parser_mic.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
-
-    # STREAM subcommand
-    parser_stream = subparsers.add_parser('stream', help='Transcribe audio from live stream')
-    parser_stream.add_argument('--config', type=str, required=True, help='Path to TOML config file for stream settings')
-    parser_stream.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
-
-    # WEB subcommand
-    parser_web = subparsers.add_parser('web', help='Start web server for transcription')
-    parser_web.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind web server to (default: 0.0.0.0)')
-    parser_web.add_argument('--port', type=int, default=5002, help='Port to bind web server to (default: 5002)')
-    parser_web.add_argument('--dev', action='store_true', help='Enable development mode with hot reload and CORS')
-    parser_web.add_argument('--transcribe-api-url', type=str, help='Alternate transcribe API endpoint URL (for future use)')
-    parser_web.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
-
-    # SQLITE-EXPORT-AUDIO subcommand - Export audio from database
-    parser_sqlite_export = subparsers.add_parser('sqlite-export-audio', help='Export audio segments from SQLite database to audio file(s)')
-    parser_sqlite_export.add_argument('--database', type=str, required=True, help='Path to SQLite database')
-    parser_sqlite_export.add_argument('--output', type=str, required=True, help='Output directory for audio file(s) (filename auto-generated with show name and timestamps)')
-    parser_sqlite_export.add_argument('--start-id', type=int, help='Starting segment ID (default: 1)')
-    parser_sqlite_export.add_argument('--end-id', type=int, help='Ending segment ID (default: max ID in database)')
-
-    # SQLITE-TRANSCRIBE subcommand - Transcribe audio from database
-    parser_sqlite_transcribe = subparsers.add_parser('sqlite-transcribe', help='Transcribe audio segments from SQLite database')
-    parser_sqlite_transcribe.add_argument('--database', type=str, required=True, help='Path to SQLite database')
-    parser_sqlite_transcribe.add_argument('--lang', type=str, required=True, help='Language code for transcription')
 
     args = parser.parse_args()
 
@@ -503,19 +197,17 @@ if __name__ == '__main__':
 
                 if not args.transcribe:
                     # VAD-only mode: just save audio segments without transcription
-                    # Extract filename without extension for show_name
-                    show_name = os.path.splitext(os.path.basename(args.file))[0]
+                    output_dir = os.path.expanduser("~/whisper_segments")
                     thread_transcribe = threading.Thread(target=process_vad_only, kwargs={
                         'audio_input_queue': audio_input_queue,
-                        'show_name': show_name,
+                        'output_dir': output_dir,
                         'stop_event': stop_event,
                     })
-                    print("VAD-only mode: saving audio segments without transcription", file=sys.stderr)
+                    print(f"VAD-only mode: saving audio segments to {output_dir}", file=sys.stderr)
                 else:
                     # Normal mode: transcribe and save to JSON
                     output_path = args.output
                     transcript_writer = JsonTranscriptWriter(output_path)
-                    exception_handler = ThreadExceptionHandler()
 
                     thread_transcribe = threading.Thread(target=process_queue, kwargs={
                         'q': audio_input_queue,
@@ -524,9 +216,7 @@ if __name__ == '__main__':
                         'model': args.model if args.model is not None else 'large-v3-turbo',
                         'n_threads': args.n_threads if args.n_threads is not None else 1,
                         'stop_event': stop_event,
-                        'mode': 'prerecorded',  # Prerecorded mode: no wall_clock timestamps
                         'backend': args.backend,
-                        'exception_handler': exception_handler,
                     })
 
                 # Start the thread
@@ -542,14 +232,6 @@ if __name__ == '__main__':
                             if stop_event.is_set():
                                 print(f"Stop event set after {chunks_read} chunks, {total_bytes} bytes", file=sys.stderr)
                                 break
-
-                            # Check for exceptions from transcribe thread
-                            if args.transcribe and exception_handler.has_exception():
-                                exc = exception_handler.get_exception()
-                                print(f"FATAL ERROR in transcribe thread: {exc}", file=sys.stderr)
-                                _request_shutdown(stop_event, audio_input_queue)
-                                thread_transcribe.join()
-                                sys.exit(1)
 
                             chunk = stdout.read(4096)
                             if not chunk:
@@ -571,13 +253,8 @@ if __name__ == '__main__':
                     interrupted = True
                     print("\nCtrl+C received, stopping processing...", file=sys.stderr)
                 finally:
-                    # Only set stop_event if we were interrupted
-                    # For normal completion, just send sentinel and wait for thread
-                    if interrupted:
-                        _request_shutdown(stop_event, audio_input_queue)
-                    else:
-                        # Normal completion: just send sentinel, don't set stop_event
-                        audio_input_queue.put(None)
+                    # Send sentinel to indicate end of audio
+                    audio_input_queue.put(None)
                     thread_transcribe.join()
 
                 if args.transcribe:
@@ -587,485 +264,7 @@ if __name__ == '__main__':
                     else:
                         print(f"Transcript written to {output_path}")
                 else:
-                    print("Audio segments saved to ./tmp/speech/")
+                    print("Audio segments saved to ~/whisper_segments/")
         except LockError as e:
             print(str(e), file=sys.stderr)
             exit(1)
-
-        #AudioTranscriber().process_silero(audio)
-    elif args.action == 'mic':
-        try:
-            with acquire_lock('mic_web'):
-                audio_input_queue = queue.Queue()
-                stop_event = threading.Event()
-                show_name = "microphone"
-
-                if not args.transcribe:
-                    # No-transcribe mode: VAD-only, save audio files without loading Whisper model
-                    queue_limiter = create_default_queue_limiter(show_name)
-                    exception_handler = ThreadExceptionHandler()
-
-                    print("Microphone mode: saving audio segments without transcription", file=sys.stderr)
-                    print("Press Ctrl+C to stop microphone capture.")
-
-                    # Start VAD processing thread
-                    input_sample_rate = [TARGET_SAMPLE_RATE]  # Will be updated by capture thread
-                    thread_vad = threading.Thread(
-                        target=process_vad_only_livestream,
-                        kwargs={
-                            'audio_input_queue': audio_input_queue,
-                            'show_name': show_name,
-                            'input_sample_rate': TARGET_SAMPLE_RATE,  # Will use actual rate from mic
-                            'stop_event': stop_event,
-                            'queue_backlog_limiter': queue_limiter,
-                            'exception_handler': exception_handler,
-                        },
-                    )
-                    thread_vad.start()
-
-                    # Capture microphone audio (blocks until stop_event)
-                    try:
-                        input_sample_rate[0] = capture_mic_to_queue(
-                            audio_input_queue,
-                            stop_event,
-                            queue_limiter
-                        )
-                    except KeyboardInterrupt:
-                        print("\nCtrl+C received, stopping microphone capture...", file=sys.stderr)
-                        stop_event.set()
-
-                    # Check for exceptions from VAD thread
-                    if exception_handler.has_exception():
-                        exc = exception_handler.get_exception()
-                        print(f"FATAL ERROR in VAD thread: {exc}", file=sys.stderr)
-                        sys.exit(1)
-
-                    # Send sentinel and wait for VAD thread
-                    audio_input_queue.put(None)
-                    thread_vad.join()
-                    print("Audio segments saved to ./tmp/speech/")
-                else:
-                    # Transcribe mode: save to database
-                    with connect_to_database() as conn:
-                        transcript_writer = build_database_writer(conn, show_name)
-                        thread_transcribe = threading.Thread(
-                            target=process_mic,
-                            kwargs={
-                                'q': audio_input_queue,
-                                'language': args.lang,
-                                'stop_event': stop_event,
-                                'n_threads': args.n_threads if args.n_threads is not None else 1,
-                                'show_name': show_name,
-                                'transcription_callback': transcript_writer,
-                                'backend': args.backend,
-                            },
-                        )
-
-                        # Start the thread
-                        thread_transcribe.start()
-
-                        def stop_mic():
-                            _request_shutdown(stop_event, audio_input_queue)
-
-                        print("Press Ctrl+C to stop microphone capture.")
-                        try:
-                            while not stop_event.wait(timeout=1):
-                                pass
-                        except KeyboardInterrupt:
-                            print("\nCtrl+C received, stopping microphone capture...", file=sys.stderr)
-                            stop_mic()
-
-                        thread_transcribe.join()
-        except LockError as e:
-            print(str(e), file=sys.stderr)
-            exit(1)
-    elif args.action == 'stream':
-        # Defensive check: --lang not available in stream subparser, but verify it's not set
-        if hasattr(args, 'lang') and args.lang:
-            raise ValueError("Language should be provided in the config file rather than as a command line argument")
-
-        # Load config first to get show_name for lock
-        with open(args.config, "rb") as f:
-            data = tomllib.load(f)
-
-        try:
-            with acquire_lock('stream', show_name=data.get('show_name')):
-                audio_input_queue = queue.Queue()
-                stop_event = threading.Event()
-                queue_limiter = create_default_queue_limiter(data.get('show_name', 'stream'))
-
-                if not args.transcribe:
-                    # No-transcribe mode: VAD-only, save audio files without loading Whisper model
-                    print("Stream mode: saving audio segments without transcription", file=sys.stderr)
-
-                    exception_handler = ThreadExceptionHandler()
-
-                    # Start VAD processing thread
-                    thread_vad = threading.Thread(
-                        target=process_vad_only_livestream,
-                        kwargs={
-                            'audio_input_queue': audio_input_queue,
-                            'show_name': data['show_name'],
-                            'input_sample_rate': TARGET_SAMPLE_RATE,
-                            'stop_event': stop_event,
-                            'queue_backlog_limiter': queue_limiter,
-                            'exception_handler': exception_handler,
-                        },
-                    )
-                    thread_vad.start()
-
-                    url = data['url']
-
-                    thread_streaming = threading.Thread(
-                        target=stream_url_thread,
-                        kwargs={
-                            'url': url,
-                            'audio_input_queue': audio_input_queue,
-                            'stop_event': stop_event,
-                            'queue_limiter': queue_limiter,
-                        },
-                        daemon=True
-                    )
-
-                    thread_streaming.start()
-
-                    def stop_stream():
-                        _request_shutdown(stop_event, audio_input_queue)
-
-                    print("Press Ctrl+C to stop streaming.")
-                    try:
-                        while not stop_event.wait(timeout=1):
-                            # Check for exceptions from VAD thread
-                            if exception_handler.has_exception():
-                                exc = exception_handler.get_exception()
-                                print(f"FATAL ERROR in VAD thread: {exc}", file=sys.stderr)
-                                sys.exit(1)
-                    except KeyboardInterrupt:
-                        print("\nCtrl+C received, stopping stream...", file=sys.stderr)
-                        stop_stream()
-
-                    stop_stream()
-                    thread_vad.join()
-                    print("Audio segments saved to ./tmp/speech/")
-                else:
-                    # Transcribe mode: save to database
-                    with connect_to_database() as conn:
-                        # Initialize database schema
-                        initialize_database_schema(conn)
-
-                        db_writer = build_database_writer(conn, data['show_name'])
-                        exception_handler = ThreadExceptionHandler()
-
-                        # Create a new thread
-                        thread_transcribe = threading.Thread(target=process_queue,  kwargs={
-                            'q': audio_input_queue,
-                            'language': data['language'],
-                            'save_audio': False,
-                            'show_name': data['show_name'],
-                            'transcription_callback': db_writer,
-                            'model': args.model if args.model is not None else data.get('model', 'large-v3-turbo'),
-                            'n_threads': args.n_threads if args.n_threads is not None else int(data.get('n_threads', 1)),
-                            'stop_event': stop_event,
-                            'queue_backlog_limiter': queue_limiter,
-                            'backend': args.backend if args.backend != 'whisper_cpp' else data.get('backend', 'whisper_cpp'),
-                            'exception_handler': exception_handler,
-                        })
-
-                        # Start the thread
-                        thread_transcribe.start()
-
-                        url = data['url']
-
-                        thread_streaming = threading.Thread(
-                            target=stream_url_thread,
-                            kwargs={
-                                'url': url,
-                                'audio_input_queue': audio_input_queue,
-                                'stop_event': stop_event,
-                                'queue_limiter': queue_limiter,
-                            },
-                            daemon=True
-                        )
-
-                        thread_streaming.start()
-
-                        def stop_stream():
-                            _request_shutdown(stop_event, audio_input_queue)
-
-                        print("Press Ctrl+C to stop streaming.")
-                        try:
-                            while not stop_event.wait(timeout=1):
-                                # Check for exceptions from transcribe thread
-                                if exception_handler.has_exception():
-                                    exc = exception_handler.get_exception()
-                                    print(f"FATAL ERROR in transcribe thread: {exc}", file=sys.stderr)
-                                    stop_stream()
-                                    thread_transcribe.join()
-                                    sys.exit(1)
-                        except KeyboardInterrupt:
-                            print("\nCtrl+C received, stopping stream...", file=sys.stderr)
-                            stop_stream()
-
-                        stop_stream()
-                        thread_transcribe.join()
-                    print("thread_transcribe joined")
-        except LockError as e:
-            print(str(e), file=sys.stderr)
-            exit(1)
-        #thread_streaming.join()
-    elif args.action == 'web':
-        try:
-            from whisper_transcribe_py.api.server import run_server
-        except ImportError as e:
-            # Check which dependency is missing
-            if 'fastapi' in str(e) or 'uvicorn' in str(e):
-                raise ImportError(
-                    "Web server dependencies are not installed. "
-                    "To use the web server, install with: uv pip install -e '.[web]'"
-                ) from e
-            else:
-                raise
-
-        try:
-            with acquire_lock('mic_web'):
-                print(f"Starting web server on {args.host}:{args.port}")
-                if args.dev:
-                    print("Development mode enabled - CORS and hot reload active")
-                    print("Frontend dev server: http://localhost:5173")
-                if not args.transcribe:
-                    print("Transcription disabled - running in view-only mode")
-                if args.transcribe_api_url:
-                    print(f"Alternate transcribe API URL: {args.transcribe_api_url}")
-                print(f"API server: http://{args.host}:{args.port}")
-
-                run_server(
-                    host=args.host,
-                    port=args.port,
-                    dev=args.dev,
-                    no_transcribe=not args.transcribe,
-                    transcribe_api_url=args.transcribe_api_url,
-                )
-        except LockError as e:
-            print(str(e), file=sys.stderr)
-            exit(1)
-    elif args.action == 'sqlite-export-audio':
-        # Validate database exists
-        if not os.path.exists(args.database):
-            print(f"Database {args.database} does not exist")
-            exit(1)
-
-        # Import sqlite_decoder module
-        from whisper_transcribe_py.sqlite_decoder import (
-            read_database_metadata,
-            get_max_speech_id,
-            read_speech_segments,
-            concatenate_and_save_audio
-        )
-
-        print(f"Reading database: {args.database}")
-
-        # Read metadata
-        audio_format, database_id, show_name = read_database_metadata(args.database)
-        print(f"Database ID: {database_id}")
-        print(f"Show name: {show_name}")
-        print(f"Audio format: {audio_format}")
-
-        # Connect to database (read-only)
-        def _open_sqlite_connection(path: str) -> sqlite3.Connection:
-            connection = sqlite3.connect(path, timeout=30.0, isolation_level=None)
-            connection.execute("PRAGMA busy_timeout=10000")
-            return connection
-
-        read_conn = _open_sqlite_connection(args.database)
-        audio_segments_raw = []
-        segment_timestamps = []  # Track (start_ts, end_ts) for each segment
-
-        try:
-            max_id = get_max_speech_id(read_conn)
-
-            # Determine ID range
-            start_id = args.start_id if args.start_id is not None else 1
-            end_id = args.end_id if args.end_id is not None else max_id
-
-            print(f"Exporting audio segments from ID {start_id} to {end_id} (total: {max_id} in database)")
-
-            try:
-                for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(read_conn, end_id):
-                    # Skip segments before start_id
-                    if speech_id < start_id:
-                        continue
-
-                    # Check if this is a notice entry (text-only, no audio)
-                    if audio_data is None and text is not None:
-                        # Notice entry - add None marker to split files
-                        audio_segments_raw.append(None)
-                        segment_timestamps.append(None)
-                        continue
-
-                    # Store raw audio and timestamps for concatenation
-                    audio_segments_raw.append(audio_data)
-                    segment_timestamps.append((start_ts, end_ts))
-
-            except KeyboardInterrupt:
-                print("\nCtrl+C received, stopping export...", file=sys.stderr)
-                sys.exit(1)
-        finally:
-            read_conn.close()
-
-        # Concatenate and save audio
-        print(f"Concatenating {len(audio_segments_raw)} audio segments...")
-
-        # --output is always a directory - create it if it doesn't exist
-        output_dir = args.output
-        os.makedirs(output_dir, exist_ok=True)
-
-        # Generate base filename: {output_dir}/{show_name}.{extension}
-        # The concatenate function will add timestamps to create the final filename
-        ext = 'wav' if audio_format == 'wav' else 'm4a'
-        output_path = os.path.join(output_dir, f"{show_name}.{ext}")
-
-        created_files = concatenate_and_save_audio(audio_segments_raw, output_path, audio_format, segment_timestamps)
-
-        if len(created_files) == 0:
-            print("No audio segments to save (all entries were notices)")
-        elif len(created_files) == 1:
-            print(f"Audio written to {created_files[0]}")
-        else:
-            print(f"Audio split into {len(created_files)} files due to notice entries:")
-            for file_path in created_files:
-                print(f"  - {file_path}")
-
-    elif args.action == 'sqlite-transcribe':
-        # Validate database exists
-        if not os.path.exists(args.database):
-            print(f"Database {args.database} does not exist")
-            exit(1)
-
-        # Import sqlite_decoder module
-        from whisper_transcribe_py.sqlite_decoder import (
-            read_database_metadata,
-            get_max_speech_id,
-            read_speech_segments,
-            decode_audio_segment,
-        )
-
-        print(f"Reading database: {args.database}")
-
-        # Read metadata
-        audio_format, database_id, show_name = read_database_metadata(args.database)
-        print(f"Database ID: {database_id}")
-        print(f"Show name: {show_name}")
-        print(f"Audio format: {audio_format}")
-
-        # Connect to database and get snapshot
-        # Use timeout for concurrent access while stream is writing
-        def _open_sqlite_connection(path: str) -> sqlite3.Connection:
-            connection = sqlite3.connect(path, timeout=30.0, isolation_level=None)
-            connection.execute("PRAGMA busy_timeout=10000")
-            return connection
-
-        read_conn = _open_sqlite_connection(args.database)
-        write_conn = _open_sqlite_connection(args.database)
-        ts = 0
-        segment_count = 0
-        transcribed_count = 0
-
-        try:
-            max_id = get_max_speech_id(read_conn)
-            print(f"Processing {max_id} speech segments (snapshot)")
-
-            # Read last transcribed ID from metadata (resume capability)
-            cursor = read_conn.execute("SELECT value FROM metadata WHERE key = 'last_transcribed_id'")
-            result = cursor.fetchone()
-            start_from_id = int(result[0]) + 1 if result else 1
-            print(f"Resuming transcription from ID {start_from_id}")
-
-            # Initialize direct transcriber for already-segmented audio
-            segment_text_buffer: list[str] = []
-
-            def sqlite_transcription_callback(segments: list[TranscribedSegment]):
-                for segment in segments:
-                    segment_text_buffer.append(segment.text)
-
-            direct_transcriber = AudioTranscriber(
-                audio_input_queue=queue.Queue(),
-                language=args.lang,
-                mode='prerecorded',
-                show_name=show_name,
-                model=args.model if args.model is not None else 'large-v3-turbo',
-                transcription_callback=sqlite_transcription_callback,
-                n_threads=args.n_threads if args.n_threads is not None else 1,
-                backend=args.backend,
-            )
-
-            try:
-                for speech_id, start_ts, end_ts, audio_data, text in read_speech_segments(read_conn, max_id):
-                    # Check if this is a notice entry (text-only, no audio)
-                    if audio_data is None and text is not None:
-                        # Notice entry - already has text, skip
-                        segment_count += 1
-                        continue
-
-                    segment_count += 1
-
-                    # Skip if already transcribed
-                    if speech_id < start_from_id:
-                        continue
-
-                    # Audio entry - decode and transcribe
-                    audio_float32 = decode_audio_segment(audio_data, audio_format)
-
-                    if audio_float32 is None:
-                        continue
-
-                    # Directly transcribe the decoded audio without VAD
-                    segment_text_buffer.clear()
-                    direct_transcriber.transcribe_audio_segment(audio_float32, start_offset=ts)
-                    transcribed_text = " ".join(segment_text_buffer).strip()
-
-                    # Update relative timestamp after transcription completes
-                    ts += len(audio_float32) / TARGET_SAMPLE_RATE
-
-                    # Update database with transcription (single transaction for atomicity)
-                    max_db_attempts = 5
-                    for attempt in range(1, max_db_attempts + 1):
-                        try:
-                            write_conn.execute("BEGIN IMMEDIATE")
-                            write_conn.execute(
-                                "UPDATE speech SET text = ? WHERE id = ?",
-                                (transcribed_text, speech_id)
-                            )
-                            write_conn.execute(
-                                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_transcribed_id', ?)",
-                                (str(speech_id),)
-                            )
-                            write_conn.commit()
-                            break
-                        except sqlite3.OperationalError as exc:
-                            write_conn.rollback()
-                            if "locked" in str(exc).lower() and attempt < max_db_attempts:
-                                backoff = 0.5 * attempt
-                                print(f"Database locked when updating ID {speech_id}, retrying in {backoff:.1f}s...", file=sys.stderr)
-                                time.sleep(backoff)
-                                continue
-                            raise
-                        except Exception:
-                            write_conn.rollback()
-                            raise
-
-                    transcribed_count += 1
-
-                    if transcribed_count % 10 == 0:
-                        print(f"Transcribed {transcribed_count} segments (ID {speech_id}/{max_id})")
-
-            except KeyboardInterrupt:
-                print("\nCtrl+C received, stopping processing...", file=sys.stderr)
-                sys.exit(1)
-        finally:
-            read_conn.close()
-            write_conn.close()
-
-        print(f"Transcribed {transcribed_count} new segments (total in DB: {segment_count})")
-
-    else:
-        raise ValueError("Invalid action {}".format(args.action))

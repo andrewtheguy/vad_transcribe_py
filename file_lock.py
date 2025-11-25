@@ -38,8 +38,8 @@ class FileLock:
         Initialize file lock.
 
         Args:
-            lock_name: Type of lock ('file', 'mic_web', 'stream')
-            show_name: For stream locks, the show name from config
+            lock_name: Type of lock ('file')
+            show_name: Unused (kept for compatibility)
         """
         self.lock_name = lock_name
         self.show_name = show_name
@@ -51,15 +51,8 @@ class FileLock:
         """Generate lock file path based on lock type."""
         temp_dir = tempfile.gettempdir()
 
-        if self.lock_name == 'stream':
-            if not self.show_name:
-                raise ValueError("show_name required for stream locks")
-            # Sanitize show_name for filesystem
-            sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', self.show_name)
-            filename = f"whisper_transcribe_stream_{sanitized}.lock"
-        else:
-            filename = f"whisper_transcribe_{self.lock_name}.lock"
-
+        # File transcription only
+        filename = f"whisper_transcribe_{self.lock_name}.lock"
         return Path(temp_dir) / filename
 
     def _read_lock_pid(self) -> Optional[int]:
@@ -96,10 +89,6 @@ class FileLock:
         """Get human-readable description of the action being locked."""
         if self.lock_name == 'file':
             return "file transcription"
-        elif self.lock_name == 'mic_web':
-            return "mic or web"
-        elif self.lock_name == 'stream':
-            return f"stream ({self.show_name})"
         return self.lock_name
 
     def acquire(self):
@@ -179,8 +168,8 @@ def acquire_lock(lock_type: str, show_name: Optional[str] = None) -> FileLock:
     Convenience function to create and return a FileLock.
 
     Args:
-        lock_type: Type of lock ('file', 'mic_web', 'stream')
-        show_name: For stream locks, the show name from config
+        lock_type: Type of lock ('file')
+        show_name: Unused (kept for compatibility)
 
     Returns:
         FileLock instance (use as context manager)

@@ -1,6 +1,4 @@
 import queue
-import types
-
 import numpy as np
 import pytest
 
@@ -9,6 +7,8 @@ from whisper_transcribe_py.vad_processor import AudioSegment
 
 
 class TrackingSpeechDetector:
+    """Mock SpeechDetector for testing."""
+
     def __init__(self, sample_rate: int, min_speech_seconds: float = 3.0, max_speech_seconds: float = 60.0, on_segment_complete=None):
         self.sample_rate = sample_rate
         self.min_speech_seconds = min_speech_seconds
@@ -40,12 +40,11 @@ class TrackingSpeechDetector:
 
             # Trigger segment completion if requested
             if trigger_complete and self.on_segment_complete:
-                import numpy as np
                 combined_audio = np.concatenate(self._accumulated_audio)
                 segment = AudioSegment(
                     start=timestamp,
                     audio=combined_audio,
-                    wall_clock_start=wall_clock_timestamp,
+                    wall_clock_start=None,
                     duration_seconds=len(combined_audio) / self.sample_rate
                 )
                 self.on_segment_complete(segment)
@@ -61,7 +60,7 @@ class TrackingSpeechDetector:
         return 0.0
 
     def reset(self) -> None:
-        """Reset the detector state (for context resets)."""
+        """Reset the detector state."""
         self._script_index = 0
         self.is_in_speech = False
         self.pending_non_speech_duration = 0.0
@@ -70,23 +69,6 @@ class TrackingSpeechDetector:
     def set_script(self, script: list[tuple[bool, bool] | tuple[bool, bool, bool]]) -> None:
         self._script = script
         self._script_index = 0
-
-
-class StaticTimestampLimiter:
-    def __init__(self, pending_timestamp: float):
-        self.pending_timestamp = pending_timestamp
-
-    def pending_chunk_start_timestamp(self):
-        return self.pending_timestamp
-
-    def note_timestamp_progress(self, _duration):
-        pass
-
-    def consume(self, _duration):
-        pass
-
-    def register_drop_callback(self, _callback):
-        pass
 
 
 @pytest.fixture(autouse=True)
@@ -120,838 +102,122 @@ def make_transcriber():
     return _builder
 
 
-def test_process_input_handles_transcription_notice(make_transcriber, recorded_transcribe):
-    audio_queue = queue.Queue()
-    notice = audio_transcriber.TranscriptionNotice("(notice)", 123.0)
-    audio_queue.put(notice)
-    audio_queue.put(None)
-
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    assert recorded_transcribe[0] is notice
-    assert recorded_transcribe[-1] is None
-
-
 def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_transcribe):
+    """Test that audio is fed to speech detector in correct window sizes."""
     audio_queue = queue.Queue()
     audio = np.zeros(1024, dtype=np.float32)
     duration = len(audio) / audio_transcriber.TARGET_SAMPLE_RATE
-    segment = AudioSegment(start=5.0, audio=audio, wall_clock_start=1000.0, duration_seconds=duration)
+    segment = AudioSegment(start=5.0, audio=audio, wall_clock_start=None, duration_seconds=duration)
     audio_queue.put(segment)
     audio_queue.put(None)
 
     transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
+    transcriber._process_input_prerecorded(audio_transcriber.TARGET_SAMPLE_RATE)
 
     calls = transcriber.speech_detector.calls
     assert len(calls) == 2
     first_ts, first_wall, first_len = calls[0]
     second_ts, _, _ = calls[1]
-    assert first_ts == pytest.approx(5.0)
-    assert first_wall == pytest.approx(1000.0)  # Now always provided
+    assert first_ts == 5.0
+    assert first_wall is None  # File mode: no wall_clock_timestamp
     assert first_len == 512
-    assert second_ts == pytest.approx(5.0 + 512 / audio_transcriber.TARGET_SAMPLE_RATE)
 
 
-def test_drop_notice_in_audio_input_queue(monkeypatch, make_transcriber, recorded_transcribe):
-    """Test that drop notice is processed when dequeued from audio_input_queue."""
-    window_samples = audio_transcriber.get_window_size_samples()
-    audio = np.zeros(window_samples * 3, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
-
+def test_transcriber_initialization(make_transcriber):
+    """Test that transcriber initializes with correct parameters."""
     audio_queue = queue.Queue()
-    audio_queue.put(segment)
-
-    # Put TranscriptionNotice into queue before end marker
-    notice = audio_transcriber.TranscriptionNotice("(transcript temporarily dropped)", 5.0)
-    audio_queue.put(notice)
-    audio_queue.put(None)
-
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    # Sequence: speech → speech → non-speech (triggers segment_complete)
-    transcriber.speech_detector.set_script([
-        (True, True),
-        (False, True),
-        (False, False),  # This triggers segment completion
-    ])
-
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    # Should have one TranscriptionNotice processed
-    notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]
-    assert len(notices) == 1
-    assert notices[0].timestamp == pytest.approx(5.0)
-
-    # Check that segment comes before notice
-    segments = [item for item in recorded_transcribe if isinstance(item, AudioSegment)]
-    if segments:
-        segment_idx = recorded_transcribe.index(segments[0])
-        notice_idx = recorded_transcribe.index(notices[0])
-        assert segment_idx < notice_idx, "Segment should come before notice"
-
-
-def test_transform_segment_returns_segment(make_transcriber):
-    transcriber = make_transcriber(
-        language="en",
-    )
-    transcriber.ts_transcribe_start = 200.0
-
-    fake_segment = types.SimpleNamespace(t0=0, t1=1500, text="Hello")
-    payload = transcriber._transform_segment(fake_segment)
-
-    assert payload.text == "Hello"
-    assert payload.relative_start == pytest.approx(0.0)
-    assert payload.relative_end == pytest.approx(1.5)
-    assert payload.start_timestamp.timestamp() == pytest.approx(200.0)
-    assert payload.end_timestamp.timestamp() == pytest.approx(201.5)
-    assert transcriber._last_transcript_wall_clock == pytest.approx(201.5)
-
-
-def test_drop_notice_positions_between_segments(make_transcriber, recorded_transcribe):
-    """Test that drop notice is positioned between segments based on timestamps."""
-    window_samples = audio_transcriber.get_window_size_samples()
-
-    # Create two separate audio chunks that will each produce a VAD segment
-    audio1 = np.zeros(window_samples * 2, dtype=np.float32)
-    audio2 = np.zeros(window_samples * 2, dtype=np.float32)
-
-    seg_early = AudioSegment(start=0.0, audio=audio1, wall_clock_start=20.0, duration_seconds=len(audio1) / audio_transcriber.TARGET_SAMPLE_RATE)
-    seg_late = AudioSegment(start=5.0, audio=audio2, wall_clock_start=30.0, duration_seconds=len(audio2) / audio_transcriber.TARGET_SAMPLE_RATE)
-
-    audio_queue = queue.Queue()
-    audio_queue.put(seg_early)
-
-    # Put TranscriptionNotice at 25.0 (between early at 20.0 and late at 30.0)
-    notice = audio_transcriber.TranscriptionNotice("(transcript temporarily dropped)", 25.0)
-    audio_queue.put(notice)
-
-    audio_queue.put(seg_late)
-    audio_queue.put(None)
-
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-
-    # Configure VAD to emit segments for both audio chunks
-    # After TranscriptionNotice reset, script restarts from index 0
-    # Script format: (has_speech, in_speech, trigger_complete)
-    transcriber.speech_detector.set_script([
-        (True, True, False),   # has speech, in speech, don't complete yet
-        (False, False, True),  # no speech, not in speech, COMPLETE segment
-    ])
-
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    # Find items in recorded_transcribe
-    segments = [item for item in recorded_transcribe if isinstance(item, AudioSegment)]
-    notices = [item for item in recorded_transcribe if isinstance(item, audio_transcriber.TranscriptionNotice)]
-
-    assert len(segments) == 2, f"Expected 2 segments, got {len(segments)}"
-    assert len(notices) == 1, f"Expected 1 notice, got {len(notices)}"
-
-    # Get indices in transcribe queue
-    early_idx = recorded_transcribe.index(segments[0])
-    notice_idx = recorded_transcribe.index(notices[0])
-    late_idx = recorded_transcribe.index(segments[1])
-
-    # Verify order: early < notice < late
-    assert early_idx < notice_idx < late_idx, \
-        f"Expected early({early_idx}) < notice({notice_idx}) < late({late_idx})"
-
-
-def test_segments_after_drop_use_notice_timestamp(make_transcriber):
-    drop_ts = 200.0
-    limiter = StaticTimestampLimiter(pending_timestamp=drop_ts - 30.0)
-    transcriber = make_transcriber(language="en", queue_backlog_limiter=limiter, wall_clock_reference=0.0)
-    transcriber._handle_drop_notice(drop_ts)
-
-    window_samples = audio_transcriber.get_window_size_samples()
-    audio = np.zeros(window_samples, dtype=np.float32)
-    # Use drop_ts as wall_clock_start to maintain test intent - segments now provide real timestamps
-    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=drop_ts, duration_seconds=len(audio) / audio_transcriber.TARGET_SAMPLE_RATE)
-
-    audio_queue = transcriber.audio_input_queue
-    audio_queue.put(segment)
-    audio_queue.put(None)
-
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    assert transcriber.speech_detector.calls, "expected windows"
-    _, wall_clock, _ = transcriber.speech_detector.calls[0]
-    assert wall_clock == pytest.approx(drop_ts)
-
-
-def test_audio_segment_callback_invoked(make_transcriber):
-    """Test that audio_segment_callback is invoked when VAD segment completes."""
-    captured_segments = []
-
-    def audio_callback(segment):
-        captured_segments.append(segment)
-
-    transcriber = make_transcriber(
-        language="en",
-        audio_segment_callback=audio_callback,
-    )
-
-    # Simulate VAD segment completion
-    audio = np.ones(1600, dtype=np.float32)
-    segment = AudioSegment(start=10.5, audio=audio, wall_clock_start=1010.5, duration_seconds=0.1)
-    transcriber._handle_vad_segment(segment)
-
-    assert len(captured_segments) == 1
-    captured_segment = captured_segments[0]
-    assert np.array_equal(captured_segment.audio, audio)
-    assert captured_segment.start == 10.5
-
-
-def test_handle_vad_segment_queues_for_transcription(make_transcriber, recorded_transcribe):
-    """Test that VAD segments are queued for transcription."""
-    audio_queue = queue.Queue()
-    audio_queue.put(None)  # End marker
-
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-
-    # Simulate VAD segment
-    audio = np.ones(1600, dtype=np.float32)
-    segment = AudioSegment(start=5.0, audio=audio, wall_clock_start=1005.0, duration_seconds=0.1)
-    transcriber._handle_vad_segment(segment)
-
-    # Process input to trigger transcription thread
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    # Check that segment was queued
-    assert any(isinstance(item, AudioSegment) for item in recorded_transcribe)
-    queued_segment = [item for item in recorded_transcribe if isinstance(item, AudioSegment)][0]
-    assert queued_segment.start == 5.0
-
-
-def test_process_input_with_resampling(make_transcriber, recorded_transcribe):
-    """Test that process_input correctly resamples audio when needed."""
-    audio_queue = queue.Queue()
-
-    # Create audio at 44100 Hz that needs resampling to 16000 Hz
-    input_sample_rate = 44100
-    audio_44k = np.zeros(44100, dtype=np.float32)  # 1 second
-    duration = len(audio_44k) / input_sample_rate
-    segment = AudioSegment(start=0.0, audio=audio_44k, wall_clock_start=1000.0, duration_seconds=duration)
-    audio_queue.put(segment)
-    audio_queue.put(None)
-
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber._process_input_livestream(input_sample_rate)
-
-    # Verify speech detector received windows
-    assert len(transcriber.speech_detector.calls) > 0
-    # Each window should be 512 samples @ 16kHz
-    for _, _, window_len in transcriber.speech_detector.calls:
-        assert window_len == 512
-
-
-def test_process_input_respects_stop_event(make_transcriber):
-    """Test that process_input stops when stop_event is set."""
-    import threading
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-
-    # Put audio in queue
-    audio = np.zeros(1024, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=0.064)
-    audio_queue.put(segment)
-
     transcriber = make_transcriber(
         audio_queue=audio_queue,
         language="en",
-        stop_event=stop_event,
-    )
-
-    # Set stop event before processing
-    stop_event.set()
-
-    # Process should exit quickly
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    # Verify it stopped early (should have minimal calls)
-    assert len(transcriber.speech_detector.calls) == 0
-
-
-def test_process_input_handles_wall_clock_timestamps(make_transcriber, recorded_transcribe):
-    """Test that wall clock timestamps are tracked correctly."""
-    audio_queue = queue.Queue()
-
-    audio = np.zeros(512, dtype=np.float32)
-    wall_clock_start = 1234567890.0
-    segment = AudioSegment(
-        start=0.0,
-        audio=audio,
-        duration_seconds=0.032,
-        wall_clock_start=wall_clock_start,
-    )
-    audio_queue.put(segment)
-    audio_queue.put(None)
-
-    transcriber = make_transcriber(
-        audio_queue=audio_queue,
-        language="en",
-        wall_clock_reference=wall_clock_start,
-    )
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    # Verify wall clock timestamp was passed to speech detector
-    calls = transcriber.speech_detector.calls
-    assert len(calls) == 1
-    _, wall_clock, _ = calls[0]
-    assert wall_clock == wall_clock_start
-
-
-def test_transform_segment_chinese_conversion(make_transcriber):
-    """Test that Chinese text is converted for storage."""
-    transcriber = make_transcriber(
-        language="zh",
-    )
-    transcriber.ts_transcribe_start = 200.0
-
-    # Test with Chinese text (would normally be converted)
-    fake_segment = types.SimpleNamespace(t0=0, t1=1000, text="你好")
-    payload = transcriber._transform_segment(fake_segment)
-
-    # Verify conversion happened (zhconv would convert this)
-    assert payload.language == "zh"
-    # Text should be processed through zhconv
-
-
-def test_transform_segment_relative_timestamps(make_transcriber):
-    """Test segment transformation with relative timestamp strategy."""
-    transcriber = make_transcriber(
-        language="en",
-    )
-    transcriber.current_audio_offset = 100.0
-    transcriber.ts_transcribe_start = 100.0  # Wall clock timestamp
-
-    fake_segment = types.SimpleNamespace(t0=0, t1=2000, text="Test")
-    payload = transcriber._transform_segment(fake_segment)
-
-    # Relative times are returned in segment
-    assert payload.relative_start == pytest.approx(100.0)
-    assert payload.relative_end == pytest.approx(102.0)
-
-
-def test_initialization_with_all_params(make_transcriber):
-    """Test AudioTranscriber can be initialized with all parameters."""
-    audio_queue = queue.Queue()
-
-    def audio_cb(segment):
-        pass
-
-    def transcription_cb(segments):
-        pass
-
-    import threading
-    stop_event = threading.Event()
-
-    transcriber = audio_transcriber.AudioTranscriber(
-        audio_input_queue=audio_queue,
-        language="en",
-        show_name="test_show",
+        show_name="test",
         model="large-v3-turbo",
-        audio_segment_callback=audio_cb,
-        transcription_callback=transcription_cb,
-        n_threads=4,
-        stop_event=stop_event,
-        wall_clock_reference=1234567890.0,
-        queue_backlog_limiter=None,
+        backend="whisper_cpp"
     )
 
     assert transcriber.language == "en"
-    assert transcriber.show_name == "test_show"
+    assert transcriber.show_name == "test"
     assert transcriber.model == "large-v3-turbo"
-    assert transcriber.n_threads == 4
-    assert transcriber.stop_event is stop_event
-    assert transcriber.wall_clock_reference == 1234567890.0
+    assert transcriber.backend == "whisper_cpp"
 
 
-def test_handle_vad_segment_consumes_non_speech_from_backlog(make_transcriber):
-    """Test that non-speech is consumed from backlog limiter when VAD segment completes."""
-    limiter = audio_transcriber.QueueBacklogLimiter(
-        max_seconds=10.0,
-        source_label="test",
+def test_transcriber_vad_min_max_speech(make_transcriber):
+    """Test that VAD min/max speech seconds are configured correctly."""
+    audio_queue = queue.Queue()
+    transcriber = make_transcriber(
+        audio_queue=audio_queue,
+        language="en",
+        vad_min_speech_seconds=2.0,
+        vad_max_speech_seconds=45.0
     )
+
+    assert transcriber.speech_detector.min_speech_seconds == 2.0
+    assert transcriber.speech_detector.max_speech_seconds == 45.0
+
+
+def test_transform_segment_file_mode(make_transcriber):
+    """Test that segment transformation returns prerecorded mode format."""
+    audio_queue = queue.Queue()
+    transcriber = make_transcriber(audio_queue=audio_queue, language="en", show_name="test_show")
+
+    class MockSegment:
+        t0 = 100  # milliseconds
+        t1 = 200  # milliseconds
+        text = "hello world"
+
+    result = transcriber._transform_segment(MockSegment())
+
+    assert result.show_name == "test_show"
+    assert result.language == "en"
+    assert result.text == "hello world"
+    assert result.relative_start == 0.1
+    assert result.relative_end == 0.2
+    assert result.start_timestamp is None  # File mode: no timestamps
+    assert result.end_timestamp is None
+
+
+def test_pcm_conversion_functions():
+    """Test PCM audio conversion functions."""
+    # Test pcm_int16_to_float32
+    int16_audio = np.array([0, 16384, -16384, 32767], dtype=np.int16)
+    float32_audio = audio_transcriber.pcm_int16_to_float32(int16_audio)
+
+    assert float32_audio.dtype == np.float32
+    assert float32_audio[0] == 0.0
+    assert -1.0 <= float32_audio[3] <= 1.0
+
+    # Test pcm_s16le_to_float32
+    pcm_bytes = int16_audio.tobytes()
+    float32_from_bytes = audio_transcriber.pcm_s16le_to_float32(pcm_bytes)
+
+    assert float32_from_bytes.dtype == np.float32
+    assert len(float32_from_bytes) == len(int16_audio)
+
+
+def test_vad_segment_callback(make_transcriber):
+    """Test that VAD segment callback is called when segment completes."""
+    audio_queue = queue.Queue()
+    callback_results = []
+
+    def mock_callback(segment: AudioSegment):
+        callback_results.append(segment)
 
     transcriber = make_transcriber(
+        audio_queue=audio_queue,
         language="en",
-        queue_backlog_limiter=limiter,
-        vad_max_speech_seconds=5.0,  # Ensure 2*5 = 10 fits within limiter max
+        audio_segment_callback=mock_callback
     )
 
-    # Set up speech detector to return some non-speech
-    transcriber.speech_detector.pending_non_speech_duration = 0.5
-
-    def mock_consume_non_speech():
-        non_speech = transcriber.speech_detector.pending_non_speech_duration
-        transcriber.speech_detector.pending_non_speech_duration = 0.0
-        return non_speech
-
-    transcriber.speech_detector.consume_non_speech = mock_consume_non_speech
-
-    initial_backlog = limiter.current_seconds
-    limiter.try_add(1.0)  # Add 1 second to backlog
-
-    # Trigger VAD segment
-    audio = np.ones(1600, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=0.1)
-    transcriber._handle_vad_segment(segment)
-
-    # Verify non-speech was consumed
-    assert limiter.current_seconds < limiter.current_seconds + 1.0
-
-
-def test_process_input_flushes_incomplete_segment(make_transcriber, recorded_transcribe):
-    """Test that process_input flushes incomplete speech segment at end."""
-    audio_queue = queue.Queue()
-
-    # Add audio but end stream while speech might be in progress
-    audio = np.zeros(1024, dtype=np.float32)
-    segment = AudioSegment(start=0.0, audio=audio, wall_clock_start=1000.0, duration_seconds=0.064)
-    audio_queue.put(segment)
-    audio_queue.put(None)  # End marker
-
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-
-    # Mock speech detector to have in-progress speech
-    transcriber.speech_detector._speech_section = [0.1] * 512
-    transcriber.speech_detector._has_speech_begin_timestamp = 0.0
-
-    flush_called = [False]
-    original_flush = transcriber.speech_detector.flush
-
-    def mock_flush():
-        flush_called[0] = True
-        original_flush()
-
-    transcriber.speech_detector.flush = mock_flush
-
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    # Verify flush was called
-    assert flush_called[0]
-
-
-def test_timestamp_continuity_across_segments(make_transcriber, recorded_transcribe):
-    """Test that timestamps remain continuous across multiple segments."""
-    audio_queue = queue.Queue()
-
-    # First segment at 0.0
-    audio1 = np.zeros(512, dtype=np.float32)
-    seg1 = AudioSegment(start=0.0, audio=audio1, wall_clock_start=1000.0, duration_seconds=0.032)
-    audio_queue.put(seg1)
-
-    # Second segment at 1.0
-    audio2 = np.zeros(512, dtype=np.float32)
-    seg2 = AudioSegment(start=1.0, audio=audio2, wall_clock_start=1001.0, duration_seconds=0.032)
-    audio_queue.put(seg2)
-
-    audio_queue.put(None)
-
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber._process_input_livestream(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    # Verify timestamps are correct
-    calls = transcriber.speech_detector.calls
-    assert len(calls) == 2
-    ts1, _, _ = calls[0]
-    ts2, _, _ = calls[1]
-
-    assert ts1 == pytest.approx(0.0)
-    assert ts2 == pytest.approx(1.0)
-
-
-# ============================================================================
-# Tests for stream_url_thread
-# ============================================================================
-
-
-def test_stream_url_thread_basic_operation(monkeypatch):
-    """Test basic streaming and queuing of audio chunks."""
-    import threading
-    from unittest.mock import Mock, MagicMock
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-
-    # Create fake PCM data (1 second worth)
-    fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
-
-    # Mock stream_url context manager
-    mock_stdout = MagicMock()
-    read_sequence = [fake_pcm, fake_pcm]  # Two chunks
-    read_count = [0]
-
-    def mock_read(size):
-        if read_count[0] < len(read_sequence):
-            result = read_sequence[read_count[0]]
-            read_count[0] += 1
-            return result
-        return b''  # EOF after sequence
-
-    mock_stdout.read.side_effect = mock_read
-
-    mock_stream = MagicMock()
-    mock_stream.__enter__ = Mock(return_value=mock_stdout)
-    mock_stream.__exit__ = Mock(return_value=False)
-
-    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
-
-    # Run in thread with timeout
-    thread = threading.Thread(
-        target=audio_transcriber.stream_url_thread,
-        args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
+    # Create a mock audio segment and call the VAD callback
+    test_audio = np.zeros(512, dtype=np.float32)
+    test_segment = AudioSegment(
+        start=0.0,
+        audio=test_audio,
+        wall_clock_start=None,
+        duration_seconds=0.032
     )
-    thread.start()
 
-    # Wait for EOF and retry, then stop
-    import time
-    time.sleep(0.5)
-    stop_event.set()
-    thread.join(timeout=2.0)
+    transcriber._handle_vad_segment(test_segment)
 
-    # Verify chunks were queued
-    assert audio_queue.qsize() >= 2
-    segment = audio_queue.get()
-    assert isinstance(segment, AudioSegment)
-    assert segment.start == 0.0
-    assert segment.duration_seconds == pytest.approx(1.0)
-
-    # Second segment should have incremented timestamp
-    segment2 = audio_queue.get()
-    assert segment2.start == pytest.approx(1.0)
-
-
-def test_stream_url_thread_stop_event(monkeypatch):
-    """Test that stop_event terminates the thread."""
-    import threading
-    import time
-    from unittest.mock import Mock, MagicMock
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-
-    # Mock to keep streaming indefinitely
-    mock_stdout = MagicMock()
-    fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
-
-    def blocking_read(size):
-        # Check stop event during read
-        if stop_event.is_set():
-            return b''
-        time.sleep(0.05)  # Small delay to simulate streaming
-        return fake_pcm
-
-    mock_stdout.read.side_effect = blocking_read
-
-    mock_stream = MagicMock()
-    mock_stream.__enter__ = Mock(return_value=mock_stdout)
-    mock_stream.__exit__ = Mock(return_value=False)
-
-    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
-
-    thread = threading.Thread(
-        target=audio_transcriber.stream_url_thread,
-        args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
-    )
-    thread.start()
-
-    # Let it run briefly then stop
-    time.sleep(0.1)
-    stop_event.set()
-    thread.join(timeout=2.0)
-
-    assert not thread.is_alive()
-
-
-def test_stream_url_thread_queue_limiter_drops(monkeypatch):
-    """Test that queue limiter drops chunks when backlog exceeds limit."""
-    import threading
-    import time
-    from unittest.mock import Mock, MagicMock
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-    limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=0.5, source_label="test")
-
-    # Fill limiter to trigger drops (set high backlog)
-    limiter.try_add(1.0)  # Over limit of 0.5
-
-    fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
-    mock_stdout = MagicMock()
-    read_sequence = [fake_pcm, fake_pcm, fake_pcm]  # 3 chunks to ensure some are dropped
-    read_count = [0]
-
-    def mock_read(size):
-        if read_count[0] < len(read_sequence):
-            result = read_sequence[read_count[0]]
-            read_count[0] += 1
-            return result
-        return b''  # EOF after sequence
-
-    mock_stdout.read.side_effect = mock_read
-
-    mock_stream = MagicMock()
-    mock_stream.__enter__ = Mock(return_value=mock_stdout)
-    mock_stream.__exit__ = Mock(return_value=False)
-
-    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
-
-    initial_dropped = limiter.dropped_seconds
-
-    thread = threading.Thread(
-        target=audio_transcriber.stream_url_thread,
-        args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "queue_limiter": limiter, "retry_sleep_duration": 0.01}
-    )
-    thread.start()
-    time.sleep(0.3)
-    stop_event.set()
-    thread.join(timeout=2.0)
-
-    # Some chunks should be dropped (limiter tracks dropped seconds)
-    assert limiter.dropped_seconds > initial_dropped
-
-
-def test_stream_url_thread_queue_limiter_accepts_when_below_limit(monkeypatch):
-    """Test that queue limiter accepts chunks when under limit."""
-    import threading
-    import time
-    from unittest.mock import Mock, MagicMock
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-    limiter = audio_transcriber.QueueBacklogLimiter(max_seconds=10.0, source_label="test")
-
-    fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
-    mock_stdout = MagicMock()
-    read_sequence = [fake_pcm, fake_pcm]
-    read_count = [0]
-
-    def mock_read(size):
-        if read_count[0] < len(read_sequence):
-            result = read_sequence[read_count[0]]
-            read_count[0] += 1
-            return result
-        return b''  # EOF after sequence
-
-    mock_stdout.read.side_effect = mock_read
-
-    mock_stream = MagicMock()
-    mock_stream.__enter__ = Mock(return_value=mock_stdout)
-    mock_stream.__exit__ = Mock(return_value=False)
-
-    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
-
-    thread = threading.Thread(
-        target=audio_transcriber.stream_url_thread,
-        args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "queue_limiter": limiter, "retry_sleep_duration": 0.01}
-    )
-    thread.start()
-    time.sleep(0.5)
-    stop_event.set()
-    thread.join(timeout=2.0)
-
-    # Both audio chunks should be queued (may also have error notices from retry)
-    items = []
-    while not audio_queue.empty():
-        items.append(audio_queue.get())
-
-    audio_segments = [item for item in items if isinstance(item, AudioSegment)]
-    assert len(audio_segments) == 2
-    assert limiter.dropped_seconds == 0
-
-
-def test_stream_url_thread_retry_on_error(monkeypatch):
-    """Test retry logic when stream fails."""
-    import threading
-    import time
-    from unittest.mock import Mock, MagicMock
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-
-    call_count = [0]
-
-    def mock_stream_url_failing(url):
-        call_count[0] += 1
-        if call_count[0] == 1:
-            # First call fails
-            raise ValueError("Stream error")
-        else:
-            # Second call succeeds then EOF
-            mock_stdout = MagicMock()
-            mock_stdout.read.return_value = b''
-            mock_stream = MagicMock()
-            mock_stream.__enter__ = Mock(return_value=mock_stdout)
-            mock_stream.__exit__ = Mock(return_value=False)
-            return mock_stream
-
-    monkeypatch.setattr(audio_transcriber, "stream_url", mock_stream_url_failing)
-
-    thread = threading.Thread(
-        target=audio_transcriber.stream_url_thread,
-        args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
-    )
-    thread.start()
-
-    # Wait for retry (faster since retry_sleep_duration is 0.01)
-    time.sleep(0.1)
-    stop_event.set()
-    thread.join(timeout=2.0)
-
-    # Should have retried after error
-    assert call_count[0] >= 2
-    # Should have queued error notice
-    items = []
-    while not audio_queue.empty():
-        items.append(audio_queue.get())
-    assert any(isinstance(item, audio_transcriber.TranscriptionNotice) for item in items)
-
-
-def test_stream_url_thread_timestamp_continuity(monkeypatch):
-    """Test that timestamps increment correctly across chunks."""
-    import threading
-    import time
-    from unittest.mock import Mock, MagicMock
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-
-    # Create chunks of different sizes
-    chunk1 = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()  # 1.0 sec
-    chunk2 = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE * 2, dtype=np.int16).tobytes()  # 2.0 sec
-
-    mock_stdout = MagicMock()
-    read_sequence = [chunk1, chunk2]
-    read_count = [0]
-
-    def mock_read(size):
-        if read_count[0] < len(read_sequence):
-            result = read_sequence[read_count[0]]
-            read_count[0] += 1
-            return result
-        return b''  # EOF after sequence
-
-    mock_stdout.read.side_effect = mock_read
-
-    mock_stream = MagicMock()
-    mock_stream.__enter__ = Mock(return_value=mock_stdout)
-    mock_stream.__exit__ = Mock(return_value=False)
-
-    monkeypatch.setattr(audio_transcriber, "stream_url", lambda url: mock_stream)
-
-    thread = threading.Thread(
-        target=audio_transcriber.stream_url_thread,
-        args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
-    )
-    thread.start()
-    time.sleep(0.5)
-    stop_event.set()
-    thread.join(timeout=2.0)
-
-    # Verify timestamp progression
-    seg1 = audio_queue.get()
-    seg2 = audio_queue.get()
-
-    assert seg1.start == pytest.approx(0.0)
-    assert seg1.duration_seconds == pytest.approx(1.0)
-
-    assert seg2.start == pytest.approx(1.0)  # Continues from previous
-    assert seg2.duration_seconds == pytest.approx(2.0)
-
-
-def test_stream_url_thread_eof_handling(monkeypatch):
-    """Test that EOF properly terminates the stream and triggers retry."""
-    import threading
-    import time
-    from unittest.mock import Mock, MagicMock
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-
-    call_count = [0]
-
-    def mock_stream_url_with_eof(url):
-        call_count[0] += 1
-        mock_stdout = MagicMock()
-        if call_count[0] == 1:
-            # First stream: one chunk then EOF
-            fake_pcm = np.zeros(audio_transcriber.TARGET_SAMPLE_RATE, dtype=np.int16).tobytes()
-            read_count = [0]
-            read_sequence = [fake_pcm]
-
-            def mock_read(size):
-                if read_count[0] < len(read_sequence):
-                    result = read_sequence[read_count[0]]
-                    read_count[0] += 1
-                    return result
-                return b''
-
-            mock_stdout.read.side_effect = mock_read
-        else:
-            # Second stream: immediate EOF (will stop with stop_event)
-            mock_stdout.read.return_value = b''
-
-        mock_stream = MagicMock()
-        mock_stream.__enter__ = Mock(return_value=mock_stdout)
-        mock_stream.__exit__ = Mock(return_value=False)
-        return mock_stream
-
-    monkeypatch.setattr(audio_transcriber, "stream_url", mock_stream_url_with_eof)
-
-    thread = threading.Thread(
-        target=audio_transcriber.stream_url_thread,
-        args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
-    )
-    thread.start()
-
-    # Wait for first stream to complete and retry
-    time.sleep(1.0)
-    stop_event.set()
-    thread.join(timeout=2.0)
-
-    # Should have attempted retry after EOF
-    assert call_count[0] >= 2
-
-
-def test_stream_url_thread_stop_during_retry_wait(monkeypatch):
-    """Test that stop_event is checked during retry sleep."""
-    import threading
-    import time
-    from unittest.mock import Mock, MagicMock
-
-    audio_queue = queue.Queue()
-    stop_event = threading.Event()
-
-    # Always raise error to trigger retry
-    def mock_stream_url_error(url):
-        raise ValueError("Persistent error")
-
-    monkeypatch.setattr(audio_transcriber, "stream_url", mock_stream_url_error)
-
-    thread = threading.Thread(
-        target=audio_transcriber.stream_url_thread,
-        args=("fake://url", audio_queue),
-        kwargs={"stop_event": stop_event, "retry_sleep_duration": 0.01}
-    )
-    thread.start()
-
-    # Let it fail and start retry
-    time.sleep(0.05)
-    stop_event.set()
-    thread.join(timeout=2.0)
-
-    # Should have entered retry logic and stopped
-    assert not thread.is_alive()
-    # Should have error notice in queue
-    assert not audio_queue.empty()
+    # Callback should have been called
+    assert len(callback_results) == 1
+    assert callback_results[0] == test_segment
