@@ -266,3 +266,6 @@ if __name__ == '__main__':
         except LockError as e:
             print(str(e), file=sys.stderr)
             exit(1)
+    else:
+        print("only file action is supported", file=sys.stderr)
+        exit(1)
