@@ -7,7 +7,7 @@ import whisper_transcribe_py.audio_transcriber as audio_transcriber
 @pytest.fixture(autouse=True)
 def stub_whisper_cpp(monkeypatch):
     """Stub out whisper.cpp model loading."""
-    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_whisper_cpp", lambda self: None)
+    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_whisper_cpp", lambda _self: None)
 
 
 def test_transcriber_initialization():

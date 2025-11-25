@@ -137,7 +137,12 @@ class WhisperTranscriber:
             print_progress=False,
             print_timestamps=False,
             n_threads=self.n_threads,
-            single_segment=True
+            # Anti-looping settings
+            single_segment=False,  # Allow multiple segments (was True, causing loops)
+            #no_context=True,  # Don't use past transcription as prompt (prevents loops)
+            # Use beam search for better accuracy
+            params_sampling_strategy=1,  # 1 = BEAM_SEARCH
+            beam_search={"beam_size": 5, "patience": -1.0},
         )
 
         print("Whisper.cpp model loaded:", file=sys.stderr)
