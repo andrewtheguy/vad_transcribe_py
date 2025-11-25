@@ -22,7 +22,7 @@ from whisper_transcribe_py.audio_transcriber import (
     TranscriptionCallback,
 )
 from whisper_transcribe_py.vad_processor import SpeechDetector, get_window_size_samples
-from file_lock import acquire_lock, LockError
+from whisper_transcribe_py.file_lock import acquire_lock, LockError
 
 
 class JsonTranscriptWriter:

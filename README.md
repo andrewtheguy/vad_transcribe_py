@@ -126,9 +126,9 @@ whisper_transcribe_py/
   ├── __init__.py
   ├── audio_transcriber.py       # Core transcription logic
   ├── vad_processor.py           # Voice activity detection
+  ├── file_lock.py               # File locking for exclusive access
 
 main.py                          # CLI entry point
-file_lock.py                     # File locking for exclusive access
 pyproject.toml                   # Project configuration
 ```
 
