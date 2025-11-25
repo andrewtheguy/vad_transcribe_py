@@ -3,16 +3,6 @@
 import sys
 import types
 
-# only relevant for converting Chinese simplified/traditional, not needed for tests
-if "zhconv_rs" not in sys.modules:
-    zhconv_module = types.ModuleType("zhconv_rs")
-
-    def _identity(text: str, _locale: str) -> str:
-        return text
-
-    zhconv_module.zhconv = _identity  # type: ignore[attr-defined]
-    sys.modules["zhconv_rs"] = zhconv_module
-
 
 if "torch" not in sys.modules:
     torch_module = types.ModuleType("torch")

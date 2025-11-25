@@ -1,176 +1,43 @@
-import queue
 import numpy as np
 import pytest
 
 import whisper_transcribe_py.audio_transcriber as audio_transcriber
-from whisper_transcribe_py.vad_processor import AudioSegment
-
-
-class TrackingSpeechDetector:
-    """Mock SpeechDetector for testing."""
-
-    def __init__(self, sample_rate: int, min_speech_seconds: float = 3.0, max_speech_seconds: float = 60.0, on_segment_complete=None):
-        self.sample_rate = sample_rate
-        self.min_speech_seconds = min_speech_seconds
-        self.max_speech_seconds = max_speech_seconds
-        self.on_segment_complete = on_segment_complete
-        self.calls: list[tuple[float, float | None, int]] = []
-        self.pending_non_speech_duration = 0.0
-        self.is_in_speech = False
-        self._script: list[tuple[bool, bool] | tuple[bool, bool, bool]] = []
-        self._script_index = 0
-        self._accumulated_audio = []
-
-    def process_window(self, audio_window, timestamp, wall_clock_timestamp):
-        self.calls.append((timestamp, wall_clock_timestamp, len(audio_window)))
-        self._accumulated_audio.append(audio_window.copy())
-
-        if self._script_index < len(self._script):
-            script_entry = self._script[self._script_index]
-            has_speech = script_entry[0]
-            in_speech = script_entry[1]
-            trigger_complete = script_entry[2] if len(script_entry) > 2 else False
-
-            self._script_index += 1
-            self.is_in_speech = in_speech
-            if not has_speech and not in_speech:
-                self.pending_non_speech_duration = len(audio_window) / self.sample_rate
-            else:
-                self.pending_non_speech_duration = 0.0
-
-            # Trigger segment completion if requested
-            if trigger_complete and self.on_segment_complete:
-                combined_audio = np.concatenate(self._accumulated_audio)
-                segment = AudioSegment(
-                    start=timestamp,
-                    audio=combined_audio,
-                    wall_clock_start=None,
-                    duration_seconds=len(combined_audio) / self.sample_rate
-                )
-                self.on_segment_complete(segment)
-                self._accumulated_audio = []
-
-            return has_speech
-        return False
-
-    def flush(self):
-        pass
-
-    def consume_non_speech(self) -> float:
-        return 0.0
-
-    def reset(self) -> None:
-        """Reset the detector state."""
-        self._script_index = 0
-        self.is_in_speech = False
-        self.pending_non_speech_duration = 0.0
-        self._accumulated_audio = []
-
-    def set_script(self, script: list[tuple[bool, bool] | tuple[bool, bool, bool]]) -> None:
-        self._script = script
-        self._script_index = 0
 
 
 @pytest.fixture(autouse=True)
-def stub_dependencies(monkeypatch):
-    monkeypatch.setattr(audio_transcriber.AudioTranscriber, "_load_whisper_cpp", lambda self: None)
-    monkeypatch.setattr(audio_transcriber, "SpeechDetector", TrackingSpeechDetector)
+def stub_whisper_cpp(monkeypatch):
+    """Stub out whisper.cpp model loading."""
+    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_whisper_cpp", lambda self: None)
 
 
-@pytest.fixture
-def recorded_transcribe(monkeypatch):
-    recorded: list = []
-
-    def fake_transcribe(self):
-        while True:
-            item = self.transcribe_queue.get()
-            recorded.append(item)
-            if item is None:
-                break
-
-    monkeypatch.setattr(audio_transcriber.AudioTranscriber, "_transcribe", fake_transcribe)
-    return recorded
-
-
-@pytest.fixture
-def make_transcriber():
-    def _builder(*, audio_queue=None, **kwargs):
-        if audio_queue is None:
-            audio_queue = queue.Queue()
-        return audio_transcriber.AudioTranscriber(audio_queue, **kwargs)
-
-    return _builder
-
-
-def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_transcribe):
-    """Test that audio is fed to speech detector in correct window sizes."""
-    audio_queue = queue.Queue()
-    audio = np.zeros(1024, dtype=np.float32)
-    duration = len(audio) / audio_transcriber.TARGET_SAMPLE_RATE
-    segment = AudioSegment(start=5.0, audio=audio, duration_seconds=duration)
-    audio_queue.put(segment)
-    audio_queue.put(None)
-
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en")
-    transcriber._process_input_prerecorded(audio_transcriber.TARGET_SAMPLE_RATE)
-
-    calls = transcriber.speech_detector.calls
-    assert len(calls) == 2
-    first_ts, first_wall, first_len = calls[0]
-    second_ts, _, _ = calls[1]
-    assert first_ts == 5.0
-    assert first_wall is None  # File mode: no wall_clock_timestamp
-    assert first_len == 512
-
-
-def test_transcriber_initialization(make_transcriber):
+def test_transcriber_initialization():
     """Test that transcriber initializes with correct parameters."""
-    audio_queue = queue.Queue()
-    transcriber = make_transcriber(
-        audio_queue=audio_queue,
+    transcriber = audio_transcriber.WhisperTranscriber(
         language="en",
-        show_name="test",
         model="large-v3-turbo",
-        backend="whisper_cpp"
+        backend="whisper_cpp",
+        n_threads=4,
     )
 
     assert transcriber.language == "en"
-    assert transcriber.show_name == "test"
     assert transcriber.model == "large-v3-turbo"
     assert transcriber.backend == "whisper_cpp"
+    assert transcriber.n_threads == 4
 
 
-def test_transcriber_vad_min_max_speech(make_transcriber):
-    """Test that VAD min/max speech seconds are configured correctly."""
-    audio_queue = queue.Queue()
-    transcriber = make_transcriber(
-        audio_queue=audio_queue,
-        language="en",
-        vad_min_speech_seconds=2.0,
-        vad_max_speech_seconds=45.0
+def test_create_transcriber_factory():
+    """Test the factory function creates transcriber correctly."""
+    transcriber = audio_transcriber.create_transcriber(
+        language="zh",
+        model="large-v3",
+        backend="whisper_cpp",
+        n_threads=2,
     )
 
-    assert transcriber.speech_detector.min_speech_seconds == 2.0
-    assert transcriber.speech_detector.max_speech_seconds == 45.0
-
-
-def test_transform_segment_file_mode(make_transcriber):
-    """Test that segment transformation returns prerecorded mode format."""
-    audio_queue = queue.Queue()
-    transcriber = make_transcriber(audio_queue=audio_queue, language="en", show_name="test_show")
-
-    class MockSegment:
-        t0 = 100  # milliseconds
-        t1 = 200  # milliseconds
-        text = "hello world"
-
-    result = transcriber._transform_segment(MockSegment())
-
-    assert result.show_name == "test_show"
-    assert result.language == "en"
-    assert result.text == "hello world"
-    assert result.start == 0.1
-    assert result.end == 0.2
+    assert transcriber.language == "zh"
+    assert transcriber.model == "large-v3"
+    assert transcriber.backend == "whisper_cpp"
+    assert transcriber.n_threads == 2
 
 
 def test_pcm_conversion_functions():
@@ -191,30 +58,67 @@ def test_pcm_conversion_functions():
     assert len(float32_from_bytes) == len(int16_audio)
 
 
-def test_vad_segment_callback(make_transcriber):
-    """Test that VAD segment callback is called when segment completes."""
-    audio_queue = queue.Queue()
-    callback_results = []
+def test_get_window_size_samples():
+    """Test window size calculation."""
+    window_size = audio_transcriber.get_window_size_samples()
+    assert window_size == 512  # For 16kHz sample rate
 
-    def mock_callback(segment: AudioSegment):
-        callback_results.append(segment)
 
-    transcriber = make_transcriber(
-        audio_queue=audio_queue,
+def test_transcribed_segment_dataclass():
+    """Test TranscribedSegment dataclass."""
+    segment = audio_transcriber.TranscribedSegment(
+        text="Hello world",
+        start=1.5,
+        end=3.0,
+    )
+
+    assert segment.text == "Hello world"
+    assert segment.start == 1.5
+    assert segment.end == 3.0
+
+
+def test_process_text_chinese():
+    """Test that Chinese text is converted to Traditional Chinese."""
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="zh",
+        model="large-v3-turbo",
+        backend="whisper_cpp",
+    )
+
+    # zhconv converts simplified to traditional
+    result = transcriber._process_text("简体中文")
+    assert result == "簡體中文"
+
+
+def test_process_text_cantonese():
+    """Test that Cantonese text is converted to Traditional Chinese."""
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="yue",
+        model="large-v3-turbo",
+        backend="whisper_cpp",
+    )
+
+    result = transcriber._process_text("简体中文")
+    assert result == "簡體中文"
+
+
+def test_process_text_english():
+    """Test that English text is not modified."""
+    transcriber = audio_transcriber.WhisperTranscriber(
         language="en",
-        audio_segment_callback=mock_callback
+        model="large-v3-turbo",
+        backend="whisper_cpp",
     )
 
-    # Create a mock audio segment and call the VAD callback
-    test_audio = np.zeros(512, dtype=np.float32)
-    test_segment = AudioSegment(
-        start=0.0,
-        audio=test_audio,
-        duration_seconds=0.032
-    )
+    result = transcriber._process_text("Hello world")
+    assert result == "Hello world"
 
-    transcriber._handle_vad_segment(test_segment)
 
-    # Callback should have been called
-    assert len(callback_results) == 1
-    assert callback_results[0] == test_segment
+def test_unsupported_backend():
+    """Test that unsupported backend raises ValueError."""
+    with pytest.raises(ValueError, match="Unsupported backend"):
+        audio_transcriber.WhisperTranscriber(
+            language="en",
+            model="large-v3-turbo",
+            backend="unsupported_backend",
+        )

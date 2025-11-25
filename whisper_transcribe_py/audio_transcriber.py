@@ -1,18 +1,13 @@
-import logging
-import queue
 import subprocess
 import sys
-import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
-import scipy.signal
 
 from zhconv_rs import zhconv
-from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment
 
 TARGET_SAMPLE_RATE = 16000
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
@@ -82,59 +77,40 @@ def get_window_size_samples():
 @dataclass
 class TranscribedSegment:
     """Represents a transcribed audio segment."""
-    show_name: str
-    language: str
     text: str
     start: float
     end: float
 
 
-TranscriptionCallback = Callable[[list[TranscribedSegment]], None]
+def create_transcriber(
+    language: str,
+    model: str = "large-v3-turbo",
+    backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
+    n_threads: int = 1,
+) -> 'WhisperTranscriber':
+    """Factory function to create a WhisperTranscriber instance."""
+    return WhisperTranscriber(
+        language=language,
+        model=model,
+        backend=backend,
+        n_threads=n_threads,
+    )
 
 
-class AudioTranscriber:
-    """Transcribes audio from a queue using VAD and Whisper."""
+class WhisperTranscriber:
+    """Simple transcriber without VAD or queues."""
 
     def __init__(
-            self,
-            audio_input_queue: queue.Queue[AudioSegment],
-            language: str,
-            show_name="unknown",
-            model="large-v3-turbo",
-            audio_segment_callback: Optional[Callable[[AudioSegment], None]] = None,
-            transcription_callback: Optional[TranscriptionCallback] = None,
-            n_threads: int = 1,
-            stop_event: Optional[threading.Event] = None,
-            backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
-            vad_min_speech_seconds: Optional[float] = None,
-            vad_max_speech_seconds: Optional[float] = None,
+        self,
+        language: str,
+        model: str = "large-v3-turbo",
+        backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
+        n_threads: int = 1,
     ):
-        self.backend = backend
-        self.transcribe_queue = queue.Queue()
-        self.audio_input_queue = audio_input_queue
         self.language = language
-        self.audio_segment_callback = audio_segment_callback
-        self.transcription_callback = transcription_callback
-        self.ts_transcribe_start = None
-        self.show_name = show_name
         self.model = model
-        self.current_audio_offset = 0.0
+        self.backend = backend
         self.n_threads = n_threads
-        self.stop_event = stop_event
-
-        # VAD defaults
-        default_min_speech = 3.0
-        default_max_speech = 60.0
-
-        actual_max_speech = vad_max_speech_seconds if vad_max_speech_seconds is not None else default_max_speech
-
-        # Initialize speech detector with callback
-        self.speech_detector = SpeechDetector(
-            sample_rate=TARGET_SAMPLE_RATE,
-            min_speech_seconds=vad_min_speech_seconds if vad_min_speech_seconds is not None else default_min_speech,
-            max_speech_seconds=actual_max_speech,
-            on_segment_complete=self._handle_vad_segment,
-        )
 
         # Load backend-specific model
         if self.backend == 'whisper_cpp':
@@ -161,12 +137,12 @@ class AudioTranscriber:
             print_progress=False,
             print_timestamps=False,
             n_threads=self.n_threads,
-            single_segment=True  # for prerecorded mode
+            single_segment=True
         )
 
-        print("Whisper.cpp model loaded:")
-        print(self.whisper_cpp_model.get_params())
-        print(self.whisper_cpp_model.system_info())
+        print("Whisper.cpp model loaded:", file=sys.stderr)
+        print(self.whisper_cpp_model.get_params(), file=sys.stderr)
+        print(self.whisper_cpp_model.system_info(), file=sys.stderr)
 
     def _load_faster_whisper(self):
         """Load faster-whisper model."""
@@ -181,49 +157,38 @@ class AudioTranscriber:
 
         self.faster_whisper_model = WhisperModel(self.model)
 
-    def _transcribe(self):
-        """Transcription worker thread."""
-        while True:
-            queued_item = self.transcribe_queue.get(block=True)
-            if queued_item is None:
-                break
-            if isinstance(queued_item, AudioSegment):
-                audio = queued_item.audio
-                segment_offset = queued_item.start
-            else:
-                raise TypeError(
-                    f"Expected AudioSegment but got {type(queued_item).__name__}. "
-                    f"All audio items in transcribe_queue must be AudioSegment instances."
-                )
+    def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
+        """
+        Transcribe audio and return segments.
 
-            self.current_audio_offset = segment_offset
-            self.ts_transcribe_start = None
-            self._backend_transcribe(audio)
+        Args:
+            audio: Float32 numpy array normalized to [-1.0, 1.0]
+            start_offset: Start time offset for the audio segment
 
-    def _backend_transcribe(self, audio: npt.NDArray[np.float32]) -> list[TranscribedSegment]:
-        """Backend-specific transcription method."""
-        class SegmentWrapper:
-            def __init__(self, t0_ms: int, t1_ms: int, text: str):
-                self.t0 = t0_ms
-                self.t1 = t1_ms
-                self.text = text
-
-        raw_segments: list[SegmentWrapper] = []
+        Returns:
+            List of TranscribedSegment objects
+        """
+        results: list[TranscribedSegment] = []
 
         if self.backend == 'whisper_cpp':
             def print_segment(segment):
-                relative_start = self.current_audio_offset + segment.t0 / 1000
-                relative_end = self.current_audio_offset + segment.t1 / 1000
-                print("[%.2f -> %.2f] %s" % (relative_start, relative_end, segment.text))
+                start = start_offset + segment.t0 / 1000
+                end = start_offset + segment.t1 / 1000
+                print("[%.2f -> %.2f] %s" % (start, end, segment.text))
 
             whispercpp_results = self.whisper_cpp_model.transcribe(
                 audio, new_segment_callback=print_segment, language=self.language
             )
             for segment in whispercpp_results:
-                raw_segments.append(SegmentWrapper(segment.t0, segment.t1, segment.text))
+                text = self._process_text(segment.text)
+                results.append(TranscribedSegment(
+                    text=text,
+                    start=start_offset + segment.t0 / 1000,
+                    end=start_offset + segment.t1 / 1000,
+                ))
 
         elif self.backend == 'faster_whisper':
-            segments, info = self.faster_whisper_model.transcribe(
+            segments, _ = self.faster_whisper_model.transcribe(
                 audio,
                 beam_size=5,
                 language=self.language,
@@ -232,137 +197,20 @@ class AudioTranscriber:
             )
 
             for segment in segments:
-                relative_start = self.current_audio_offset + segment.start
-                relative_end = self.current_audio_offset + segment.end
-                print("[%.2f -> %.2f] %s" % (relative_start, relative_end, segment.text))
-                raw_segments.append(SegmentWrapper(
-                    int(segment.start * 1000),
-                    int(segment.end * 1000),
-                    segment.text
+                start = start_offset + segment.start
+                end = start_offset + segment.end
+                print("[%.2f -> %.2f] %s" % (start, end, segment.text))
+                text = self._process_text(segment.text)
+                results.append(TranscribedSegment(
+                    text=text,
+                    start=start,
+                    end=end,
                 ))
-        else:
-            raise ValueError(f"Unsupported backend: {self.backend}")
 
-        # Transform all raw segments to TranscribedSegment objects
-        transcribed_segments = [self._transform_segment(seg) for seg in raw_segments]
+        return results
 
-        # Call batch callback with all segments
-        if self.transcription_callback is not None and transcribed_segments:
-            self.transcription_callback(transcribed_segments)
-
-        return transcribed_segments
-
-    def _transform_segment(self, segment) -> TranscribedSegment:
-        """Transform a raw segment to TranscribedSegment object."""
-        start = self.current_audio_offset + segment.t0 / 1000
-        end = self.current_audio_offset + segment.t1 / 1000
-
-        text_for_storage = zhconv(segment.text, DEFAULT_CHINESE_LOCALE) if self.language in ['yue', 'zh'] else segment.text
-
-        return TranscribedSegment(
-            show_name=self.show_name,
-            language=self.language,
-            text=text_for_storage,
-            start=start,
-            end=end,
-        )
-
-    def _handle_vad_segment(self, segment: AudioSegment) -> None:
-        """Callback from SpeechDetector when speech segment completes."""
-        if self.audio_segment_callback is not None:
-            self.audio_segment_callback(segment)
-
-        # Queue the segment for transcription
-        self.transcribe_queue.put(segment)
-
-    def _process_input_prerecorded(self, input_sample_rate: int) -> None:
-        """
-        Process audio input in file/prerecorded mode.
-
-        Simple flow: VAD speech detection → transcribe → output to JSON
-        """
-        window_size_samples = get_window_size_samples()
-        window_seconds = window_size_samples / TARGET_SAMPLE_RATE
-
-        transcribing_thread = threading.Thread(target=self._transcribe)
-        transcribing_thread.start()
-
-        ts = None  # Relative timestamp only
-        buffer = []
-        stop_requested = False
-
-        while True:
-            if self.stop_event is not None and self.stop_event.is_set():
-                stop_requested = True
-                break
-            segment = self.audio_input_queue.get()  # blocking
-            if segment is None:
-                print(f"end of audio, ts={ts}", file=sys.stderr)
-                break
-
-            # Initialize timestamp from first segment
-            if ts is None:
-                ts = segment.start
-            elif len(buffer) == 0:
-                logging.debug(f"queue is empty, reset ts {ts}, to new_ts {segment.start}")
-                ts = segment.start
-
-            # Resample if needed
-            if input_sample_rate != TARGET_SAMPLE_RATE:
-                data_q = scipy.signal.resample(
-                    segment.audio,
-                    int(len(segment.audio) * TARGET_SAMPLE_RATE / input_sample_rate)
-                )
-            else:
-                data_q = segment.audio
-            buffer.extend(data_q)
-
-            # Process windows through VAD
-            while len(buffer) >= window_size_samples:
-                arr = buffer[:window_size_samples]
-                buffer = buffer[window_size_samples:]
-                data_slice = np.asarray(arr)
-
-                # Process window through speech detector (no wall_clock_timestamp for prerecorded mode)
-                has_speech = self.speech_detector.process_window(data_slice, ts, wall_clock_timestamp=None)
-
-                # Advance timestamp
-                if ts is not None:
-                    ts += window_seconds
-
-        print("finished processing audio", ts, file=sys.stderr)
-
-        # Flush any incomplete speech segment
-        if not stop_requested:
-            self.speech_detector.flush()
-
-        if stop_requested:
-            # Drop any queued-but-unprocessed transcribe work so shutdown is fast
-            while True:
-                try:
-                    item = self.transcribe_queue.get_nowait()
-                    if item is None:
-                        continue
-                except queue.Empty:
-                    break
-
-        self.transcribe_queue.put(None)
-        transcribing_thread.join()
-
-    def transcribe_audio_segment(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> None:
-        """
-        Transcribe an already-isolated float32 audio buffer directly without running VAD.
-
-        Intended for pre-segmented audio (e.g., database rows).
-
-        Args:
-            audio: Float32 numpy array normalized to [-1.0, 1.0]
-            start_offset: Relative start timestamp used for callbacks
-        """
-        if audio is None or len(audio) == 0:
-            return
-
-        # Reset timestamps for direct transcription path
-        self.current_audio_offset = start_offset
-        self.ts_transcribe_start = None
-        self._backend_transcribe(audio)
+    def _process_text(self, text: str) -> str:
+        """Process text for storage (e.g., convert Chinese variants)."""
+        if self.language in ['yue', 'zh']:
+            return zhconv(text, DEFAULT_CHINESE_LOCALE)
+        return text
