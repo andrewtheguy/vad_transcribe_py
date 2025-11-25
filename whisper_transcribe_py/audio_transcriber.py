@@ -85,10 +85,8 @@ class TranscribedSegment:
     show_name: str
     language: str
     text: str
-    relative_start: float
-    relative_end: float
-    start_timestamp: Optional[object]  # datetime object, but Optional for file mode
-    end_timestamp: Optional[object]
+    start: float
+    end: float
 
 
 TranscriptionCallback = Callable[[list[TranscribedSegment]], None]
@@ -256,20 +254,17 @@ class AudioTranscriber:
 
     def _transform_segment(self, segment) -> TranscribedSegment:
         """Transform a raw segment to TranscribedSegment object."""
-        relative_start = self.current_audio_offset + segment.t0 / 1000
-        relative_end = self.current_audio_offset + segment.t1 / 1000
+        start = self.current_audio_offset + segment.t0 / 1000
+        end = self.current_audio_offset + segment.t1 / 1000
 
         text_for_storage = zhconv(segment.text, DEFAULT_CHINESE_LOCALE) if self.language in ['yue', 'zh'] else segment.text
 
-        # File mode: only relative timestamps, no wall_clock
         return TranscribedSegment(
             show_name=self.show_name,
             language=self.language,
             text=text_for_storage,
-            relative_start=relative_start,
-            relative_end=relative_end,
-            start_timestamp=None,
-            end_timestamp=None,
+            start=start,
+            end=end,
         )
 
     def _handle_vad_segment(self, segment: AudioSegment) -> None:

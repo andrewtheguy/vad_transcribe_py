@@ -21,29 +21,23 @@ class AudioSegment:
     """Audio segment with timing information.
 
     Args:
-        start: Relative timestamp in seconds from stream/file beginning
+        start: Start timestamp in seconds from file beginning
         audio: Audio samples as float32 array
         duration_seconds: Optional duration in seconds
-        wall_clock_start: Optional real wall clock timestamp - Unix timestamp for when this segment starts.
-                         Required for livestream mode, None for file mode.
     """
     def __init__(
         self,
         start: float,
         audio: npt.NDArray[np.float32],
-        wall_clock_start: Optional[float] = None,
         duration_seconds: Optional[float] = None,
     ):
         self.start = start
         self.audio = audio
         self.duration_seconds = duration_seconds
-        self.wall_clock_start = wall_clock_start
 
     def __repr__(self):
-        wall_clock_str = f"wall_clock_start={self.wall_clock_start}" if self.wall_clock_start is not None else "file_mode"
         return (
-            f"AudioSegment(start={self.start}, duration={self.duration_seconds}, "
-            f"{wall_clock_str})"
+            f"AudioSegment(start={self.start}, duration={self.duration_seconds})"
         )
 
 
@@ -104,7 +98,6 @@ class SpeechDetector:
         self._prev_has_speech = False
         self._speech_section: list = []
         self._has_speech_begin_timestamp: Optional[float] = None
-        self._has_speech_begin_wall_clock: Optional[float] = None
         self._look_back_buffer: Deque[npt.NDArray[np.float32]] = deque()
         self._look_back_buffer_duration = 0.0
         self._pending_non_speech_seconds = 0.0
@@ -127,8 +120,8 @@ class SpeechDetector:
 
         Args:
             audio_window: Audio samples (must be window_size_samples length)
-            timestamp: Relative timestamp for this window
-            wall_clock_timestamp: Optional wall clock timestamp
+            timestamp: Timestamp in seconds from file beginning
+            wall_clock_timestamp: Unused (kept for compatibility)
 
         Returns:
             True if speech detected in this window
@@ -147,7 +140,7 @@ class SpeechDetector:
         if not self._prev_has_speech:
             if has_speech:
                 # Transition: No Speech → Speech Starting
-                self._handle_speech_start(audio_window, timestamp, wall_clock_timestamp)
+                self._handle_speech_start(audio_window, timestamp)
             else:
                 # Still no speech
                 self._handle_non_speech(audio_window)
@@ -194,11 +187,9 @@ class SpeechDetector:
         self,
         audio_window: npt.NDArray[np.float32],
         timestamp: float,
-        wall_clock_timestamp: Optional[float],
     ) -> None:
         """Handle transition from no speech to speech."""
         self._has_speech_begin_timestamp = timestamp
-        self._has_speech_begin_wall_clock = wall_clock_timestamp
 
         # Add look-back buffer if available
         prepended_duration = 0.0
@@ -215,8 +206,6 @@ class SpeechDetector:
             self._has_speech_begin_timestamp = max(
                 0.0, self._has_speech_begin_timestamp - prepended_duration
             )
-            if self._has_speech_begin_wall_clock is not None:
-                self._has_speech_begin_wall_clock -= prepended_duration
 
         # Add current window
         self._speech_section.extend(audio_window)
@@ -255,7 +244,6 @@ class SpeechDetector:
 
         # Reset state (note: _emit_segment() clears _speech_section)
         self._has_speech_begin_timestamp = None
-        self._has_speech_begin_wall_clock = None
         self._look_back_buffer.clear()
         self._look_back_buffer_duration = 0.0
 
@@ -268,11 +256,9 @@ class SpeechDetector:
         start_ts = self._has_speech_begin_timestamp if self._has_speech_begin_timestamp is not None else 0.0
         duration_seconds = len(audio_array) / self.sample_rate
 
-        # wall_clock_start is optional - None for file mode, timestamp for livestream mode
         segment = AudioSegment(
             audio=audio_array,
             start=start_ts,
-            wall_clock_start=self._has_speech_begin_wall_clock,
             duration_seconds=duration_seconds,
         )
 
@@ -295,7 +281,6 @@ class SpeechDetector:
             self._emit_segment()
             # Note: _emit_segment() clears _speech_section
             self._has_speech_begin_timestamp = None
-            self._has_speech_begin_wall_clock = None
             self._look_back_buffer.clear()
             self._look_back_buffer_duration = 0.0
 
@@ -304,7 +289,6 @@ class SpeechDetector:
         self._prev_has_speech = False
         self._speech_section = []
         self._has_speech_begin_timestamp = None
-        self._has_speech_begin_wall_clock = None
         self._look_back_buffer.clear()
         self._look_back_buffer_duration = 0.0
         self._pending_non_speech_seconds = 0.0

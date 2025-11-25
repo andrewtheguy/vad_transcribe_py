@@ -48,12 +48,11 @@ class TestAudioSegment:
     def test_creation_basic(self):
         """Test basic AudioSegment creation."""
         audio = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-        segment = AudioSegment(start=1.0, audio=audio, wall_clock_start=1000.0)
+        segment = AudioSegment(start=1.0, audio=audio)
 
         assert segment.start == 1.0
         assert np.array_equal(segment.audio, audio)
         assert segment.duration_seconds is None
-        assert segment.wall_clock_start == 1000.0
 
     def test_creation_with_all_fields(self):
         """Test AudioSegment creation with all fields."""
@@ -62,18 +61,16 @@ class TestAudioSegment:
             start=2.5,
             audio=audio,
             duration_seconds=3.0,
-            wall_clock_start=1234567890.0,
         )
 
         assert segment.start == 2.5
         assert np.array_equal(segment.audio, audio)
         assert segment.duration_seconds == 3.0
-        assert segment.wall_clock_start == 1234567890.0
 
     def test_repr(self):
         """Test AudioSegment string representation."""
         audio = np.array([0.1, 0.2], dtype=np.float32)
-        segment = AudioSegment(start=1.0, audio=audio, wall_clock_start=2000.0, duration_seconds=0.5)
+        segment = AudioSegment(start=1.0, audio=audio, duration_seconds=0.5)
 
         repr_str = repr(segment)
         assert "AudioSegment" in repr_str
@@ -174,7 +171,6 @@ class TestSpeechDetector:
         assert detector._prev_has_speech is False
         assert len(detector._speech_section) == 0
         assert detector._has_speech_begin_timestamp is None
-        assert detector._has_speech_begin_wall_clock is None
         assert len(detector._look_back_buffer) == 0
 
     def test_flush_with_no_speech(self, detector, mock_segment_callback):
@@ -235,14 +231,13 @@ class TestSpeechDetector:
         assert detector.look_back_seconds == 0.5
         assert detector._window_size_samples == 256  # 8kHz uses 256 samples
 
-    def test_wall_clock_timestamp_propagation(self, mock_segment_callback):
-        """Test that wall clock timestamps are properly propagated."""
+    def test_wall_clock_timestamp_not_used(self, mock_segment_callback):
+        """Test that wall_clock_timestamp parameter is ignored in file mode."""
         detector = SpeechDetector(on_segment_complete=mock_segment_callback)
 
-        # We need to simulate a full speech segment to test this
-        # This would require mocking the VAD model, which is complex
-        # For now, we test that the mechanism exists
-        assert detector._has_speech_begin_wall_clock is None
+        # In file mode, wall_clock timestamps are not used
+        # They are ignored even if passed to process_window
+        assert detector.is_in_speech is False
 
     def test_segment_callback_invocation(self, mock_segment_callback):
         """Test that callback is invoked when provided."""
@@ -251,13 +246,11 @@ class TestSpeechDetector:
         # Manually trigger segment emission to test callback
         detector._speech_section = [0.1] * 16000  # 1 second
         detector._has_speech_begin_timestamp = 1.0
-        detector._has_speech_begin_wall_clock = 123456789.0
         detector._emit_segment()
 
         assert len(mock_segment_callback.segments) == 1
         segment = mock_segment_callback.segments[0]
         assert segment.start == 1.0
-        assert segment.wall_clock_start == 123456789.0
         assert segment.duration_seconds == 1.0
         assert len(segment.audio) == 16000
 
@@ -654,8 +647,8 @@ class TestLookBackBuffer:
             speech_window,
         )
 
-    def test_look_back_adjusts_start_and_wall_clock(self):
-        """Look-back duration should shift both relative and wall clock timestamps."""
+    def test_look_back_adjusts_start_timestamp(self):
+        """Look-back duration should shift the segment start timestamp."""
         segments = []
         window_seconds = get_window_size_samples(16000) / 16000
         look_back_seconds = window_seconds * 2
@@ -669,28 +662,27 @@ class TestLookBackBuffer:
 
         non_speech = make_non_speech_window(level=0.1)
         speech = np.ones(512, dtype=np.float32) * 0.9
-        base_wall_clock = 1234.5
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             ts = 0.0
             mock_vad.return_value = False
-            detector.process_window(non_speech, ts, base_wall_clock + ts)
+            detector.process_window(non_speech, ts, None)
             ts += window_seconds
-            detector.process_window(non_speech, ts, base_wall_clock + ts)
+            detector.process_window(non_speech, ts, None)
 
             mock_vad.return_value = True
             ts += window_seconds
-            detector.process_window(speech, ts, base_wall_clock + ts)
+            detector.process_window(speech, ts, None)
             ts += window_seconds
-            detector.process_window(speech, ts, base_wall_clock + ts)
+            detector.process_window(speech, ts, None)
 
             mock_vad.return_value = False
             ts += window_seconds
-            detector.process_window(non_speech, ts, base_wall_clock + ts)
+            detector.process_window(non_speech, ts, None)
 
         assert len(segments) == 1
-        assert segments[0].start == pytest.approx(0.0, abs=1e-6)
-        assert segments[0].wall_clock_start == pytest.approx(base_wall_clock, abs=1e-6)
+        # With look-back, segment should start before the actual speech timestamp
+        assert segments[0].start == pytest.approx(0.0, abs=1e-6)  # Pulled back by look-back buffer
 
 
 class TestFinalWindowInclusion:
@@ -798,8 +790,8 @@ class TestMultiSegmentScenarios:
             assert segments[0].start == 0.0  # Includes 1 look-back window
             assert segments[1].start == 0.128  # Includes 2 look-back windows
 
-    def test_wall_clock_timestamps_propagated(self):
-        """Test that wall clock timestamps are correctly propagated to segments."""
+    def test_file_mode_no_wall_clock(self):
+        """Test that wall clock timestamps are not used in file mode."""
         segments = []
         detector = SpeechDetector(
             sample_rate=16000,
@@ -810,19 +802,18 @@ class TestMultiSegmentScenarios:
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             window = make_non_speech_window()
-            base_wall_clock = 1234567890.0
 
             # Speech starts and continues to meet min duration
             mock_vad.return_value = True
-            detector.process_window(window, 0.0, base_wall_clock)
-            detector.process_window(window, 0.032, base_wall_clock + 0.032)
+            detector.process_window(window, 0.0, None)
+            detector.process_window(window, 0.032, None)
 
             # Speech ends
             mock_vad.return_value = False
-            detector.process_window(window, 0.064, base_wall_clock + 0.064)
+            detector.process_window(window, 0.064, None)
 
             assert len(segments) == 1
-            assert segments[0].wall_clock_start == base_wall_clock
+            assert segments[0].start == 0.0
 
 
 class TestEdgeCasesAndBoundaries:

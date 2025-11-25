@@ -36,8 +36,8 @@ class JsonTranscriptWriter:
         """Add transcribed segments to the output."""
         for segment in segments:
             self.segments.append({
-                "start": segment.relative_start,
-                "end": segment.relative_end,
+                "start": segment.start,
+                "end": segment.end,
                 "text": segment.text,
             })
 
@@ -240,11 +240,9 @@ if __name__ == '__main__':
                             chunks_read += 1
                             total_bytes += len(chunk)
                             audio = pcm_s16le_to_float32(chunk)
-                            # File mode: no wall_clock_start, only relative timestamps
                             audio_input_queue.put(AudioSegment(
                                 audio=audio,
-                                start=ts,
-                                wall_clock_start=None
+                                start=ts
                             ))
                             ts += len(audio) / TARGET_SAMPLE_RATE
                             if chunks_read % 1000 == 0:

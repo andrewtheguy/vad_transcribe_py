@@ -107,7 +107,7 @@ def test_process_input_feeds_speech_detector_windows(make_transcriber, recorded_
     audio_queue = queue.Queue()
     audio = np.zeros(1024, dtype=np.float32)
     duration = len(audio) / audio_transcriber.TARGET_SAMPLE_RATE
-    segment = AudioSegment(start=5.0, audio=audio, wall_clock_start=None, duration_seconds=duration)
+    segment = AudioSegment(start=5.0, audio=audio, duration_seconds=duration)
     audio_queue.put(segment)
     audio_queue.put(None)
 
@@ -169,10 +169,8 @@ def test_transform_segment_file_mode(make_transcriber):
     assert result.show_name == "test_show"
     assert result.language == "en"
     assert result.text == "hello world"
-    assert result.relative_start == 0.1
-    assert result.relative_end == 0.2
-    assert result.start_timestamp is None  # File mode: no timestamps
-    assert result.end_timestamp is None
+    assert result.start == 0.1
+    assert result.end == 0.2
 
 
 def test_pcm_conversion_functions():
@@ -212,7 +210,6 @@ def test_vad_segment_callback(make_transcriber):
     test_segment = AudioSegment(
         start=0.0,
         audio=test_audio,
-        wall_clock_start=None,
         duration_seconds=0.032
     )
 
