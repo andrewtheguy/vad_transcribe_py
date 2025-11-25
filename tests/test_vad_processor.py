@@ -364,6 +364,7 @@ class TestMinDurationEnforcement:
             sample_rate=16000,
             min_speech_seconds=0.1,  # 0.1s = ~3 windows
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -410,6 +411,7 @@ class TestMinDurationEnforcement:
             sample_rate=16000,
             min_speech_seconds=0.064,  # Exactly 2 windows
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -499,6 +501,7 @@ class TestLookBackBuffer:
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -540,6 +543,7 @@ class TestLookBackBuffer:
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -656,6 +660,7 @@ class TestLookBackBuffer:
             sample_rate=16000,
             min_speech_seconds=window_seconds * 0.5,
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             look_back_seconds=look_back_seconds,
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -695,6 +700,7 @@ class TestFinalWindowInclusion:
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -752,6 +758,7 @@ class TestMultiSegmentScenarios:
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -797,6 +804,7 @@ class TestMultiSegmentScenarios:
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -873,6 +881,7 @@ class TestEdgeCasesAndBoundaries:
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=10.0,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -1168,6 +1177,7 @@ class TestMixedBoundarySegments:
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
             max_speech_seconds=window_seconds * 3,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -1223,6 +1233,7 @@ class TestMixedBoundarySegments:
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
             max_speech_seconds=window_seconds * 3,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 

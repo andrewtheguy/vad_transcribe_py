@@ -62,6 +62,7 @@ class SpeechDetector:
         min_speech_seconds: Minimum valid speech duration (default: 3.0s)
         max_speech_seconds: Maximum segment duration before split (default: 60.0s)
         speech_threshold: Probability threshold for speech detection (default: 0.5)
+        min_silence_duration_ms: Minimum silence duration to end speech segment (default: 2000)
         on_segment_complete: Callback when speech segment completes
     """
 
@@ -71,6 +72,7 @@ class SpeechDetector:
         min_speech_seconds: float = 3.0,
         max_speech_seconds: float = 60.0,
         speech_threshold: float = 0.5,
+        min_silence_duration_ms: int = 2000,
         look_back_seconds: Optional[float] = None,
         on_segment_complete: Optional[Callable[[AudioSegment], None]] = None,
     ):
@@ -82,6 +84,7 @@ class SpeechDetector:
             min_speech_seconds: Minimum duration to consider as valid speech
             max_speech_seconds: Maximum duration before forcing segment split
             speech_threshold: Probability threshold for speech detection
+            min_silence_duration_ms: Minimum silence duration to end speech segment (default: 2000ms)
             look_back_seconds: Amount of non-speech audio to prepend when speech starts
             on_segment_complete: Callback invoked when speech segment completes
         """
@@ -89,6 +92,7 @@ class SpeechDetector:
         self.min_speech_seconds = min_speech_seconds
         self.max_speech_seconds = max_speech_seconds
         self.speech_threshold = speech_threshold
+        self.min_silence_duration_ms = min_silence_duration_ms
         self.on_segment_complete = on_segment_complete
 
         # Load Silero VAD model
@@ -101,6 +105,8 @@ class SpeechDetector:
         self._look_back_buffer: Deque[npt.NDArray[np.float32]] = deque()
         self._look_back_buffer_duration = 0.0
         self._pending_non_speech_seconds = 0.0
+        self._silence_buffer: list = []  # Buffer for silence windows during speech
+        self._accumulated_silence_ms = 0.0  # Track accumulated silence duration
 
         # Window configuration
         self._window_size_samples = get_window_size_samples(self.sample_rate)
@@ -149,16 +155,26 @@ class SpeechDetector:
             if seconds > self.max_speech_seconds:
                 # Force end of speech if exceeds max duration
                 has_speech = False
+                self._accumulated_silence_ms = self.min_silence_duration_ms  # Force immediate end
             elif seconds < self.min_speech_seconds and not has_speech:
                 # Force continuation if below min duration
                 has_speech = True
 
             if has_speech:
-                # Speech continues
+                # Speech continues - flush any buffered silence back into speech
+                self._flush_silence_buffer()
                 self._handle_speech_continue(audio_window)
             else:
-                # Transition: Speech → No Speech
-                self._handle_speech_end(audio_window)
+                # Accumulate silence
+                self._silence_buffer.extend(audio_window)
+                self._accumulated_silence_ms += self._window_seconds * 1000
+
+                if self._accumulated_silence_ms >= self.min_silence_duration_ms:
+                    # Enough silence accumulated, end speech segment
+                    self._handle_speech_end()
+                else:
+                    # Not enough silence yet, keep in speech state
+                    has_speech = True
 
         self._prev_has_speech = has_speech
         return has_speech
@@ -234,10 +250,19 @@ class SpeechDetector:
         """Handle continued speech."""
         self._speech_section.extend(audio_window)
 
-    def _handle_speech_end(self, audio_window: npt.NDArray[np.float32]) -> None:
+    def _flush_silence_buffer(self) -> None:
+        """Flush buffered silence back into speech section."""
+        if self._silence_buffer:
+            self._speech_section.extend(self._silence_buffer)
+            self._silence_buffer = []
+        self._accumulated_silence_ms = 0.0
+
+    def _handle_speech_end(self) -> None:
         """Handle transition from speech to no speech."""
-        # Add final window to segment
-        self._speech_section.extend(audio_window)
+        # Add buffered silence to segment
+        self._speech_section.extend(self._silence_buffer)
+        self._silence_buffer = []
+        self._accumulated_silence_ms = 0.0
 
         # Create and emit segment
         self._emit_segment()
@@ -277,6 +302,12 @@ class SpeechDetector:
         Force completion of any in-progress speech segment.
         Call at end of stream.
         """
+        # Include any buffered silence in the final segment
+        if self._silence_buffer:
+            self._speech_section.extend(self._silence_buffer)
+            self._silence_buffer = []
+            self._accumulated_silence_ms = 0.0
+
         if len(self._speech_section) > 0:
             self._emit_segment()
             # Note: _emit_segment() clears _speech_section
@@ -292,6 +323,8 @@ class SpeechDetector:
         self._look_back_buffer.clear()
         self._look_back_buffer_duration = 0.0
         self._pending_non_speech_seconds = 0.0
+        self._silence_buffer = []
+        self._accumulated_silence_ms = 0.0
         self.vad_model.reset_states()
 
     @property
