@@ -109,15 +109,21 @@ uv run whisper-transcribe-py transcribe --file audio.wav --backend faster_whispe
 uv run whisper-transcribe-py transcribe --file audio.wav --model large-v3 --n-threads 4
 ```
 
+**Transcribe from URL (must have fixed duration, not live):**
+```bash
+uv run whisper-transcribe-py transcribe --url https://example.com/audio.mp3 --output transcript.jsonl
+```
+
 ## Command-Line Options
 
 ### Transcribe Command
 
 ```bash
-whisper-transcribe-py transcribe --file PATH [OPTIONS]
+whisper-transcribe-py transcribe (--file PATH | --url URL) [OPTIONS]
 ```
 
-- `--file PATH`: Path to audio file (required)
+- `--file PATH`: Path to audio file (mutually exclusive with --url)
+- `--url URL`: URL to audio file (mutually exclusive with --file). Live streams not supported.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--lang LANG`: Language code for transcription (default: `en`)
 - `--model MODEL`: Whisper model to use (default: `large-v3-turbo`)
@@ -128,10 +134,11 @@ whisper-transcribe-py transcribe --file PATH [OPTIONS]
 ### Split Command
 
 ```bash
-whisper-transcribe-py split --file PATH
+whisper-transcribe-py split (--file PATH | --url URL)
 ```
 
-- `--file PATH`: Path to audio file (required)
+- `--file PATH`: Path to audio file (mutually exclusive with --url)
+- `--url URL`: URL to audio file (mutually exclusive with --file). Live streams not supported.
 - Output directory: `tmp/(filename without extension)/`
 
 ## Output Format
@@ -210,11 +217,11 @@ pyproject.toml                  # Project configuration
 ## Known Limitations
 
 - File-based transcription only (no real-time/live transcription)
+- Live streams not supported (URLs must have fixed duration)
 - `--no-vad` mode limited to 2 hours to prevent memory issues
 - VAD mode has a 1-hour hard cap per speech segment (aborts if exceeded, indicating a VAD bug)
-- No database persistence (outputs to JSON files or WAV segments)
+- No database persistence (outputs to JSONL files or Opus segments)
 - No web interface
-- Requires local audio files (no URL streaming)
 
 ## License
 

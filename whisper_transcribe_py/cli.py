@@ -25,16 +25,52 @@ from whisper_transcribe_py.file_lock import acquire_lock, LockError
 MAX_NO_VAD_DURATION_SECONDS = 2 * 60 * 60
 
 
-def get_audio_duration(audio_file: str) -> float:
-    """Get audio duration in seconds using ffprobe."""
+def is_url(path: str) -> bool:
+    """Check if the path is a URL."""
+    return path.startswith(('http://', 'https://', 'rtmp://', 'rtsp://'))
+
+
+def get_audio_duration(audio_source: str) -> float | None:
+    """
+    Get audio duration in seconds using ffprobe.
+
+    Returns None if duration cannot be determined (e.g., live stream).
+    """
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", audio_file],
+         "-of", "default=noprint_wrappers=1:nokey=1", audio_source],
         capture_output=True, text=True
     )
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {result.stderr}")
-    return float(result.stdout.strip())
+
+    duration_str = result.stdout.strip()
+    if not duration_str or duration_str == "N/A":
+        return None
+    return float(duration_str)
+
+
+def validate_audio_source(audio_source: str) -> float:
+    """
+    Validate audio source (file or URL) and return duration.
+
+    Raises:
+        ValueError: If source is invalid or is a live stream
+    """
+    if not is_url(audio_source) and not os.path.exists(audio_source):
+        raise ValueError(f"File does not exist: {audio_source}")
+
+    print(f"Checking audio source: {audio_source}", file=sys.stderr)
+    duration = get_audio_duration(audio_source)
+
+    if duration is None:
+        raise ValueError(
+            "Cannot determine audio duration. Live streams are not supported. "
+            "Please provide a file or URL with fixed duration."
+        )
+
+    print(f"Audio duration: {duration:.2f}s", file=sys.stderr)
+    return duration
 
 
 def save_audio_segment_opus(segment: AudioSegment, output_dir: str, index: int) -> str:
@@ -157,17 +193,19 @@ def stream_transcribe_with_vad(
 
 
 def stream_transcribe_no_vad(
-    audio_file: str,
+    audio_source: str,
     transcriber: WhisperTranscriber,
     output_file,
+    duration: float,
 ) -> int:
     """
     Stream audio directly to transcriber without VAD.
 
     Args:
-        audio_file: Path to audio file
+        audio_source: Path to audio file or URL
         transcriber: Pre-loaded WhisperTranscriber instance
         output_file: File object to write JSONL output
+        duration: Pre-validated audio duration in seconds
 
     Returns:
         Number of segments transcribed
@@ -175,8 +213,7 @@ def stream_transcribe_no_vad(
     Raises:
         ValueError: If audio duration exceeds 2-hour limit
     """
-    # Check duration limit first
-    duration = get_audio_duration(audio_file)
+    # Check duration limit
     if duration > MAX_NO_VAD_DURATION_SECONDS:
         raise ValueError(
             f"Audio duration {duration/3600:.1f}h exceeds 2-hour limit for --no-vad mode. "
@@ -189,7 +226,7 @@ def stream_transcribe_no_vad(
     audio_chunks: list[float] = []
     chunks_read = 0
 
-    with ffmpeg_get_16bit_pcm(audio_file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+    with ffmpeg_get_16bit_pcm(audio_source, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
         while True:
             chunk = stdout.read(4096)
             if not chunk:
@@ -277,8 +314,10 @@ def main():
     subparsers = parser.add_subparsers(dest='action', required=True, help='Action to perform')
 
     # TRANSCRIBE subcommand
-    parser_transcribe = subparsers.add_parser('transcribe', help='Transcribe audio from a file')
-    parser_transcribe.add_argument('--file', type=str, required=True, help='Path to audio file')
+    parser_transcribe = subparsers.add_parser('transcribe', help='Transcribe audio from a file or URL')
+    transcribe_input = parser_transcribe.add_mutually_exclusive_group(required=True)
+    transcribe_input.add_argument('--file', type=str, help='Path to audio file')
+    transcribe_input.add_argument('--url', type=str, help='URL to audio (live streams not supported)')
     parser_transcribe.add_argument('--output', type=str, default=None,
                                    help='Output path for JSONL transcript (default: stdout)')
     parser_transcribe.add_argument('--lang', type=str, default='en',
@@ -294,17 +333,20 @@ def main():
                                         'Use --no-vad to transcribe without VAD (max 2 hours)')
 
     # SPLIT subcommand
-    parser_split = subparsers.add_parser('split', help='Split audio file by VAD into Opus segments')
-    parser_split.add_argument('--file', type=str, required=True, help='Path to audio file')
+    parser_split = subparsers.add_parser('split', help='Split audio by VAD into Opus segments')
+    split_input = parser_split.add_mutually_exclusive_group(required=True)
+    split_input.add_argument('--file', type=str, help='Path to audio file')
+    split_input.add_argument('--url', type=str, help='URL to audio (live streams not supported)')
 
     args = parser.parse_args()
 
-    # Validate file exists
-    if not os.path.exists(args.file):
-        print(f"File {args.file} does not exist", file=sys.stderr)
-        sys.exit(1)
+    # Determine audio source (file or URL)
+    audio_source = args.file if args.file else args.url
 
     try:
+        # Validate audio source and get duration
+        duration = validate_audio_source(audio_source)
+
         with acquire_lock(args.action):
             if args.action == 'transcribe':
                 # Load transcriber once
@@ -325,9 +367,9 @@ def main():
                 try:
                     # Transcribe with or without VAD, streaming JSONL output
                     if args.vad:
-                        segment_count = stream_transcribe_with_vad(args.file, transcriber, output_file)
+                        segment_count = stream_transcribe_with_vad(audio_source, transcriber, output_file)
                     else:
-                        segment_count = stream_transcribe_no_vad(args.file, transcriber, output_file)
+                        segment_count = stream_transcribe_no_vad(audio_source, transcriber, output_file, duration)
 
                     if args.output:
                         print(f"Transcript written to {args.output} ({segment_count} segments)", file=sys.stderr)
@@ -336,15 +378,15 @@ def main():
                         output_file.close()
 
             elif args.action == 'split':
-                segment_count = split_by_vad(args.file)
-                base_name = os.path.splitext(os.path.basename(args.file))[0]
+                segment_count = split_by_vad(audio_source)
+                base_name = os.path.splitext(os.path.basename(audio_source))[0]
                 output_dir = os.path.join("tmp", base_name)
                 print(f"Saved {segment_count} segments to {output_dir}", file=sys.stderr)
 
     except LockError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
