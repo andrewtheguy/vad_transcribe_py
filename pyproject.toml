@@ -15,6 +15,9 @@ dependencies = [
     "zhconv-rs>=0.3.2.post2,<0.4",
 ]
 
+[project.scripts]
+whisper-transcribe-py = "whisper_transcribe_py.cli:main"
+
 [project.optional-dependencies]
 transcribe = [
     "pywhispercpp",

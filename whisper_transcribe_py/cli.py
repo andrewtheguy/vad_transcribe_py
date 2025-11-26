@@ -184,7 +184,8 @@ def write_json_output(results: list[TranscribedSegment], output_path: str):
         json.dump({"segments": segments_data}, f, ensure_ascii=False, indent=2)
 
 
-if __name__ == '__main__':
+def main():
+    """Main entry point for the CLI."""
     load_dotenv()
     parser = argparse.ArgumentParser(
         description='Whisper file transcription tool'
@@ -212,17 +213,17 @@ if __name__ == '__main__':
         # Validate file exists
         if not os.path.exists(args.file):
             print(f"File {args.file} does not exist")
-            exit(1)
+            sys.exit(1)
 
         # Conditional validation: --output required when --transcribe is enabled
         if args.transcribe and not args.output:
             print("Please provide an --output path for the JSON transcript")
-            exit(1)
+            sys.exit(1)
 
         # --no-vad requires --transcribe (can't skip VAD without transcribing)
         if not args.vad and not args.transcribe:
             print("--no-vad requires transcription. Cannot use --no-vad with --no-transcribe")
-            exit(1)
+            sys.exit(1)
 
         try:
             with acquire_lock('file'):
@@ -238,7 +239,7 @@ if __name__ == '__main__':
                     if not args.transcribe:
                         # VAD-only mode - segments already saved as WAV
                         print("Audio segments saved to ~/whisper_segments/")
-                        exit(0)
+                        sys.exit(0)
                 else:
                     # No VAD - load entire file as single segment
                     print("Skipping VAD, loading entire audio file...", file=sys.stderr)
@@ -261,7 +262,11 @@ if __name__ == '__main__':
 
         except LockError as e:
             print(str(e), file=sys.stderr)
-            exit(1)
+            sys.exit(1)
     else:
         print("only file action is supported", file=sys.stderr)
-        exit(1)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

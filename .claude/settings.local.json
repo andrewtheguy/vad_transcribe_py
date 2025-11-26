@@ -26,7 +26,9 @@
       "Bash(1)",
       "Bash(uv pip list:*)",
       "Bash(sqlite3:*)",
-      "mcp__context7__get-library-docs"
+      "mcp__context7__get-library-docs",
+      "Bash(rm:*)",
+      "Bash(uv run:*)"
     ],
     "deny": [],
     "ask": []
