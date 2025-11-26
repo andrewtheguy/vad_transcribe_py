@@ -19,6 +19,9 @@ TARGET_SAMPLE_RATE = 16000
 # Reduced silence duration when over max_speech_seconds (one window ~32ms)
 ADAPTIVE_MIN_SILENCE_MS = 32
 
+# Hard cap on speech segment duration (1 hour) - exceeding indicates VAD bug
+MAX_SPEECH_SEGMENT_SECONDS = 60 * 60
+
 
 class AudioSegment:
     """Audio segment with timing information.
@@ -146,6 +149,13 @@ class SpeechDetector:
 
         # Get current segment duration
         seconds = len(self._speech_section) / self.sample_rate
+
+        # Hard cap: abort if segment exceeds 1 hour (indicates VAD bug)
+        if seconds > MAX_SPEECH_SEGMENT_SECONDS:
+            raise RuntimeError(
+                f"VAD bug: speech segment duration {seconds/3600:.2f}h exceeds 1-hour limit. "
+                f"This indicates VAD failed to detect silence."
+            )
 
         # State machine transitions
         if not self._prev_has_speech:
