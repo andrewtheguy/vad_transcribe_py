@@ -273,14 +273,6 @@ def main():
         description='Whisper transcription tool with streaming audio processing'
     )
 
-    # Global arguments
-    parser.add_argument('--model', type=str, default='large-v3-turbo',
-                        help='Whisper model name (default: large-v3-turbo)')
-    parser.add_argument('--n-threads', type=int, default=1,
-                        help='Number of threads for whisper model (default: 1)')
-    parser.add_argument('--backend', type=str, choices=['whisper_cpp', 'faster_whisper'],
-                        default='whisper_cpp', help='Transcription backend (default: whisper_cpp)')
-
     # Create subparsers for each action
     subparsers = parser.add_subparsers(dest='action', required=True, help='Action to perform')
 
@@ -291,6 +283,12 @@ def main():
                                    help='Output path for JSONL transcript (default: stdout)')
     parser_transcribe.add_argument('--lang', type=str, default='en',
                                    help='Language code for transcription (default: en)')
+    parser_transcribe.add_argument('--model', type=str, default='large-v3-turbo',
+                                   help='Whisper model name (default: large-v3-turbo)')
+    parser_transcribe.add_argument('--n-threads', type=int, default=1,
+                                   help='Number of threads for whisper model (default: 1)')
+    parser_transcribe.add_argument('--backend', type=str, choices=['whisper_cpp', 'faster_whisper'],
+                                   default='whisper_cpp', help='Transcription backend (default: whisper_cpp)')
     parser_transcribe.add_argument('--vad', action=argparse.BooleanOptionalAction, default=True,
                                    help='Use VAD segmentation (default: enabled). '
                                         'Use --no-vad to transcribe without VAD (max 2 hours)')

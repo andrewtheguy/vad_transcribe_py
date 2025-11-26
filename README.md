@@ -54,31 +54,28 @@ uv run whisper-transcribe-py split --file audio.wav
 
 **Use faster-whisper backend:**
 ```bash
-uv run whisper-transcribe-py --backend faster_whisper transcribe --file audio.wav --output transcript.json
+uv run whisper-transcribe-py transcribe --file audio.wav --backend faster_whisper
 ```
 
 **Use different Whisper model with more threads:**
 ```bash
-uv run whisper-transcribe-py --model large-v3 --n-threads 4 transcribe --file audio.wav --output transcript.json
+uv run whisper-transcribe-py transcribe --file audio.wav --model large-v3 --n-threads 4
 ```
 
 ## Command-Line Options
 
-### Global Options
-
-- `--model MODEL_NAME`: Whisper model to use (default: `large-v3-turbo`)
-- `--backend {whisper_cpp, faster_whisper}`: Transcription backend (default: `whisper_cpp`)
-- `--n-threads N`: Number of threads for transcription (default: 1)
-
 ### Transcribe Command
 
 ```bash
-whisper-transcribe-py transcribe --file PATH [--output PATH] [--lang LANG] [--vad | --no-vad]
+whisper-transcribe-py transcribe --file PATH [OPTIONS]
 ```
 
 - `--file PATH`: Path to audio file (required)
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--lang LANG`: Language code for transcription (default: `en`)
+- `--model MODEL`: Whisper model to use (default: `large-v3-turbo`)
+- `--backend {whisper_cpp, faster_whisper}`: Transcription backend (default: `whisper_cpp`)
+- `--n-threads N`: Number of threads for transcription (default: 1)
 - `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 
 ### Split Command
