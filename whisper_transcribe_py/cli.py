@@ -73,21 +73,33 @@ def save_audio_segment_wav(segment: AudioSegment, output_dir: str, index: int) -
     return output_path
 
 
+def write_jsonl_segment(segment: TranscribedSegment, output_file):
+    """Write a single segment as JSONL to the output file."""
+    line = json.dumps({
+        "start": segment.start,
+        "end": segment.end,
+        "text": segment.text,
+    }, ensure_ascii=False)
+    output_file.write(line + "\n")
+    output_file.flush()
+
+
 def stream_transcribe_with_vad(
     audio_file: str,
     transcriber: WhisperTranscriber,
-) -> list[TranscribedSegment]:
+    output_file,
+) -> int:
     """
     Stream audio through VAD and transcribe each segment immediately.
 
     Args:
         audio_file: Path to audio file
         transcriber: Pre-loaded WhisperTranscriber instance
+        output_file: File object to write JSONL output
 
     Returns:
-        List of TranscribedSegment objects
+        Number of segments transcribed
     """
-    results: list[TranscribedSegment] = []
     segment_count = 0
 
     def on_segment_complete(segment: AudioSegment):
@@ -95,9 +107,10 @@ def stream_transcribe_with_vad(
         # Print VAD status to stderr
         print(f"[VAD] Segment {segment_count}: {segment.start:.2f}s, duration={segment.duration_seconds:.2f}s", file=sys.stderr)
 
-        # Transcribe immediately
+        # Transcribe immediately and output to JSONL
         transcribed = transcriber.transcribe(segment.audio, segment.start)
-        results.extend(transcribed)
+        for ts in transcribed:
+            write_jsonl_segment(ts, output_file)
         segment_count += 1
 
     speech_detector = SpeechDetector(
@@ -133,22 +146,24 @@ def stream_transcribe_with_vad(
 
     speech_detector.flush()
     print(f"Found {segment_count} speech segments", file=sys.stderr)
-    return results
+    return segment_count
 
 
 def stream_transcribe_no_vad(
     audio_file: str,
     transcriber: WhisperTranscriber,
-) -> list[TranscribedSegment]:
+    output_file,
+) -> int:
     """
     Stream audio directly to transcriber without VAD.
 
     Args:
         audio_file: Path to audio file
         transcriber: Pre-loaded WhisperTranscriber instance
+        output_file: File object to write JSONL output
 
     Returns:
-        List of TranscribedSegment objects
+        Number of segments transcribed
 
     Raises:
         ValueError: If audio duration exceeds 2-hour limit
@@ -180,10 +195,13 @@ def stream_transcribe_no_vad(
                 current_duration = len(audio_chunks) / TARGET_SAMPLE_RATE
                 print(f"Progress: {current_duration:.2f}s", file=sys.stderr)
 
-    # Transcribe full audio
+    # Transcribe full audio and output as JSONL
     audio_array = np.array(audio_chunks, dtype=np.float32)
     print(f"Transcribing {len(audio_array) / TARGET_SAMPLE_RATE:.2f}s of audio...", file=sys.stderr)
-    return transcriber.transcribe(audio_array, 0.0)
+    results = transcriber.transcribe(audio_array, 0.0)
+    for segment in results:
+        write_jsonl_segment(segment, output_file)
+    return len(results)
 
 
 def split_by_vad(audio_file: str, output_dir: str) -> int:
@@ -238,25 +256,6 @@ def split_by_vad(audio_file: str, output_dir: str) -> int:
     return segment_count
 
 
-def write_json_output(results: list[TranscribedSegment], output_path: str):
-    """Write transcription results to JSON file."""
-    directory = os.path.dirname(output_path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
-
-    segments_data = [
-        {
-            "start": segment.start,
-            "end": segment.end,
-            "text": segment.text,
-        }
-        for segment in results
-    ]
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump({"segments": segments_data}, f, ensure_ascii=False, indent=2)
-
-
 def main():
     """Main entry point for the CLI."""
     load_dotenv()
@@ -278,8 +277,8 @@ def main():
     # TRANSCRIBE subcommand
     parser_transcribe = subparsers.add_parser('transcribe', help='Transcribe audio from a file')
     parser_transcribe.add_argument('--file', type=str, required=True, help='Path to audio file')
-    parser_transcribe.add_argument('--output', type=str, required=True,
-                                   help='Output path for JSON transcript')
+    parser_transcribe.add_argument('--output', type=str, default=None,
+                                   help='Output path for JSONL transcript (default: stdout)')
     parser_transcribe.add_argument('--lang', type=str, default='en',
                                    help='Language code for transcription (default: en)')
     parser_transcribe.add_argument('--vad', action=argparse.BooleanOptionalAction, default=True,
@@ -308,19 +307,31 @@ def main():
                     args.lang, args.model, args.backend, args.n_threads
                 )
 
-                # Transcribe with or without VAD
-                if args.vad:
-                    results = stream_transcribe_with_vad(args.file, transcriber)
+                # Determine output destination
+                if args.output:
+                    directory = os.path.dirname(args.output)
+                    if directory:
+                        os.makedirs(directory, exist_ok=True)
+                    output_file = open(args.output, "w", encoding="utf-8")
                 else:
-                    results = stream_transcribe_no_vad(args.file, transcriber)
+                    output_file = sys.stdout
 
-                # Write JSON output
-                write_json_output(results, args.output)
-                print(f"Transcript written to {args.output}")
+                try:
+                    # Transcribe with or without VAD, streaming JSONL output
+                    if args.vad:
+                        segment_count = stream_transcribe_with_vad(args.file, transcriber, output_file)
+                    else:
+                        segment_count = stream_transcribe_no_vad(args.file, transcriber, output_file)
+
+                    if args.output:
+                        print(f"Transcript written to {args.output} ({segment_count} segments)", file=sys.stderr)
+                finally:
+                    if args.output:
+                        output_file.close()
 
             elif args.action == 'split':
                 segment_count = split_by_vad(args.file, args.output_dir)
-                print(f"Saved {segment_count} segments to {args.output_dir}")
+                print(f"Saved {segment_count} segments to {args.output_dir}", file=sys.stderr)
 
     except LockError as e:
         print(str(e), file=sys.stderr)

@@ -31,14 +31,19 @@ uv sync
 
 ### Usage
 
-**Transcribe audio file with VAD (recommended):**
+**Transcribe audio file with VAD to stdout (streaming JSONL):**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.json --lang en
+uv run whisper-transcribe-py transcribe --file audio.wav --lang en
+```
+
+**Transcribe to file:**
+```bash
+uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --lang en
 ```
 
 **Transcribe without VAD (max 2 hours):**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.json --no-vad
+uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --no-vad
 ```
 
 **Split audio by VAD into WAV segments:**
@@ -67,11 +72,11 @@ uv run whisper-transcribe-py --model large-v3 --n-threads 4 transcribe --file au
 ### Transcribe Command
 
 ```bash
-whisper-transcribe-py transcribe --file PATH --output PATH [--lang LANG] [--vad | --no-vad]
+whisper-transcribe-py transcribe --file PATH [--output PATH] [--lang LANG] [--vad | --no-vad]
 ```
 
 - `--file PATH`: Path to audio file (required)
-- `--output PATH`: Output path for JSON transcript (required)
+- `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--lang LANG`: Language code for transcription (default: `en`)
 - `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 
@@ -86,25 +91,13 @@ whisper-transcribe-py split --file PATH --output-dir DIR
 
 ## Output Format
 
-### Transcription Output (JSON)
+### Transcription Output (JSONL)
 
-When transcribing, output is saved as JSON:
+Transcription outputs streaming JSONL (one JSON object per line). Each segment is output as soon as it's transcribed:
 
-```json
-{
-  "segments": [
-    {
-      "start": 0.5,
-      "end": 2.3,
-      "text": "Hello world"
-    },
-    {
-      "start": 3.1,
-      "end": 5.8,
-      "text": "This is a test"
-    }
-  ]
-}
+```jsonl
+{"start": 0.5, "end": 2.3, "text": "Hello world"}
+{"start": 3.1, "end": 5.8, "text": "This is a test"}
 ```
 
 ### Split Mode

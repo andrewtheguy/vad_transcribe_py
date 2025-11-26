@@ -180,7 +180,7 @@ class WhisperTranscriber:
                 # whisper.cpp timestamps are in centiseconds (10ms units)
                 start = start_offset + segment.t0 / 100
                 end = start_offset + segment.t1 / 100
-                print("[%.2f -> %.2f] %s" % (start, end, segment.text))
+                print("[%.2f -> %.2f] %s" % (start, end, segment.text), file=sys.stderr)
 
             whispercpp_results = self.whisper_cpp_model.transcribe(
                 audio, new_segment_callback=print_segment, language=self.language
@@ -206,7 +206,7 @@ class WhisperTranscriber:
             for segment in segments:
                 start = start_offset + segment.start
                 end = start_offset + segment.end
-                print("[%.2f -> %.2f] %s" % (start, end, segment.text))
+                print("[%.2f -> %.2f] %s" % (start, end, segment.text), file=sys.stderr)
                 text = self._process_text(segment.text)
                 results.append(TranscribedSegment(
                     text=text,
