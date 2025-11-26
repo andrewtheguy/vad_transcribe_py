@@ -16,6 +16,9 @@ from silero_vad import load_silero_vad
 # Default sample rate for VAD processing
 TARGET_SAMPLE_RATE = 16000
 
+# Reduced silence duration when over max_speech_seconds (one window ~32ms)
+ADAPTIVE_MIN_SILENCE_MS = 32
+
 
 class AudioSegment:
     """Audio segment with timing information.
@@ -64,6 +67,12 @@ class SpeechDetector:
         speech_threshold: Probability threshold for speech detection (default: 0.5)
         min_silence_duration_ms: Minimum silence duration to end speech segment (default: 2000)
         on_segment_complete: Callback when speech segment completes
+
+    Notes:
+        When speech duration exceeds max_speech_seconds and min_silence_duration_ms > 0,
+        the detector uses adaptive silence detection: it lowers the effective silence
+        threshold to allow ending at natural speech boundaries (short silences) rather
+        than cutting abruptly mid-speech.
     """
 
     def __init__(
@@ -73,7 +82,7 @@ class SpeechDetector:
         max_speech_seconds: float = 60.0,
         speech_threshold: float = 0.5,
         min_silence_duration_ms: int = 2000,
-        look_back_seconds: Optional[float] = None,
+        look_back_seconds: float = 0.5,
         on_segment_complete: Optional[Callable[[AudioSegment], None]] = None,
     ):
         """
@@ -85,7 +94,7 @@ class SpeechDetector:
             max_speech_seconds: Maximum duration before forcing segment split
             speech_threshold: Probability threshold for speech detection
             min_silence_duration_ms: Minimum silence duration to end speech segment (default: 2000ms)
-            look_back_seconds: Amount of non-speech audio to prepend when speech starts
+            look_back_seconds: Amount of non-speech audio to prepend when speech starts (default: 0.5s)
             on_segment_complete: Callback invoked when speech segment completes
         """
         self.sample_rate = sample_rate
@@ -111,9 +120,7 @@ class SpeechDetector:
         # Window configuration
         self._window_size_samples = get_window_size_samples(self.sample_rate)
         self._window_seconds = self._window_size_samples / self.sample_rate
-        self.look_back_seconds = (
-            0.5 if look_back_seconds is None else max(0.0, look_back_seconds)
-        )
+        self.look_back_seconds = max(0.0, look_back_seconds)
 
     def process_window(
         self,
@@ -149,12 +156,11 @@ class SpeechDetector:
                 # Still no speech
                 self._handle_non_speech(audio_window)
         else:
+            # Determine effective min silence duration (adaptive when over max)
+            effective_min_silence_ms = self._get_effective_min_silence_ms(seconds)
+
             # Apply hysteresis constraints
-            if seconds > self.max_speech_seconds:
-                # Force end of speech if exceeds max duration
-                has_speech = False
-                self._accumulated_silence_ms = self.min_silence_duration_ms  # Force immediate end
-            elif seconds < self.min_speech_seconds and not has_speech:
+            if seconds < self.min_speech_seconds and not has_speech:
                 # Force continuation if below min duration
                 has_speech = True
 
@@ -167,7 +173,7 @@ class SpeechDetector:
                 self._silence_buffer.extend(audio_window)
                 self._accumulated_silence_ms += self._window_seconds * 1000
 
-                if self._accumulated_silence_ms >= self.min_silence_duration_ms:
+                if self._accumulated_silence_ms >= effective_min_silence_ms:
                     # Enough silence accumulated, end speech segment
                     self._handle_speech_end()
                 else:
@@ -176,6 +182,25 @@ class SpeechDetector:
 
         self._prev_has_speech = has_speech
         return has_speech
+
+    def _get_effective_min_silence_ms(self, current_duration_seconds: float) -> float:
+        """
+        Get the effective minimum silence duration based on current segment duration.
+
+        When speech duration exceeds max_speech_seconds and min_silence_duration_ms > 0,
+        returns a reduced silence threshold (ADAPTIVE_MIN_SILENCE_MS) to allow ending
+        at natural speech boundaries.
+
+        Args:
+            current_duration_seconds: Current speech segment duration in seconds
+
+        Returns:
+            Effective minimum silence duration in milliseconds
+        """
+        if current_duration_seconds > self.max_speech_seconds and self.min_silence_duration_ms > 0:
+            # Use reduced silence threshold to end at next speech boundary
+            return ADAPTIVE_MIN_SILENCE_MS
+        return self.min_silence_duration_ms
 
     def _detect_speech(self, audio: npt.NDArray[np.float32]) -> bool:
         """

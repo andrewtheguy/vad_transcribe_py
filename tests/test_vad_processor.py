@@ -748,13 +748,45 @@ class TestMinSilenceDuration:
 class TestMaxDurationEnforcement:
     """Test maximum speech duration enforcement."""
 
-    def test_max_duration_forces_split(self):
-        """Test that speech exceeding max duration is forced to end."""
+    def test_max_duration_forces_split_with_silence(self):
+        """Test that speech exceeding max duration ends at next silence boundary."""
         segments = []
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=0.2,  # Only 0.2s max (~6 windows)
+            min_silence_duration_ms=100,  # Normal silence threshold
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        with patch.object(detector, '_detect_speech') as mock_vad:
+            window = make_non_speech_window()
+
+            # Continuous speech for windows exceeding max duration
+            mock_vad.return_value = True
+            for i in range(8):
+                detector.process_window(window, i * 0.032)
+
+            # No split yet - adaptive mode waits for silence
+            assert len(segments) == 0
+
+            # Now a silence window triggers immediate split (adaptive threshold)
+            mock_vad.return_value = False
+            detector.process_window(window, 8 * 0.032)
+
+            # Should have split at the silence boundary
+            assert len(segments) == 1
+            # Segment includes speech + the silence window
+            assert segments[0].duration_seconds >= 0.2
+
+    def test_max_duration_immediate_split_when_no_silence_threshold(self):
+        """Test that min_silence_duration_ms=0 causes immediate split at max."""
+        segments = []
+        detector = SpeechDetector(
+            sample_rate=16000,
+            min_speech_seconds=0.05,
+            max_speech_seconds=0.2,  # Only 0.2s max (~6 windows)
+            min_silence_duration_ms=0,  # Immediate end on any silence
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -763,25 +795,27 @@ class TestMaxDurationEnforcement:
 
             # Continuous speech for many windows
             mock_vad.return_value = True
-
-            # Process enough windows to exceed max duration
             for i in range(8):
-                timestamp = i * 0.032
-                detector.process_window(window, timestamp)
+                detector.process_window(window, i * 0.032)
 
-            # Should have forced a split
-            assert len(segments) >= 1, "Should have split due to max duration"
-            # First segment should be around max duration
-            assert segments[0].duration_seconds <= 0.26  # max + 1-2 windows tolerance
+            # With min_silence_duration_ms=0, still needs a silence to end
+            assert len(segments) == 0
 
-    def test_exactly_max_duration_boundary(self):
-        """Test behavior at exactly max duration boundary."""
+            # One silence window ends it immediately
+            mock_vad.return_value = False
+            detector.process_window(window, 8 * 0.032)
+
+            assert len(segments) == 1
+
+    def test_exactly_max_duration_boundary_with_silence(self):
+        """Test behavior at exactly max duration boundary with silence."""
         segments = []
         # 0.192s = 6 windows of 512 samples @ 16kHz
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=0.192,  # Exactly 6 windows
+            min_silence_duration_ms=100,  # Normal threshold
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -790,15 +824,15 @@ class TestMaxDurationEnforcement:
             mock_vad.return_value = True
 
             # Process windows up to and beyond max duration
-            # Window 0-5: 0.192s (at max, but not > max)
-            # Window 6: 0.224s (exceeds max, triggers split)
             for i in range(7):
                 detector.process_window(window, i * 0.032)
 
-            # Still in speech, so need to end it or check state
-            # If no segment yet, we need one more window to trigger the check
-            if len(segments) == 0:
-                detector.process_window(window, 7 * 0.032)
+            # Still in speech - adaptive mode
+            assert len(segments) == 0
+
+            # Silence triggers split
+            mock_vad.return_value = False
+            detector.process_window(window, 7 * 0.032)
 
             assert len(segments) >= 1
             # Segment should be around max duration
@@ -1040,25 +1074,34 @@ class TestFinalWindowInclusion:
             assert final_samples[0] == pytest.approx(0.1, abs=0.01)
 
     def test_final_window_after_max_duration_split(self):
-        """Test final window inclusion when max duration forces split."""
+        """Test final window inclusion when max duration forces split via silence."""
         segments = []
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
             max_speech_seconds=0.128,  # 4 windows
+            min_silence_duration_ms=100,  # Normal threshold
             on_segment_complete=lambda s: segments.append(s),
         )
 
         with patch.object(detector, '_detect_speech') as mock_vad:
-            window = np.ones(512, dtype=np.float32)
-            mock_vad.return_value = True
+            speech_window = np.ones(512, dtype=np.float32)
+            silence_window = make_non_speech_window()
 
-            # Process 6 windows - should force split when exceeding max
+            # Process 6 speech windows - exceeds max duration
+            mock_vad.return_value = True
             for i in range(6):
-                detector.process_window(window, i * 0.032)
+                detector.process_window(speech_window, i * 0.032)
+
+            # No split yet - adaptive mode waits for silence
+            assert len(segments) == 0
+
+            # Silence triggers adaptive split
+            mock_vad.return_value = False
+            detector.process_window(silence_window, 6 * 0.032)
 
             assert len(segments) == 1
-            # Should include enough windows to meet/exceed max
+            # Should include speech windows + silence window
             assert len(segments[0].audio) >= 512 * 4
 
 
@@ -1243,6 +1286,7 @@ class TestEdgeCasesAndBoundaries:
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds * 2,
             max_speech_seconds=window_seconds * 2.5,
+            min_silence_duration_ms=100,  # Use adaptive mode
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -1264,17 +1308,21 @@ class TestEdgeCasesAndBoundaries:
                 detector.process_window(win, ts)
                 ts += window_seconds
 
+            # At this point, exceeds max_speech_seconds but no silence yet
+            assert len(segments) == 0
+
+            # Add silence to trigger adaptive split
+            mock_vad.return_value = False
+            detector.process_window(make_window(0.05), ts)
+
         assert len(segments) == 1
         segment = segments[0]
-        assert len(segment.audio) == window_size * 4
+        # 4 speech windows + 1 silence window
+        assert len(segment.audio) == window_size * 5
 
         # Second window should be kept despite VAD returning False (due to min enforcement)
         second_window = segment.audio[window_size:window_size * 2]
         assert np.allclose(second_window, windows[1])
-
-        # Final window should be appended even though VAD returned True (due to max enforcement)
-        final_window = segment.audio[-window_size:]
-        assert np.allclose(final_window, windows[-1])
 
 
 class TestMixedBoundarySegments:
@@ -1289,7 +1337,8 @@ class TestMixedBoundarySegments:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 1.5,
+            max_speech_seconds=window_seconds * 10,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             look_back_seconds=window_seconds,
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1304,6 +1353,7 @@ class TestMixedBoundarySegments:
         non_speech_buffer2 = make_non_speech_window(length=window_size, level=0.03)
         speech_b1 = make_window(0.4)
         speech_b2 = make_window(0.5)
+        non_speech_end2 = make_non_speech_window(length=window_size, level=0.04)
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             ts = 0.0
@@ -1323,9 +1373,10 @@ class TestMixedBoundarySegments:
             run(non_speech_buffer1, False)
             run(non_speech_buffer2, False)
 
-            # Segment 2: includes look-back at start and ends due to max duration
+            # Segment 2: includes look-back at start and ends with silence
             run(speech_b1, True)
-            run(speech_b2, True)  # Forced to False internally due to max
+            run(speech_b2, True)
+            run(non_speech_end2, False)  # Ends segment 2
 
         assert len(segments) == 2
 
@@ -1335,21 +1386,22 @@ class TestMixedBoundarySegments:
         assert np.allclose(first_segment.audio[-window_size:], non_speech_end)
 
         second_segment = segments[1]
-        assert len(second_segment.audio) == window_size * 3
+        assert len(second_segment.audio) == window_size * 4  # look-back + 2 speech + silence
         assert np.allclose(second_segment.audio[:window_size], non_speech_buffer2)
         assert np.allclose(
             second_segment.audio[window_size:window_size * 2],
             speech_b1,
         )
-        assert np.allclose(second_segment.audio[-window_size:], speech_b2)
+        assert np.allclose(second_segment.audio[window_size * 2:window_size * 3], speech_b2)
+        assert np.allclose(second_segment.audio[-window_size:], non_speech_end2)
 
     def test_single_non_speech_between_segments_not_duplicated(self):
         """
         Ensure exactly one non-speech window between audio segments isn't counted twice.
 
-        This simulates a stream that emits one segment, has exactly one window's worth
-        of low-energy audio, and immediately emits the next segment. The gap window
-        should appear once at the start of the second segment.
+        This simulates a stream that emits one segment (ending with silence), has exactly
+        one window's worth of low-energy audio gap, and immediately emits the next segment.
+        The gap window should appear once at the start of the second segment via look-back.
         """
         segments = []
         sample_rate = 16000
@@ -1358,7 +1410,8 @@ class TestMixedBoundarySegments:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 3,
+            max_speech_seconds=window_seconds * 10,
+            min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -1366,9 +1419,9 @@ class TestMixedBoundarySegments:
             return np.ones(window_size, dtype=np.float32) * value
 
         speech1 = make_window(0.5)
-        non_speech = make_non_speech_window(length=window_size, level=0.01)
+        silence_end = make_non_speech_window(length=window_size, level=0.01)
+        gap = make_non_speech_window(length=window_size, level=0.02)
         speech2 = make_window(0.6)
-        original_max = detector.max_speech_seconds
 
         with patch.object(detector, '_detect_speech') as mock_vad:
             ts = 0.0
@@ -1379,44 +1432,40 @@ class TestMixedBoundarySegments:
                 detector.process_window(window, ts)
                 ts += window_seconds
 
-            # Force the first segment to end due to max duration with only speech windows.
-            detector.max_speech_seconds = window_seconds * 1.5
+            # First segment: speech then silence ends it
             run(speech1, True)
             run(speech1, True)
-            run(speech1, True)  # Forced end after exceeding max duration
+            run(silence_end, False)  # Ends first segment
 
-            # Restore max duration for the rest of the stream.
-            detector.max_speech_seconds = original_max
+            # Gap window (goes to look-back buffer)
+            run(gap, False)
 
-            # Exactly one non-speech window between segments.
-            run(non_speech, False)
-
-            # Second segment resumes immediately after the single gap.
+            # Second segment resumes immediately after the gap
             run(speech2, True)
             run(speech2, True)
 
-        # Flush to emit the second segment without needing trailing non-speech.
+        # Flush to emit the second segment
         detector.flush()
 
         assert len(segments) == 2
 
         first_segment = segments[0]
-        assert len(first_segment.audio) == window_size * 3
-        assert np.allclose(first_segment.audio, np.concatenate([speech1, speech1, speech1]))
+        assert len(first_segment.audio) == window_size * 3  # 2 speech + 1 silence
+        assert np.allclose(first_segment.audio, np.concatenate([speech1, speech1, silence_end]))
 
         second_segment = segments[1]
-        assert len(second_segment.audio) == window_size * 3
+        assert len(second_segment.audio) == window_size * 3  # 1 gap (look-back) + 2 speech
         assert np.allclose(
             second_segment.audio,
-            np.concatenate([non_speech, speech2, speech2]),
+            np.concatenate([gap, speech2, speech2]),
         )
 
     def test_max_speech_split_preserves_contiguous_audio(self):
         """
         Ensure max_speech_seconds splits create contiguous segments without losing samples.
 
-        The stream stays in speech the entire time; the first segment is cut because the
-        max duration is exceeded, and the second segment starts immediately with speech.
+        With adaptive behavior, a silence window triggers the split after exceeding
+        max_speech_seconds. The silence window is included in the first segment.
         """
         segments = []
         sample_rate = 16000
@@ -1426,6 +1475,7 @@ class TestMixedBoundarySegments:
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
             max_speech_seconds=window_seconds * 1.5,
+            min_silence_duration_ms=0,  # Immediate end on silence
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -1434,36 +1484,37 @@ class TestMixedBoundarySegments:
 
         speech_a1 = make_window(0.1)
         speech_a2 = make_window(0.2)
-        speech_a3 = make_window(0.3)
+        silence = make_non_speech_window(length=window_size, level=0.01)
         speech_b1 = make_window(0.4)
         speech_b2 = make_window(0.5)
 
-        with patch.object(detector, '_detect_speech', return_value=True):
+        with patch.object(detector, '_detect_speech') as mock_vad:
             ts = 0.0
 
-            def run(window: np.ndarray) -> None:
+            def run(window: np.ndarray, is_speech: bool) -> None:
                 nonlocal ts
+                mock_vad.return_value = is_speech
                 detector.process_window(window, ts)
                 ts += window_seconds
 
-            # First segment forced to end after exceeding max_speech_seconds.
-            run(speech_a1)
-            run(speech_a2)
-            run(speech_a3)  # This window triggers the forced split.
+            # First segment: speech exceeds max, then silence triggers split
+            run(speech_a1, True)
+            run(speech_a2, True)
+            run(silence, False)  # Triggers split (over max + silence)
 
-            # Speech continues immediately in the next window(s).
-            run(speech_b1)
-            run(speech_b2)
+            # Second segment: speech continues
+            run(speech_b1, True)
+            run(speech_b2, True)
 
         detector.flush()
 
         assert len(segments) == 2
 
         first_segment = segments[0]
-        assert len(first_segment.audio) == window_size * 3
+        assert len(first_segment.audio) == window_size * 3  # 2 speech + 1 silence
         assert np.allclose(
             first_segment.audio,
-            np.concatenate([speech_a1, speech_a2, speech_a3]),
+            np.concatenate([speech_a1, speech_a2, silence]),
         )
 
         second_segment = segments[1]
@@ -1471,12 +1522,6 @@ class TestMixedBoundarySegments:
         assert np.allclose(
             second_segment.audio,
             np.concatenate([speech_b1, speech_b2]),
-        )
-
-        # Combined output should match the original stream with no samples lost.
-        assert np.allclose(
-            np.concatenate([first_segment.audio, second_segment.audio]),
-            np.concatenate([speech_a1, speech_a2, speech_a3, speech_b1, speech_b2]),
         )
 
     def test_default_look_back_gap_under_half_second_keeps_gap(self):
