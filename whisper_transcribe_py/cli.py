@@ -123,16 +123,17 @@ def validate_audio_source(audio_source: str) -> float:
     return duration
 
 
-def save_audio_segment_opus(
+def save_audio_segment(
     segment: AudioSegment,
     output_dir: str,
     index: int,
     original_audio: Optional[np.ndarray] = None,
     sample_rate: int = TARGET_SAMPLE_RATE,
     channels: int = 1,
+    output_format: str = "opus",
 ) -> str:
     """
-    Save audio segment as Opus file (16kbps) using ffmpeg.
+    Save audio segment to file using ffmpeg.
 
     If original_audio is provided, encode from that (preserving quality).
     Otherwise fall back to segment.audio (16kHz VAD audio).
@@ -144,13 +145,14 @@ def save_audio_segment_opus(
         original_audio: Optional int16 array at original sample rate/channels
         sample_rate: Sample rate of original_audio (default: 16kHz)
         channels: Number of channels in original_audio (default: 1)
+        output_format: Output format - "opus" (16kbps) or "wav" (default: opus)
     """
     os.makedirs(output_dir, exist_ok=True)
 
     # Create filename with start and end in milliseconds
     start_ms = int(segment.start * 1000)
     end_ms = int((segment.start + segment.duration_seconds) * 1000)
-    filename = f"segment_{index:04d}_{start_ms}ms_{end_ms}ms.opus"
+    filename = f"segment_{index:04d}_{start_ms}ms_{end_ms}ms.{output_format}"
     output_path = os.path.join(output_dir, filename)
 
     # Determine audio source and format
@@ -166,20 +168,32 @@ def save_audio_segment_opus(
         ar = TARGET_SAMPLE_RATE
         ac = 1
 
-    # Encode to Opus 16kbps using ffmpeg
-    # Using -application voip optimizes for speech (better quality at low bitrates)
+    # Build ffmpeg command based on output format
     command = [
         "ffmpeg", "-y",
         "-f", "s16le",
         "-ar", str(ar),
         "-ac", str(ac),
         "-i", "pipe:0",
-        "-c:a", "libopus",
-        "-b:a", "16k",
-        "-application", "voip",
-        "-loglevel", "error",
-        output_path
     ]
+
+    if output_format == "opus":
+        # Opus 16kbps with voip optimization for speech
+        command.extend([
+            "-c:a", "libopus",
+            "-b:a", "16k",
+            "-application", "voip",
+        ])
+    elif output_format == "wav":
+        # WAV preserves exact sample rate (useful for testing)
+        command.extend([
+            "-c:a", "pcm_s16le",
+        ])
+    else:
+        raise ValueError(f"Unsupported output format: {output_format}")
+
+    command.extend(["-loglevel", "error", output_path])
+
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -326,14 +340,19 @@ def stream_transcribe_no_vad(
     return len(results)
 
 
-def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
+def split_by_vad(
+    audio_source: str,
+    preserve_sample_rate: bool = False,
+    output_format: str = "opus",
+) -> int:
     """
-    Stream audio through VAD and save each segment as Opus file.
+    Stream audio through VAD and save each segment to file.
 
     Args:
         audio_source: Path to audio file or URL
         preserve_sample_rate: If True, preserve original sample rate (mono).
                               If False (default), downsample to 16kHz mono.
+        output_format: Output format - "opus" (16kbps) or "wav" (default: opus)
 
     Returns:
         Number of segments saved
@@ -371,11 +390,12 @@ def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
             original_audio = np.array(original_buffer[start_sample:end_sample], dtype=np.int16)
 
             # Save with original sample rate (mono)
-            path = save_audio_segment_opus(
+            path = save_audio_segment(
                 segment, output_dir, segment_count,
                 original_audio=original_audio,
                 sample_rate=orig_sr,
-                channels=1
+                channels=1,
+                output_format=output_format,
             )
             print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
 
@@ -432,7 +452,7 @@ def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
         # Default mode: downsample to 16kHz mono (simpler, less memory)
         def on_segment_complete(segment: AudioSegment):
             nonlocal segment_count
-            path = save_audio_segment_opus(segment, output_dir, segment_count)
+            path = save_audio_segment(segment, output_dir, segment_count, output_format=output_format)
             print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
             segment_count += 1
 
@@ -507,6 +527,8 @@ def main():
     split_input.add_argument('--url', type=str, help='URL to audio (live streams not supported)')
     parser_split.add_argument('--preserve-sample-rate', action='store_true',
                               help='Preserve original sample rate (default: downsample to 16kHz)')
+    parser_split.add_argument('--format', type=str, choices=['opus', 'wav'], default='opus',
+                              help='Output format: opus (16kbps, default) or wav')
 
     args = parser.parse_args()
 
@@ -548,7 +570,7 @@ def main():
                         output_file.close()
 
             elif args.action == 'split':
-                segment_count = split_by_vad(audio_source, args.preserve_sample_rate)
+                segment_count = split_by_vad(audio_source, args.preserve_sample_rate, args.format)
                 base_name = os.path.splitext(os.path.basename(audio_source))[0]
                 output_dir = os.path.join("tmp", base_name)
                 print(f"Saved {segment_count} segments to {output_dir}", file=sys.stderr)

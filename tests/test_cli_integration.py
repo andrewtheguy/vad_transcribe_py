@@ -21,8 +21,8 @@ SAMPLES_DIR = Path(__file__).parent.parent / "samples"
 JFK_SAMPLE = SAMPLES_DIR / "samples_jfk.wav"
 
 
-def get_opus_properties(filepath: str) -> dict:
-    """Get audio properties of an Opus file using ffprobe."""
+def get_audio_file_properties(filepath: str) -> dict:
+    """Get audio properties of an audio file using ffprobe."""
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=sample_rate,channels,codec_name",
@@ -151,7 +151,7 @@ class TestSplitByVadDefault:
         opus_files = list(output_dir.glob("*.opus"))
 
         for opus_file in opus_files:
-            props = get_opus_properties(str(opus_file))
+            props = get_audio_file_properties(str(opus_file))
             assert props["channels"] == 1
             assert props["codec"] == "opus"
 
@@ -172,7 +172,7 @@ class TestSplitByVadDefault:
 
         # Output should be valid Opus (mono)
         for opus_file in opus_files:
-            props = get_opus_properties(str(opus_file))
+            props = get_audio_file_properties(str(opus_file))
             assert props["channels"] == 1
             assert props["codec"] == "opus"
 
@@ -214,7 +214,7 @@ class TestSplitByVadPreserveSampleRate:
         opus_files = list(output_dir.glob("*.opus"))
 
         for opus_file in opus_files:
-            props = get_opus_properties(str(opus_file))
+            props = get_audio_file_properties(str(opus_file))
             assert props["channels"] == 1
             assert props["codec"] == "opus"
 
@@ -234,9 +234,78 @@ class TestSplitByVadPreserveSampleRate:
         opus_files = list(output_dir.glob("*.opus"))
 
         for opus_file in opus_files:
-            props = get_opus_properties(str(opus_file))
+            props = get_audio_file_properties(str(opus_file))
             assert props["channels"] == 1
             assert props["codec"] == "opus"
+
+    def test_preserve_48k_wav_verifies_sample_rate(self, jfk_48k, tmp_path, monkeypatch):
+        """Test that WAV output preserves 48kHz sample rate."""
+        monkeypatch.chdir(tmp_path)
+
+        # Verify input is 48kHz
+        input_props = get_audio_properties(jfk_48k)
+        assert input_props["sample_rate"] == 48000
+
+        segment_count = split_by_vad(jfk_48k, preserve_sample_rate=True, output_format="wav")
+        assert segment_count >= 1
+
+        base_name = os.path.splitext(os.path.basename(jfk_48k))[0]
+        output_dir = tmp_path / "tmp" / base_name
+        wav_files = list(output_dir.glob("*.wav"))
+
+        assert len(wav_files) == segment_count
+
+        # WAV output should preserve the exact sample rate
+        for wav_file in wav_files:
+            props = get_audio_file_properties(str(wav_file))
+            assert props["sample_rate"] == 48000, f"Expected 48kHz, got {props['sample_rate']}Hz"
+            assert props["channels"] == 1
+            assert props["codec"] == "pcm_s16le"
+
+    def test_preserve_44k_wav_verifies_sample_rate(self, jfk_44k, tmp_path, monkeypatch):
+        """Test that WAV output preserves 44.1kHz sample rate."""
+        monkeypatch.chdir(tmp_path)
+
+        # Verify input is 44.1kHz
+        input_props = get_audio_properties(jfk_44k)
+        assert input_props["sample_rate"] == 44100
+
+        segment_count = split_by_vad(jfk_44k, preserve_sample_rate=True, output_format="wav")
+        assert segment_count >= 1
+
+        base_name = os.path.splitext(os.path.basename(jfk_44k))[0]
+        output_dir = tmp_path / "tmp" / base_name
+        wav_files = list(output_dir.glob("*.wav"))
+
+        assert len(wav_files) == segment_count
+
+        # WAV output should preserve the exact sample rate
+        for wav_file in wav_files:
+            props = get_audio_file_properties(str(wav_file))
+            assert props["sample_rate"] == 44100, f"Expected 44.1kHz, got {props['sample_rate']}Hz"
+            assert props["channels"] == 1
+            assert props["codec"] == "pcm_s16le"
+
+    def test_default_mode_wav_is_16k(self, jfk_48k, tmp_path, monkeypatch):
+        """Test that default mode (no preserve) outputs 16kHz WAV."""
+        monkeypatch.chdir(tmp_path)
+
+        # Input is 48kHz but should be downsampled
+        input_props = get_audio_properties(jfk_48k)
+        assert input_props["sample_rate"] == 48000
+
+        segment_count = split_by_vad(jfk_48k, preserve_sample_rate=False, output_format="wav")
+        assert segment_count >= 1
+
+        base_name = os.path.splitext(os.path.basename(jfk_48k))[0]
+        output_dir = tmp_path / "tmp" / base_name
+        wav_files = list(output_dir.glob("*.wav"))
+
+        # Default mode should downsample to 16kHz
+        for wav_file in wav_files:
+            props = get_audio_file_properties(str(wav_file))
+            assert props["sample_rate"] == 16000, f"Expected 16kHz, got {props['sample_rate']}Hz"
+            assert props["channels"] == 1
 
 
 class TestSplitByVadComparison:
