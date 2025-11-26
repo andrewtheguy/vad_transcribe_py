@@ -79,28 +79,17 @@ def get_audio_properties(audio_source: str) -> dict:
     }
 
 
-def resample_to_16k_mono(
-    audio: np.ndarray,
-    orig_sr: int,
-    channels: int,
-) -> np.ndarray:
+def resample_to_16k(audio: np.ndarray, orig_sr: int) -> np.ndarray:
     """
-    Resample audio to 16kHz mono for VAD processing.
+    Resample mono audio to 16kHz for VAD processing.
 
     Args:
-        audio: Float32 audio array (interleaved if stereo)
+        audio: Float32 mono audio array
         orig_sr: Original sample rate
-        channels: Number of channels
 
     Returns:
         Float32 mono audio at 16kHz
     """
-    # If stereo/multi-channel, reshape and average to mono
-    if channels > 1:
-        # Reshape interleaved samples to (samples, channels) and average
-        num_samples = len(audio) // channels
-        audio = audio[:num_samples * channels].reshape(num_samples, channels).mean(axis=1)
-
     # If already 16kHz, return as-is
     if orig_sr == TARGET_SAMPLE_RATE:
         return audio.astype(np.float32)
@@ -343,7 +332,7 @@ def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
 
     Args:
         audio_source: Path to audio file or URL
-        preserve_sample_rate: If True, preserve original sample rate and channels.
+        preserve_sample_rate: If True, preserve original sample rate (mono).
                               If False (default), downsample to 16kHz mono.
 
     Returns:
@@ -356,13 +345,12 @@ def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
     segment_count = 0
 
     if preserve_sample_rate:
-        # Get original audio properties for preservation mode
+        # Get original sample rate for preservation mode
         props = get_audio_properties(audio_source)
         orig_sr = props["sample_rate"]
-        orig_channels = props["channels"]
-        print(f"Audio properties: {orig_sr}Hz, {orig_channels} channel(s) (preserving)", file=sys.stderr)
+        print(f"Audio properties: {orig_sr}Hz (preserving sample rate)", file=sys.stderr)
 
-        # Rolling buffer for original audio (int16)
+        # Rolling buffer for original audio (int16 mono)
         original_buffer: list[int] = []
         buffer_start_time = 0.0
         look_back_seconds = 0.5
@@ -370,10 +358,10 @@ def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
         def on_segment_complete(segment: AudioSegment):
             nonlocal segment_count, original_buffer, buffer_start_time
 
-            # Calculate sample range in original buffer
+            # Calculate sample range in original buffer (mono)
             seg_start_in_buffer = segment.start - buffer_start_time
-            start_sample = int(seg_start_in_buffer * orig_sr) * orig_channels
-            end_sample = int((seg_start_in_buffer + segment.duration_seconds) * orig_sr) * orig_channels
+            start_sample = int(seg_start_in_buffer * orig_sr)
+            end_sample = int((seg_start_in_buffer + segment.duration_seconds) * orig_sr)
 
             # Clamp to buffer bounds
             start_sample = max(0, start_sample)
@@ -382,21 +370,21 @@ def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
             # Extract original audio for this segment
             original_audio = np.array(original_buffer[start_sample:end_sample], dtype=np.int16)
 
-            # Save with original quality
+            # Save with original sample rate (mono)
             path = save_audio_segment_opus(
                 segment, output_dir, segment_count,
                 original_audio=original_audio,
                 sample_rate=orig_sr,
-                channels=orig_channels
+                channels=1
             )
             print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
 
             # Trim buffer - keep only look-back audio for next segment
-            look_back_samples = int(look_back_seconds * orig_sr * orig_channels)
+            look_back_samples = int(look_back_seconds * orig_sr)
             trim_to = max(0, end_sample - look_back_samples)
             if trim_to > 0:
                 original_buffer = original_buffer[trim_to:]
-                buffer_start_time += trim_to / (orig_sr * orig_channels)
+                buffer_start_time += trim_to / orig_sr
 
             segment_count += 1
 
@@ -410,8 +398,8 @@ def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
         current_ts = 0.0
         chunks_read = 0
 
-        # Stream at original quality (no -ar, no -ac)
-        with ffmpeg_get_16bit_pcm(audio_source) as stdout:
+        # Stream at original sample rate, convert to mono
+        with ffmpeg_get_16bit_pcm(audio_source, ac=1) as stdout:
             while True:
                 chunk = stdout.read(4096)
                 if not chunk:
@@ -423,9 +411,9 @@ def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
                 chunk_int16 = np.frombuffer(chunk, dtype=np.int16)
                 original_buffer.extend(chunk_int16.tolist())
 
-                # Convert to float32 and resample to 16kHz mono for VAD
+                # Convert to float32 and resample to 16kHz for VAD
                 chunk_float = pcm_s16le_to_float32(chunk)
-                resampled = resample_to_16k_mono(chunk_float, orig_sr, orig_channels)
+                resampled = resample_to_16k(chunk_float, orig_sr)
                 vad_buffer.extend(resampled.tolist())
 
                 # Process VAD windows
@@ -518,7 +506,7 @@ def main():
     split_input.add_argument('--file', type=str, help='Path to audio file')
     split_input.add_argument('--url', type=str, help='URL to audio (live streams not supported)')
     parser_split.add_argument('--preserve-sample-rate', action='store_true',
-                              help='Preserve original sample rate and channels (default: downsample to 16kHz mono)')
+                              help='Preserve original sample rate (default: downsample to 16kHz)')
 
     args = parser.parse_args()
 
