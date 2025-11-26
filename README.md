@@ -169,6 +169,7 @@ pyproject.toml                  # Project configuration
 
 - File-based transcription only (no real-time/live transcription)
 - `--no-vad` mode limited to 2 hours to prevent memory issues
+- VAD mode has a 1-hour hard cap per speech segment (aborts if exceeded, indicating a VAD bug)
 - No database persistence (outputs to JSON files or WAV segments)
 - No web interface
 - Requires local audio files (no URL streaming)
