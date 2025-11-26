@@ -57,6 +57,36 @@ def save_audio_segment_wav(segment: AudioSegment, output_dir: str, index: int) -
     return output_path
 
 
+def load_full_audio(audio_file: str) -> AudioSegment:
+    """
+    Load entire audio file as a single AudioSegment (no VAD).
+
+    Args:
+        audio_file: Path to audio file
+
+    Returns:
+        AudioSegment containing the entire file
+    """
+    audio_samples: list[float] = []
+
+    with ffmpeg_get_16bit_pcm(audio_file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+        while True:
+            chunk = stdout.read(4096)
+            if not chunk:
+                break
+            audio = pcm_s16le_to_float32(chunk)
+            audio_samples.extend(audio)
+
+    audio_array = np.array(audio_samples, dtype=np.float32)
+    duration = len(audio_array) / TARGET_SAMPLE_RATE
+
+    return AudioSegment(
+        start=0.0,
+        audio=audio_array,
+        duration_seconds=duration,
+    )
+
+
 def run_vad(audio_file: str, save_wav_dir: Optional[str] = None) -> list[AudioSegment]:
     """
     Run VAD on audio file and return detected speech segments.
@@ -174,6 +204,7 @@ if __name__ == '__main__':
     parser_file.add_argument('--output', type=str, help='Output path for JSON transcript (required if --transcribe)')
     parser_file.add_argument('--lang', type=str, default='en', help='Language code for transcription (default: en)')
     parser_file.add_argument('--transcribe', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable transcription (default: enabled). Use --no-transcribe to skip transcription and only save VAD-detected audio segments')
+    parser_file.add_argument('--vad', action=argparse.BooleanOptionalAction, default=True, help='Enable/disable VAD (default: enabled). Use --no-vad to transcribe entire file without voice activity detection')
 
     args = parser.parse_args()
 
@@ -188,20 +219,32 @@ if __name__ == '__main__':
             print("Please provide an --output path for the JSON transcript")
             exit(1)
 
+        # --no-vad requires --transcribe (can't skip VAD without transcribing)
+        if not args.vad and not args.transcribe:
+            print("--no-vad requires transcription. Cannot use --no-vad with --no-transcribe")
+            exit(1)
+
         try:
             with acquire_lock('file'):
-                # 1. Run VAD (optionally save WAV files if --no-transcribe)
-                output_dir = os.path.expanduser("~/whisper_segments") if not args.transcribe else None
-                if output_dir:
-                    print(f"VAD-only mode: saving audio segments to {output_dir}", file=sys.stderr)
+                if args.vad:
+                    # 1. Run VAD (optionally save WAV files if --no-transcribe)
+                    output_dir = os.path.expanduser("~/whisper_segments") if not args.transcribe else None
+                    if output_dir:
+                        print(f"VAD-only mode: saving audio segments to {output_dir}", file=sys.stderr)
 
-                segments = run_vad(args.file, save_wav_dir=output_dir)
-                print(f"Found {len(segments)} speech segments", file=sys.stderr)
+                    segments = run_vad(args.file, save_wav_dir=output_dir)
+                    print(f"Found {len(segments)} speech segments", file=sys.stderr)
 
-                if not args.transcribe:
-                    # VAD-only mode - segments already saved as WAV
-                    print("Audio segments saved to ~/whisper_segments/")
-                    exit(0)
+                    if not args.transcribe:
+                        # VAD-only mode - segments already saved as WAV
+                        print("Audio segments saved to ~/whisper_segments/")
+                        exit(0)
+                else:
+                    # No VAD - load entire file as single segment
+                    print("Skipping VAD, loading entire audio file...", file=sys.stderr)
+                    full_audio = load_full_audio(args.file)
+                    print(f"Loaded {full_audio.duration_seconds:.2f}s of audio", file=sys.stderr)
+                    segments = [full_audio]
 
                 # 2. Transcribe
                 results = transcribe_segments(

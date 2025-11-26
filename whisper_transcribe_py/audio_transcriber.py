@@ -177,8 +177,9 @@ class WhisperTranscriber:
 
         if self.backend == 'whisper_cpp':
             def print_segment(segment):
-                start = start_offset + segment.t0 / 1000
-                end = start_offset + segment.t1 / 1000
+                # whisper.cpp timestamps are in centiseconds (10ms units)
+                start = start_offset + segment.t0 / 100
+                end = start_offset + segment.t1 / 100
                 print("[%.2f -> %.2f] %s" % (start, end, segment.text))
 
             whispercpp_results = self.whisper_cpp_model.transcribe(
@@ -186,10 +187,11 @@ class WhisperTranscriber:
             )
             for segment in whispercpp_results:
                 text = self._process_text(segment.text)
+                # whisper.cpp timestamps are in centiseconds (10ms units), not milliseconds
                 results.append(TranscribedSegment(
                     text=text,
-                    start=start_offset + segment.t0 / 1000,
-                    end=start_offset + segment.t1 / 1000,
+                    start=start_offset + segment.t0 / 100,
+                    end=start_offset + segment.t1 / 100,
                 ))
 
         elif self.backend == 'faster_whisper':
