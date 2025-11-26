@@ -46,9 +46,10 @@ uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jso
 uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --no-vad
 ```
 
-**Split audio by VAD into WAV segments:**
+**Split audio by VAD into Opus segments:**
 ```bash
-uv run whisper-transcribe-py split --file audio.wav --output-dir ./segments/
+uv run whisper-transcribe-py split --file audio.wav
+# Outputs to tmp/audio/
 ```
 
 **Use faster-whisper backend:**
@@ -83,11 +84,11 @@ whisper-transcribe-py transcribe --file PATH [--output PATH] [--lang LANG] [--va
 ### Split Command
 
 ```bash
-whisper-transcribe-py split --file PATH --output-dir DIR
+whisper-transcribe-py split --file PATH
 ```
 
 - `--file PATH`: Path to audio file (required)
-- `--output-dir DIR`: Directory to save WAV segments (required)
+- Output directory: `tmp/(filename without extension)/`
 
 ## Output Format
 
@@ -102,14 +103,16 @@ Transcription outputs streaming JSONL (one JSON object per line). Each segment i
 
 ### Split Mode
 
-In split mode, detected speech segments are saved as WAV files:
+In split mode, detected speech segments are saved as Opus files (16kbps mono) to `tmp/(filename)/`:
 
 ```
-segments/
-  segment_0000_0.50s.wav
-  segment_0001_3.10s.wav
+tmp/audio/
+  segment_0000_500ms_2300ms.opus
+  segment_0001_3100ms_5800ms.opus
   ...
 ```
+
+**Why Opus?** Opus is chosen because the output is expected to be speech, and Opus excels at encoding speech at low bitrates. The encoder uses `-application voip` mode which optimizes for speech content, providing better quality than general audio encoding at the same bitrate. At 16kbps mono, Opus delivers intelligible speech while keeping file sizes minimal.
 
 ## Supported Languages
 

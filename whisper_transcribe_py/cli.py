@@ -37,26 +37,33 @@ def get_audio_duration(audio_file: str) -> float:
     return float(result.stdout.strip())
 
 
-def save_audio_segment_wav(segment: AudioSegment, output_dir: str, index: int) -> str:
-    """Save audio segment as WAV file using ffmpeg."""
+def save_audio_segment_opus(segment: AudioSegment, output_dir: str, index: int) -> str:
+    """Save audio segment as Opus file (16kbps mono) using ffmpeg."""
     os.makedirs(output_dir, exist_ok=True)
 
-    # Create filename with timestamp
-    filename = f"segment_{index:04d}_{segment.start:.2f}s.wav"
+    # Create filename with start and end in milliseconds
+    start_ms = int(segment.start * 1000)
+    end_ms = int((segment.start + segment.duration_seconds) * 1000)
+    filename = f"segment_{index:04d}_{start_ms}ms_{end_ms}ms.opus"
     output_path = os.path.join(output_dir, filename)
 
     # Convert float32 to int16
     max_int16 = np.iinfo(np.int16).max
     audio_int16 = (segment.audio * max_int16).astype(np.int16)
 
-    # Write WAV using ffmpeg
+    # Encode to Opus 16kbps mono using ffmpeg
+    # Using -application voip optimizes for speech (better quality at low bitrates)
     command = [
         "ffmpeg", "-y",
         "-f", "s16le",
         "-ar", str(TARGET_SAMPLE_RATE),
         "-ac", "1",
         "-i", "pipe:0",
-        "-c:a", "pcm_s16le",
+        "-c:a", "libopus",
+        "-b:a", "16k",
+        "-ac", "1",
+        "-application", "voip",
+        "-loglevel", "error",
         output_path
     ]
     process = subprocess.Popen(
@@ -204,22 +211,25 @@ def stream_transcribe_no_vad(
     return len(results)
 
 
-def split_by_vad(audio_file: str, output_dir: str) -> int:
+def split_by_vad(audio_file: str) -> int:
     """
-    Stream audio through VAD and save each segment as WAV file.
+    Stream audio through VAD and save each segment as Opus file.
 
     Args:
         audio_file: Path to audio file
-        output_dir: Directory to save WAV segments
 
     Returns:
         Number of segments saved
     """
+    # Create output directory: tmp/(filename without extension)/
+    base_name = os.path.splitext(os.path.basename(audio_file))[0]
+    output_dir = os.path.join("tmp", base_name)
+
     segment_count = 0
 
     def on_segment_complete(segment: AudioSegment):
         nonlocal segment_count
-        path = save_audio_segment_wav(segment, output_dir, segment_count)
+        path = save_audio_segment_opus(segment, output_dir, segment_count)
         print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
         segment_count += 1
 
@@ -286,10 +296,8 @@ def main():
                                         'Use --no-vad to transcribe without VAD (max 2 hours)')
 
     # SPLIT subcommand
-    parser_split = subparsers.add_parser('split', help='Split audio file by VAD into WAV segments')
+    parser_split = subparsers.add_parser('split', help='Split audio file by VAD into Opus segments')
     parser_split.add_argument('--file', type=str, required=True, help='Path to audio file')
-    parser_split.add_argument('--output-dir', type=str, required=True,
-                              help='Directory to save WAV segments')
 
     args = parser.parse_args()
 
@@ -330,8 +338,10 @@ def main():
                         output_file.close()
 
             elif args.action == 'split':
-                segment_count = split_by_vad(args.file, args.output_dir)
-                print(f"Saved {segment_count} segments to {args.output_dir}", file=sys.stderr)
+                segment_count = split_by_vad(args.file)
+                base_name = os.path.splitext(os.path.basename(args.file))[0]
+                output_dir = os.path.join("tmp", base_name)
+                print(f"Saved {segment_count} segments to {output_dir}", file=sys.stderr)
 
     except LockError as e:
         print(str(e), file=sys.stderr)
