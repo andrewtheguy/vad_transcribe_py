@@ -17,16 +17,63 @@
 
 ## Quick Start
 
-### Installation
+### Prerequisites
 
-**Full installation with transcription:**
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) - Fast Python package manager
+- ffmpeg - For audio format conversion
+
 ```bash
-uv sync --extra transcribe
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install ffmpeg (macOS)
+brew install ffmpeg
+
+# Install ffmpeg (Ubuntu/Debian)
+sudo apt install ffmpeg
 ```
 
-**Minimal installation (VAD split only, no transcription):**
+### Installation
+
 ```bash
+# Clone the repository
+git clone https://github.com/andrewtheguy/whisper_transcribe_py.git
+cd whisper_transcribe_py
+
+# Full installation with transcription support
+uv sync --extra transcribe
+
+# Or minimal installation (VAD split only, no transcription)
 uv sync
+```
+
+### Running (Development)
+
+For development, run commands with `uv run`:
+
+```bash
+uv run whisper-transcribe-py transcribe --file audio.wav --lang en
+uv run whisper-transcribe-py split --file audio.wav
+```
+
+### Installing as a Tool (Global)
+
+To install globally and run `whisper-transcribe-py` directly:
+
+```bash
+# Using uv (recommended)
+uv tool install ".[transcribe]"
+
+# Or using pipx
+pipx install ".[transcribe]"
+```
+
+After installation:
+
+```bash
+whisper-transcribe-py transcribe --file audio.wav --lang en
+whisper-transcribe-py split --file audio.wav
 ```
 
 ### Usage
@@ -131,11 +178,15 @@ The tool supports all languages available in OpenAI Whisper models. Common langu
 - Larger models (e.g., `large-v3`) provide better accuracy but require more memory and time
 - Use `--n-threads` to speed up transcription on multi-core systems
 
-## Testing
+## Development
 
-Run tests with pytest:
+### Running Tests
 
 ```bash
+# Install dev dependencies
+uv sync --extra dev
+
+# Run tests
 uv run pytest
 ```
 
@@ -154,9 +205,7 @@ pyproject.toml                  # Project configuration
 
 ## Requirements
 
-- Python 3.12+
-- ffmpeg (for audio format conversion)
-- OpenAI Whisper model files (~1-3GB depending on model size)
+- OpenAI Whisper model files (~1-3GB depending on model size) - downloaded automatically on first use
 
 ## Known Limitations
 

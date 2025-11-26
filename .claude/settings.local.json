@@ -28,7 +28,8 @@
       "Bash(sqlite3:*)",
       "mcp__context7__get-library-docs",
       "Bash(rm:*)",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "Bash(uv tool install --help:*)"
     ],
     "deny": [],
     "ask": []
