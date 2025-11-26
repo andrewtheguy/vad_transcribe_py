@@ -7,10 +7,11 @@
 
 ## Features
 
+- **Streaming Audio Processing**: Audio is streamed from ffmpeg - never loads full file into memory
 - **Smart Voice Detection**: Uses Silero VAD to detect speech segments
 - **Flexible Backend Selection**: Choose between whisper.cpp (default) or faster-whisper backends
 - **File Transcription**: Process audio files to JSON transcripts
-- **VAD-Only Mode**: Save detected speech segments as WAV files without transcription
+- **Split Mode**: Save detected speech segments as WAV files
 - **Multi-language Support**: Supports all languages available in OpenAI Whisper models
 - **CLI-Based**: Simple command-line interface for batch processing
 
@@ -20,34 +21,39 @@
 
 **Full installation with transcription:**
 ```bash
-uv pip install -e '.[transcribe]'
+uv sync --extra transcribe
 ```
 
-**Minimal installation (VAD-only, no transcription):**
+**Minimal installation (VAD split only, no transcription):**
 ```bash
-uv pip install -e .
+uv sync
 ```
 
 ### Usage
 
-**Transcribe audio file to JSON:**
+**Transcribe audio file with VAD (recommended):**
 ```bash
-uv run python main.py --lang en file --file audio.wav --output transcript.json
+uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.json --lang en
 ```
 
-**VAD-only mode (save speech segments as WAV files):**
+**Transcribe without VAD (max 2 hours):**
 ```bash
-uv run python main.py file --file audio.wav --no-transcribe
+uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.json --no-vad
 ```
 
-**Transcribe with faster-whisper backend:**
+**Split audio by VAD into WAV segments:**
 ```bash
-uv run python main.py --backend faster_whisper file --file audio.wav --output transcript.json
+uv run whisper-transcribe-py split --file audio.wav --output-dir ./segments/
 ```
 
-**Use different Whisper model:**
+**Use faster-whisper backend:**
 ```bash
-uv run python main.py --model large-v3 file --file audio.wav --output transcript.json
+uv run whisper-transcribe-py --backend faster_whisper transcribe --file audio.wav --output transcript.json
+```
+
+**Use different Whisper model with more threads:**
+```bash
+uv run whisper-transcribe-py --model large-v3 --n-threads 4 transcribe --file audio.wav --output transcript.json
 ```
 
 ## Command-Line Options
@@ -58,12 +64,25 @@ uv run python main.py --model large-v3 file --file audio.wav --output transcript
 - `--backend {whisper_cpp, faster_whisper}`: Transcription backend (default: `whisper_cpp`)
 - `--n-threads N`: Number of threads for transcription (default: 1)
 
-### File Command Options
+### Transcribe Command
+
+```bash
+whisper-transcribe-py transcribe --file PATH --output PATH [--lang LANG] [--vad | --no-vad]
+```
 
 - `--file PATH`: Path to audio file (required)
-- `--output PATH`: Output path for JSON transcript (required for `--transcribe`)
+- `--output PATH`: Output path for JSON transcript (required)
 - `--lang LANG`: Language code for transcription (default: `en`)
-- `--transcribe/--no-transcribe`: Enable/disable transcription (default: enabled)
+- `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
+
+### Split Command
+
+```bash
+whisper-transcribe-py split --file PATH --output-dir DIR
+```
+
+- `--file PATH`: Path to audio file (required)
+- `--output-dir DIR`: Directory to save WAV segments (required)
 
 ## Output Format
 
@@ -88,9 +107,16 @@ When transcribing, output is saved as JSON:
 }
 ```
 
-### VAD-Only Mode
+### Split Mode
 
-In VAD-only mode (`--no-transcribe`), detected speech segments are saved as WAV files to `~/whisper_segments/` directory.
+In split mode, detected speech segments are saved as WAV files:
+
+```
+segments/
+  segment_0000_0.50s.wav
+  segment_0001_3.10s.wav
+  ...
+```
 
 ## Supported Languages
 
@@ -110,6 +136,7 @@ The tool supports all languages available in OpenAI Whisper models. Common langu
 - **whisper.cpp** backend: Optimized for Mac (MPS support), good for CPU-only systems
 - **faster-whisper** backend: Better for GPU or CPU-only Linux systems
 - Larger models (e.g., `large-v3`) provide better accuracy but require more memory and time
+- Use `--n-threads` to speed up transcription on multi-core systems
 
 ## Testing
 
@@ -124,12 +151,12 @@ uv run pytest
 ```
 whisper_transcribe_py/
   ├── __init__.py
-  ├── audio_transcriber.py       # Core transcription logic
-  ├── vad_processor.py           # Voice activity detection
-  ├── file_lock.py               # File locking for exclusive access
+  ├── cli.py                    # CLI entry point
+  ├── audio_transcriber.py      # Core transcription logic
+  ├── vad_processor.py          # Voice activity detection
+  ├── file_lock.py              # File locking for exclusive access
 
-main.py                          # CLI entry point
-pyproject.toml                   # Project configuration
+pyproject.toml                  # Project configuration
 ```
 
 ## Requirements
@@ -141,6 +168,7 @@ pyproject.toml                   # Project configuration
 ## Known Limitations
 
 - File-based transcription only (no real-time/live transcription)
+- `--no-vad` mode limited to 2 hours to prevent memory issues
 - No database persistence (outputs to JSON files or WAV segments)
 - No web interface
 - Requires local audio files (no URL streaming)
