@@ -209,11 +209,28 @@ def save_audio_segment(
 
 
 def write_jsonl_segment(segment: TranscribedSegment, output_file):
-    """Write a single segment as JSONL to the output file."""
+    """Write a single transcription segment as JSONL to the output file."""
     line = json.dumps({
+        "type": "transcription",
         "start": segment.start,
         "end": segment.end,
         "text": segment.text,
+    }, ensure_ascii=False)
+    output_file.write(line + "\n")
+    output_file.flush()
+
+
+def write_jsonl_boundary(event: str, timestamp: float, output_file):
+    """Write a segment boundary event as JSONL.
+
+    Args:
+        event: "segment_start" or "segment_end"
+        timestamp: The timestamp of the boundary in seconds
+        output_file: File object to write to
+    """
+    line = json.dumps({
+        "type": event,
+        "timestamp": timestamp,
     }, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()
@@ -242,10 +259,18 @@ def stream_transcribe_with_vad(
         # Print VAD status to stderr
         print(f"[VAD] Segment {segment_count}: {segment.start:.2f}s, duration={segment.duration_seconds:.2f}s", file=sys.stderr)
 
+        # Emit segment_start boundary
+        write_jsonl_boundary("segment_start", segment.start, output_file)
+
         # Transcribe immediately and output to JSONL
         transcribed = transcriber.transcribe(segment.audio, segment.start)
         for ts in transcribed:
             write_jsonl_segment(ts, output_file)
+
+        # Emit segment_end boundary
+        segment_end_time = segment.start + segment.duration_seconds
+        write_jsonl_boundary("segment_end", segment_end_time, output_file)
+
         segment_count += 1
 
     speech_detector = SpeechDetector(

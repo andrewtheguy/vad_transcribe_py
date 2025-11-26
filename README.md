@@ -145,11 +145,26 @@ whisper-transcribe-py split (--file PATH | --url URL)
 
 ### Transcription Output (JSONL)
 
-Transcription outputs streaming JSONL (one JSON object per line). Each segment is output as soon as it's transcribed:
+Transcription outputs streaming JSONL (one JSON object per line). Each entry has a `type` field:
 
+**With VAD (default):** Includes segment boundaries and transcriptions:
 ```jsonl
-{"start": 0.5, "end": 2.3, "text": "Hello world"}
-{"start": 3.1, "end": 5.8, "text": "This is a test"}
+{"type": "segment_start", "timestamp": 0.5}
+{"type": "transcription", "start": 0.5, "end": 2.3, "text": "Hello world"}
+{"type": "segment_end", "timestamp": 2.3}
+{"type": "segment_start", "timestamp": 3.1}
+{"type": "transcription", "start": 3.1, "end": 5.8, "text": "This is a test"}
+{"type": "segment_end", "timestamp": 5.8}
+```
+
+- `segment_start`: Marks the beginning of a VAD-detected speech segment
+- `transcription`: Contains the transcribed text with start/end timestamps
+- `segment_end`: Marks the end of a VAD-detected speech segment
+
+**Without VAD (`--no-vad`):** Only transcriptions (no segment boundaries):
+```jsonl
+{"type": "transcription", "start": 0.0, "end": 2.3, "text": "Hello world"}
+{"type": "transcription", "start": 2.3, "end": 5.8, "text": "This is a test"}
 ```
 
 ### Split Mode
