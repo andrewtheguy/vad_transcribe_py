@@ -3,10 +3,12 @@ import json
 import os
 import subprocess
 import sys
+from typing import Optional
 
 from dotenv import load_dotenv
 
 import numpy as np
+from scipy import signal
 
 from whisper_transcribe_py.audio_transcriber import (
     TARGET_SAMPLE_RATE,
@@ -50,6 +52,65 @@ def get_audio_duration(audio_source: str) -> float | None:
     return float(duration_str)
 
 
+def get_audio_properties(audio_source: str) -> dict:
+    """
+    Get audio properties (sample rate and channels) using ffprobe.
+
+    Returns:
+        dict with 'sample_rate' (int) and 'channels' (int)
+    """
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0",
+         "-show_entries", "stream=sample_rate,channels",
+         "-of", "json", audio_source],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {result.stderr}")
+
+    data = json.loads(result.stdout)
+    if not data.get("streams"):
+        raise ValueError("No audio stream found in source")
+
+    stream = data["streams"][0]
+    return {
+        "sample_rate": int(stream["sample_rate"]),
+        "channels": int(stream["channels"]),
+    }
+
+
+def resample_to_16k_mono(
+    audio: np.ndarray,
+    orig_sr: int,
+    channels: int,
+) -> np.ndarray:
+    """
+    Resample audio to 16kHz mono for VAD processing.
+
+    Args:
+        audio: Float32 audio array (interleaved if stereo)
+        orig_sr: Original sample rate
+        channels: Number of channels
+
+    Returns:
+        Float32 mono audio at 16kHz
+    """
+    # If stereo/multi-channel, reshape and average to mono
+    if channels > 1:
+        # Reshape interleaved samples to (samples, channels) and average
+        num_samples = len(audio) // channels
+        audio = audio[:num_samples * channels].reshape(num_samples, channels).mean(axis=1)
+
+    # If already 16kHz, return as-is
+    if orig_sr == TARGET_SAMPLE_RATE:
+        return audio.astype(np.float32)
+
+    # Resample to 16kHz using scipy
+    num_output_samples = int(len(audio) * TARGET_SAMPLE_RATE / orig_sr)
+    resampled = signal.resample(audio, num_output_samples)
+    return resampled.astype(np.float32)
+
+
 def validate_audio_source(audio_source: str) -> float:
     """
     Validate audio source (file or URL) and return duration.
@@ -73,8 +134,28 @@ def validate_audio_source(audio_source: str) -> float:
     return duration
 
 
-def save_audio_segment_opus(segment: AudioSegment, output_dir: str, index: int) -> str:
-    """Save audio segment as Opus file (16kbps mono) using ffmpeg."""
+def save_audio_segment_opus(
+    segment: AudioSegment,
+    output_dir: str,
+    index: int,
+    original_audio: Optional[np.ndarray] = None,
+    sample_rate: int = TARGET_SAMPLE_RATE,
+    channels: int = 1,
+) -> str:
+    """
+    Save audio segment as Opus file (16kbps) using ffmpeg.
+
+    If original_audio is provided, encode from that (preserving quality).
+    Otherwise fall back to segment.audio (16kHz VAD audio).
+
+    Args:
+        segment: AudioSegment with timing info
+        output_dir: Directory to save the file
+        index: Segment index for filename
+        original_audio: Optional int16 array at original sample rate/channels
+        sample_rate: Sample rate of original_audio (default: 16kHz)
+        channels: Number of channels in original_audio (default: 1)
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     # Create filename with start and end in milliseconds
@@ -83,21 +164,29 @@ def save_audio_segment_opus(segment: AudioSegment, output_dir: str, index: int) 
     filename = f"segment_{index:04d}_{start_ms}ms_{end_ms}ms.opus"
     output_path = os.path.join(output_dir, filename)
 
-    # Convert float32 to int16
-    max_int16 = np.iinfo(np.int16).max
-    audio_int16 = (segment.audio * max_int16).astype(np.int16)
+    # Determine audio source and format
+    if original_audio is not None:
+        # Use original quality audio (already int16)
+        audio_to_encode = original_audio
+        ar = sample_rate
+        ac = channels
+    else:
+        # Fall back to VAD audio (float32 -> int16)
+        max_int16 = np.iinfo(np.int16).max
+        audio_to_encode = (segment.audio * max_int16).astype(np.int16)
+        ar = TARGET_SAMPLE_RATE
+        ac = 1
 
-    # Encode to Opus 16kbps mono using ffmpeg
+    # Encode to Opus 16kbps using ffmpeg
     # Using -application voip optimizes for speech (better quality at low bitrates)
     command = [
         "ffmpeg", "-y",
         "-f", "s16le",
-        "-ar", str(TARGET_SAMPLE_RATE),
-        "-ac", "1",
+        "-ar", str(ar),
+        "-ac", str(ac),
         "-i", "pipe:0",
         "-c:a", "libopus",
         "-b:a", "16k",
-        "-ac", "1",
         "-application", "voip",
         "-loglevel", "error",
         output_path
@@ -108,7 +197,7 @@ def save_audio_segment_opus(segment: AudioSegment, output_dir: str, index: int) 
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
-    _, stderr = process.communicate(input=audio_int16.tobytes())
+    _, stderr = process.communicate(input=audio_to_encode.tobytes())
 
     if process.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {stderr.decode()}")
@@ -248,58 +337,149 @@ def stream_transcribe_no_vad(
     return len(results)
 
 
-def split_by_vad(audio_file: str) -> int:
+def split_by_vad(audio_source: str, preserve_sample_rate: bool = False) -> int:
     """
     Stream audio through VAD and save each segment as Opus file.
 
     Args:
-        audio_file: Path to audio file
+        audio_source: Path to audio file or URL
+        preserve_sample_rate: If True, preserve original sample rate and channels.
+                              If False (default), downsample to 16kHz mono.
 
     Returns:
         Number of segments saved
     """
     # Create output directory: tmp/(filename without extension)/
-    base_name = os.path.splitext(os.path.basename(audio_file))[0]
+    base_name = os.path.splitext(os.path.basename(audio_source))[0]
     output_dir = os.path.join("tmp", base_name)
 
     segment_count = 0
 
-    def on_segment_complete(segment: AudioSegment):
-        nonlocal segment_count
-        path = save_audio_segment_opus(segment, output_dir, segment_count)
-        print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
-        segment_count += 1
+    if preserve_sample_rate:
+        # Get original audio properties for preservation mode
+        props = get_audio_properties(audio_source)
+        orig_sr = props["sample_rate"]
+        orig_channels = props["channels"]
+        print(f"Audio properties: {orig_sr}Hz, {orig_channels} channel(s) (preserving)", file=sys.stderr)
 
-    speech_detector = SpeechDetector(
-        sample_rate=TARGET_SAMPLE_RATE,
-        on_segment_complete=on_segment_complete
-    )
+        # Rolling buffer for original audio (int16)
+        original_buffer: list[int] = []
+        buffer_start_time = 0.0
+        look_back_seconds = 0.5
 
-    window_size = get_window_size_samples()
-    buffer = []
-    current_ts = 0.0
-    chunks_read = 0
+        def on_segment_complete(segment: AudioSegment):
+            nonlocal segment_count, original_buffer, buffer_start_time
 
-    with ffmpeg_get_16bit_pcm(audio_file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
-        while True:
-            chunk = stdout.read(4096)
-            if not chunk:
-                print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
-                break
-            chunks_read += 1
-            audio = pcm_s16le_to_float32(chunk)
-            buffer.extend(audio)
+            # Calculate sample range in original buffer
+            seg_start_in_buffer = segment.start - buffer_start_time
+            start_sample = int(seg_start_in_buffer * orig_sr) * orig_channels
+            end_sample = int((seg_start_in_buffer + segment.duration_seconds) * orig_sr) * orig_channels
 
-            while len(buffer) >= window_size:
-                window = np.array(buffer[:window_size], dtype=np.float32)
-                speech_detector.process_window(window, current_ts)
-                buffer = buffer[window_size:]
-                current_ts += window_size / TARGET_SAMPLE_RATE
+            # Clamp to buffer bounds
+            start_sample = max(0, start_sample)
+            end_sample = min(len(original_buffer), end_sample)
 
-            if chunks_read % 1000 == 0:
-                print(f"Progress: {current_ts:.2f}s", file=sys.stderr)
+            # Extract original audio for this segment
+            original_audio = np.array(original_buffer[start_sample:end_sample], dtype=np.int16)
 
-    speech_detector.flush()
+            # Save with original quality
+            path = save_audio_segment_opus(
+                segment, output_dir, segment_count,
+                original_audio=original_audio,
+                sample_rate=orig_sr,
+                channels=orig_channels
+            )
+            print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
+
+            # Trim buffer - keep only look-back audio for next segment
+            look_back_samples = int(look_back_seconds * orig_sr * orig_channels)
+            trim_to = max(0, end_sample - look_back_samples)
+            if trim_to > 0:
+                original_buffer = original_buffer[trim_to:]
+                buffer_start_time += trim_to / (orig_sr * orig_channels)
+
+            segment_count += 1
+
+        speech_detector = SpeechDetector(
+            sample_rate=TARGET_SAMPLE_RATE,
+            on_segment_complete=on_segment_complete
+        )
+
+        window_size = get_window_size_samples()
+        vad_buffer: list[float] = []
+        current_ts = 0.0
+        chunks_read = 0
+
+        # Stream at original quality (no -ar, no -ac)
+        with ffmpeg_get_16bit_pcm(audio_source) as stdout:
+            while True:
+                chunk = stdout.read(4096)
+                if not chunk:
+                    print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+                    break
+                chunks_read += 1
+
+                # Store original audio (int16) for later extraction
+                chunk_int16 = np.frombuffer(chunk, dtype=np.int16)
+                original_buffer.extend(chunk_int16.tolist())
+
+                # Convert to float32 and resample to 16kHz mono for VAD
+                chunk_float = pcm_s16le_to_float32(chunk)
+                resampled = resample_to_16k_mono(chunk_float, orig_sr, orig_channels)
+                vad_buffer.extend(resampled.tolist())
+
+                # Process VAD windows
+                while len(vad_buffer) >= window_size:
+                    window = np.array(vad_buffer[:window_size], dtype=np.float32)
+                    speech_detector.process_window(window, current_ts)
+                    vad_buffer = vad_buffer[window_size:]
+                    current_ts += window_size / TARGET_SAMPLE_RATE
+
+                if chunks_read % 1000 == 0:
+                    print(f"Progress: {current_ts:.2f}s", file=sys.stderr)
+
+        speech_detector.flush()
+
+    else:
+        # Default mode: downsample to 16kHz mono (simpler, less memory)
+        def on_segment_complete(segment: AudioSegment):
+            nonlocal segment_count
+            path = save_audio_segment_opus(segment, output_dir, segment_count)
+            print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
+            segment_count += 1
+
+        speech_detector = SpeechDetector(
+            sample_rate=TARGET_SAMPLE_RATE,
+            on_segment_complete=on_segment_complete
+        )
+
+        window_size = get_window_size_samples()
+        buffer: list[float] = []
+        current_ts = 0.0
+        chunks_read = 0
+
+        # Stream at 16kHz mono
+        with ffmpeg_get_16bit_pcm(audio_source, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+            while True:
+                chunk = stdout.read(4096)
+                if not chunk:
+                    print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+                    break
+                chunks_read += 1
+                audio = pcm_s16le_to_float32(chunk)
+                buffer.extend(audio)
+
+                while len(buffer) >= window_size:
+                    window = np.array(buffer[:window_size], dtype=np.float32)
+                    speech_detector.process_window(window, current_ts)
+                    buffer = buffer[window_size:]
+                    current_ts += window_size / TARGET_SAMPLE_RATE
+
+                if chunks_read % 1000 == 0:
+                    print(f"Progress: {current_ts:.2f}s", file=sys.stderr)
+
+        speech_detector.flush()
+
     return segment_count
 
 
@@ -337,6 +517,8 @@ def main():
     split_input = parser_split.add_mutually_exclusive_group(required=True)
     split_input.add_argument('--file', type=str, help='Path to audio file')
     split_input.add_argument('--url', type=str, help='URL to audio (live streams not supported)')
+    parser_split.add_argument('--preserve-sample-rate', action='store_true',
+                              help='Preserve original sample rate and channels (default: downsample to 16kHz mono)')
 
     args = parser.parse_args()
 
@@ -378,7 +560,7 @@ def main():
                         output_file.close()
 
             elif args.action == 'split':
-                segment_count = split_by_vad(audio_source)
+                segment_count = split_by_vad(audio_source, args.preserve_sample_rate)
                 base_name = os.path.splitext(os.path.basename(audio_source))[0]
                 output_dir = os.path.join("tmp", base_name)
                 print(f"Saved {segment_count} segments to {output_dir}", file=sys.stderr)
