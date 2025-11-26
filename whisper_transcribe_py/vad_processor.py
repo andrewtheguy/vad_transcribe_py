@@ -119,7 +119,6 @@ class SpeechDetector:
         self,
         audio_window: npt.NDArray[np.float32],
         timestamp: float,
-        wall_clock_timestamp: Optional[float] = None,
     ) -> bool:
         """
         Process a single audio window through VAD.
@@ -127,7 +126,6 @@ class SpeechDetector:
         Args:
             audio_window: Audio samples (must be window_size_samples length)
             timestamp: Timestamp in seconds from file beginning
-            wall_clock_timestamp: Unused (kept for compatibility)
 
         Returns:
             True if speech detected in this window

@@ -105,7 +105,7 @@ def run_vad(audio_file: str, save_wav_dir: Optional[str] = None) -> list[AudioSe
 
             while len(buffer) >= window_size:
                 window = np.array(buffer[:window_size], dtype=np.float32)
-                speech_detector.process_window(window, current_ts, wall_clock_timestamp=None)
+                speech_detector.process_window(window, current_ts)
                 buffer = buffer[window_size:]
                 current_ts += window_size / TARGET_SAMPLE_RATE
 
