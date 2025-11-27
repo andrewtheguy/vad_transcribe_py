@@ -114,16 +114,26 @@ uv run whisper-transcribe-py transcribe --file audio.wav --model large-v3 --n-th
 uv run whisper-transcribe-py transcribe --url https://example.com/audio.mp3 --output transcript.jsonl
 ```
 
+**Transcribe from stdin (WAV format, always uses VAD, outputs to stdout):**
+```bash
+# Pipe WAV audio from ffmpeg
+ffmpeg -i video.mp4 -f wav - | uv run whisper-transcribe-py transcribe --stdin --lang en
+
+# Or from a file
+cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --lang en
+```
+
 ## Command-Line Options
 
 ### Transcribe Command
 
 ```bash
-whisper-transcribe-py transcribe (--file PATH | --url URL) [OPTIONS]
+whisper-transcribe-py transcribe (--file PATH | --url URL | --stdin) [OPTIONS]
 ```
 
-- `--file PATH`: Path to audio file (mutually exclusive with --url)
-- `--url URL`: URL to audio file (mutually exclusive with --file). Live streams not supported.
+- `--file PATH`: Path to audio file (mutually exclusive with --url, --stdin)
+- `--url URL`: URL to audio file (mutually exclusive with --file, --stdin). Live streams not supported.
+- `--stdin`: Read WAV audio from stdin (mutually exclusive with --file, --url). Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--lang LANG`: Language code for transcription (default: `en`)
 - `--model MODEL`: Whisper model to use (default: `large-v3-turbo`)

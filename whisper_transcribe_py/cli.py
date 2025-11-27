@@ -309,6 +309,78 @@ def stream_transcribe_with_vad(
     return segment_count
 
 
+def stream_transcribe_stdin_with_vad(
+    transcriber: WhisperTranscriber,
+) -> int:
+    """
+    Stream WAV audio from stdin through VAD and transcribe each segment immediately.
+    Output is always JSONL to stdout.
+
+    Args:
+        transcriber: Pre-loaded WhisperTranscriber instance
+
+    Returns:
+        Number of segments transcribed
+    """
+    segment_count = 0
+    output_file = sys.stdout
+
+    def on_segment_complete(segment: AudioSegment):
+        nonlocal segment_count
+        # Print VAD status to stderr
+        print(f"[VAD] Segment {segment_count}: {segment.start:.2f}s, duration={segment.duration_seconds:.2f}s", file=sys.stderr)
+
+        # Emit segment_start boundary
+        write_jsonl_boundary("segment_start", segment.start, output_file)
+
+        # Transcribe immediately and output to JSONL
+        transcribed = transcriber.transcribe(segment.audio, segment.start)
+        for ts in transcribed:
+            write_jsonl_segment(ts, output_file)
+
+        # Emit segment_end boundary
+        segment_end_time = segment.start + segment.duration_seconds
+        write_jsonl_boundary("segment_end", segment_end_time, output_file)
+
+        segment_count += 1
+
+    speech_detector = SpeechDetector(
+        sample_rate=TARGET_SAMPLE_RATE,
+        on_segment_complete=on_segment_complete
+    )
+
+    window_size = get_window_size_samples()
+    buffer = []
+    current_ts = 0.0
+    chunks_read = 0
+    total_bytes = 0
+
+    print("Reading WAV audio from stdin...", file=sys.stderr)
+    with ffmpeg_get_16bit_pcm(from_stdin=True, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+        while True:
+            chunk = stdout.read(4096)
+            if not chunk:
+                print(f"End of stream: {chunks_read} chunks, {total_bytes} bytes, {current_ts:.2f}s", file=sys.stderr)
+                break
+            chunks_read += 1
+            total_bytes += len(chunk)
+            audio = pcm_s16le_to_float32(chunk)
+            buffer.extend(audio)
+
+            while len(buffer) >= window_size:
+                window = np.array(buffer[:window_size], dtype=np.float32)
+                speech_detector.process_window(window, current_ts)
+                buffer = buffer[window_size:]
+                current_ts += window_size / TARGET_SAMPLE_RATE
+
+            if chunks_read % 1000 == 0:
+                print(f"Progress: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+
+    speech_detector.flush()
+    print(f"Found {segment_count} speech segments", file=sys.stderr)
+    return segment_count
+
+
 def stream_transcribe_no_vad(
     audio_source: str,
     transcriber: WhisperTranscriber,
@@ -531,6 +603,7 @@ def main():
     transcribe_input = parser_transcribe.add_mutually_exclusive_group(required=True)
     transcribe_input.add_argument('--file', type=str, help='Path to audio file')
     transcribe_input.add_argument('--url', type=str, help='URL to audio (live streams not supported)')
+    transcribe_input.add_argument('--stdin', action='store_true', help='Read WAV audio from stdin (always uses VAD, outputs to stdout)')
     parser_transcribe.add_argument('--output', type=str, default=None,
                                    help='Output path for JSONL transcript (default: stdout)')
     parser_transcribe.add_argument('--lang', type=str, default='en',
@@ -557,44 +630,52 @@ def main():
 
     args = parser.parse_args()
 
-    # Determine audio source (file or URL)
-    audio_source = args.file if args.file else args.url
-
     try:
-        # Validate audio source and get duration
-        duration = validate_audio_source(audio_source)
-
         with acquire_lock(args.action):
             if args.action == 'transcribe':
-                # Load transcriber once
-                print(f"Loading {args.model} model...", file=sys.stderr)
-                transcriber = create_transcriber(
-                    args.lang, args.model, args.backend, args.n_threads
-                )
-
-                # Determine output destination
-                if args.output:
-                    directory = os.path.dirname(args.output)
-                    if directory:
-                        os.makedirs(directory, exist_ok=True)
-                    output_file = open(args.output, "w", encoding="utf-8")
+                # Handle stdin mode separately (no validation, always VAD, always stdout)
+                if getattr(args, 'stdin', False):
+                    print(f"Loading {args.model} model...", file=sys.stderr)
+                    transcriber = create_transcriber(
+                        args.lang, args.model, args.backend, args.n_threads
+                    )
+                    segment_count = stream_transcribe_stdin_with_vad(transcriber)
+                    print(f"Transcribed {segment_count} segments from stdin", file=sys.stderr)
                 else:
-                    output_file = sys.stdout
+                    # File or URL mode
+                    audio_source = args.file if args.file else args.url
+                    duration = validate_audio_source(audio_source)
 
-                try:
-                    # Transcribe with or without VAD, streaming JSONL output
-                    if args.vad:
-                        segment_count = stream_transcribe_with_vad(audio_source, transcriber, output_file)
+                    print(f"Loading {args.model} model...", file=sys.stderr)
+                    transcriber = create_transcriber(
+                        args.lang, args.model, args.backend, args.n_threads
+                    )
+
+                    # Determine output destination
+                    if args.output:
+                        directory = os.path.dirname(args.output)
+                        if directory:
+                            os.makedirs(directory, exist_ok=True)
+                        output_file = open(args.output, "w", encoding="utf-8")
                     else:
-                        segment_count = stream_transcribe_no_vad(audio_source, transcriber, output_file, duration)
+                        output_file = sys.stdout
 
-                    if args.output:
-                        print(f"Transcript written to {args.output} ({segment_count} segments)", file=sys.stderr)
-                finally:
-                    if args.output:
-                        output_file.close()
+                    try:
+                        # Transcribe with or without VAD, streaming JSONL output
+                        if args.vad:
+                            segment_count = stream_transcribe_with_vad(audio_source, transcriber, output_file)
+                        else:
+                            segment_count = stream_transcribe_no_vad(audio_source, transcriber, output_file, duration)
+
+                        if args.output:
+                            print(f"Transcript written to {args.output} ({segment_count} segments)", file=sys.stderr)
+                    finally:
+                        if args.output:
+                            output_file.close()
 
             elif args.action == 'split':
+                audio_source = args.file if args.file else args.url
+                duration = validate_audio_source(audio_source)
                 segment_count = split_by_vad(audio_source, args.preserve_sample_rate, args.format)
                 base_name = os.path.splitext(os.path.basename(audio_source))[0]
                 output_dir = os.path.join("tmp", base_name)

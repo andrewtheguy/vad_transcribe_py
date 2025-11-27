@@ -1,3 +1,2 @@
-- use uv to run the python commands like uv run python main.py ...
 - use uv run pytest to run unit tests.
 - no backward compatibility

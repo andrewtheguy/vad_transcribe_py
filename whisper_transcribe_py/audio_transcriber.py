@@ -14,14 +14,30 @@ DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
 
 @contextmanager
-def ffmpeg_get_16bit_pcm(full_audio_path, target_sample_rate=None, ac=None):
-    """Convert audio file to 16-bit PCM using ffmpeg with streaming output."""
-    command = [
-        "ffmpeg",
-        "-i", full_audio_path,
+def ffmpeg_get_16bit_pcm(full_audio_path=None, target_sample_rate=None, ac=None, from_stdin=False):
+    """Convert audio file to 16-bit PCM using ffmpeg with streaming output.
+
+    Args:
+        full_audio_path: Path to audio file or URL (ignored if from_stdin=True)
+        target_sample_rate: Target sample rate for output
+        ac: Number of audio channels
+        from_stdin: If True, read WAV audio from stdin instead of file
+    """
+    if from_stdin:
+        command = [
+            "ffmpeg",
+            "-i", "pipe:0",  # Read from stdin
+        ]
+    else:
+        command = [
+            "ffmpeg",
+            "-i", full_audio_path,
+        ]
+
+    command.extend([
         "-f", "s16le",  # Output format
         "-acodec", "pcm_s16le",  # Audio codec
-    ]
+    ])
 
     if ac is not None:
         command.extend(["-ac", str(ac)])
@@ -39,6 +55,7 @@ def ffmpeg_get_16bit_pcm(full_audio_path, target_sample_rate=None, ac=None):
     try:
         process = subprocess.Popen(
             command,
+            stdin=sys.stdin.buffer if from_stdin else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
