@@ -200,7 +200,6 @@ class WhisperTranscriber:
                 beam_size=5,
                 language=self.language,
                 vad_filter=False,
-                without_timestamps=True,
             )
 
             for segment in segments:
