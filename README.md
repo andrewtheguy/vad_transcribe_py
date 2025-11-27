@@ -62,11 +62,11 @@ uv run whisper-transcribe-py split --file audio.wav
 To install globally and run `whisper-transcribe-py` directly:
 
 ```bash
-# Using uv (recommended)
-uv tool install ".[transcribe]"
+# Install from GitHub (recommended)
+uv tool install "whisper-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/whisper_transcribe_py.git@master"
 
-# Or using pipx
-pipx install ".[transcribe]"
+# Or from local clone
+uv tool install ".[transcribe]"
 ```
 
 After installation:
