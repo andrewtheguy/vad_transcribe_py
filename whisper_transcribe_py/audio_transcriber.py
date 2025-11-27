@@ -143,6 +143,8 @@ class WhisperTranscriber:
             # Use beam search for better accuracy
             params_sampling_strategy=1,  # 1 = BEAM_SEARCH
             beam_search={"beam_size": 5, "patience": -1.0},
+            # anti-looping settings
+            n_max_text_ctx=64,  # Use max context length
         )
 
         print("Whisper.cpp model loaded:", file=sys.stderr)
@@ -200,6 +202,12 @@ class WhisperTranscriber:
                 beam_size=5,
                 language=self.language,
                 vad_filter=False,
+                # Anti-looping settings
+                condition_on_previous_text=False,  # Don't use past output as prompt
+                repetition_penalty=1.2,  # Penalize repeated tokens
+                no_repeat_ngram_size=3,  # Prevent 3-gram repetition
+                compression_ratio_threshold=2.4,  # Default, but explicit
+                log_prob_threshold=-1.0,  # Default, but explicit
             )
 
             for segment in segments:
