@@ -23,6 +23,21 @@ from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment
 from whisper_transcribe_py.file_lock import acquire_lock, LockError
 
 
+def format_timestamp(seconds: float, include_decimals=True) -> str:
+    if include_decimals:
+        milliseconds = round(seconds * 1000)
+        minutes_remaining, remaining_milliseconds = divmod(milliseconds, 60000)
+        hours, minutes = divmod(minutes_remaining, 60)
+        remaining_seconds = f"{remaining_milliseconds:05d}"
+        remaining_seconds = remaining_seconds[:-3] + '.' + remaining_seconds[-3:]
+        return f"{hours:02d}:{minutes:02d}:{remaining_seconds}"
+    else:
+        seconds = round(seconds)
+        minutes_remaining, remaining_seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes_remaining, 60)
+        return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
+
+
 # Maximum duration for --no-vad mode (2 hours) to prevent OOM
 MAX_NO_VAD_DURATION_SECONDS = 2 * 60 * 60
 
@@ -213,7 +228,9 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file):
     line = json.dumps({
         "type": "transcription",
         "start": segment.start,
+        "start_formatted": format_timestamp(segment.start),
         "end": segment.end,
+        "end_formatted": format_timestamp(segment.end),
         "text": segment.text,
     }, ensure_ascii=False)
     output_file.write(line + "\n")
@@ -231,6 +248,7 @@ def write_jsonl_boundary(event: str, timestamp: float, output_file):
     line = json.dumps({
         "type": event,
         "timestamp": timestamp,
+        "timestamp_formatted": format_timestamp(timestamp),
     }, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()
@@ -256,8 +274,9 @@ def stream_transcribe_with_vad(
 
     def on_segment_complete(segment: AudioSegment):
         nonlocal segment_count
-        # Print VAD status to stderr
-        print(f"[VAD] Segment {segment_count}: {segment.start:.2f}s, duration={segment.duration_seconds:.2f}s", file=sys.stderr)
+        # Print VAD status to stderr with formatted timestamp
+        start_fmt = format_timestamp(segment.start)
+        print(f"[VAD] Segment {segment_count}: {start_fmt} ({segment.start:.2f}s), duration={segment.duration_seconds:.2f}s", file=sys.stderr)
 
         # Emit segment_start boundary
         write_jsonl_boundary("segment_start", segment.start, output_file)
@@ -327,8 +346,9 @@ def stream_transcribe_stdin_with_vad(
 
     def on_segment_complete(segment: AudioSegment):
         nonlocal segment_count
-        # Print VAD status to stderr
-        print(f"[VAD] Segment {segment_count}: {segment.start:.2f}s, duration={segment.duration_seconds:.2f}s", file=sys.stderr)
+        # Print VAD status to stderr with formatted timestamp
+        start_fmt = format_timestamp(segment.start)
+        print(f"[VAD] Segment {segment_count}: {start_fmt} ({segment.start:.2f}s), duration={segment.duration_seconds:.2f}s", file=sys.stderr)
 
         # Emit segment_start boundary
         write_jsonl_boundary("segment_start", segment.start, output_file)

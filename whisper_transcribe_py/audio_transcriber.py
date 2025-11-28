@@ -13,6 +13,15 @@ TARGET_SAMPLE_RATE = 16000
 DEFAULT_CHINESE_LOCALE = 'zh-Hant'
 
 
+def format_timestamp(seconds: float) -> str:
+    """Format seconds to hh:mm:ss.ms format."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
+
+
 @contextmanager
 def ffmpeg_get_16bit_pcm(full_audio_path=None, target_sample_rate=None, ac=None, from_stdin=False):
     """Convert audio file to 16-bit PCM using ffmpeg with streaming output.
@@ -199,7 +208,9 @@ class WhisperTranscriber:
                 # whisper.cpp timestamps are in centiseconds (10ms units)
                 start = start_offset + segment.t0 / 100
                 end = start_offset + segment.t1 / 100
-                print("[%.2f -> %.2f] %s" % (start, end, segment.text), file=sys.stderr)
+                start_fmt = format_timestamp(start)
+                end_fmt = format_timestamp(end)
+                print("[%s -> %s] %s" % (start_fmt, end_fmt, segment.text), file=sys.stderr)
 
             whispercpp_results = self.whisper_cpp_model.transcribe(
                 audio, new_segment_callback=print_segment, language=self.language
@@ -230,7 +241,9 @@ class WhisperTranscriber:
             for segment in segments:
                 start = start_offset + segment.start
                 end = start_offset + segment.end
-                print("[%.2f -> %.2f] %s" % (start, end, segment.text), file=sys.stderr)
+                start_fmt = format_timestamp(start)
+                end_fmt = format_timestamp(end)
+                print("[%s -> %s] %s" % (start_fmt, end_fmt, segment.text), file=sys.stderr)
                 text = self._process_text(segment.text)
                 results.append(TranscribedSegment(
                     text=text,
