@@ -56,13 +56,13 @@ def check_pushed() -> bool:
 
     if local_head != remote_head:
         # Check if local is ahead or behind
-        result = run_cmd(["git", "log", "--oneline", f"origin/main..HEAD"])
+        result = run_cmd(["git", "log", "--oneline", "origin/main..HEAD"])
         if result.stdout.strip():
             print("Error: Local branch has unpushed commits:")
             print(result.stdout)
             return False
 
-        result = run_cmd(["git", "log", "--oneline", f"HEAD..origin/main"])
+        result = run_cmd(["git", "log", "--oneline", "HEAD..origin/main"])
         if result.stdout.strip():
             print("Error: Local branch is behind origin/main:")
             print(result.stdout)

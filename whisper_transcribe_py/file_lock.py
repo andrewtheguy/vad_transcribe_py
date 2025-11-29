@@ -7,7 +7,6 @@ Supports both Unix (fcntl) and Windows (msvcrt) locking mechanisms.
 import os
 import sys
 import tempfile
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -74,7 +73,7 @@ class FileLock:
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.acquired = True
         except (IOError, OSError):
-            raise LockError(f"Lock already held by another process")
+            raise LockError("Lock already held by another process")
 
     def _acquire_lock_windows(self):
         """Acquire lock using msvcrt (Windows)."""
@@ -83,7 +82,7 @@ class FileLock:
             msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_NBLCK, 1)
             self.acquired = True
         except (IOError, OSError):
-            raise LockError(f"Lock already held by another process")
+            raise LockError("Lock already held by another process")
 
     def _get_action_description(self) -> str:
         """Get human-readable description of the action being locked."""
@@ -115,7 +114,7 @@ class FileLock:
             self.lock_file.write(str(os.getpid()))
             self.lock_file.flush()
 
-        except LockError as e:
+        except LockError:
             # Failed to acquire lock
             self.lock_file.close()
 

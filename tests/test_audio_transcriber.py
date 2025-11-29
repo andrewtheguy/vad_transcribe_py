@@ -1,4 +1,3 @@
-import numpy as np
 import pytest
 
 import whisper_transcribe_py.audio_transcriber as audio_transcriber

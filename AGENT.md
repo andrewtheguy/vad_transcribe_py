@@ -1,2 +1,2 @@
-- use uv run pytest to run unit tests.
+- do `uv run ruff check` after changes to make sure code style is correct and then `uv run pytest`.
 - no backward compatibility
