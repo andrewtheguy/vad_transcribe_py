@@ -693,10 +693,9 @@ def main():
     subparsers = parser.add_subparsers(dest='action', required=True, help='Action to perform')
 
     # TRANSCRIBE subcommand
-    parser_transcribe = subparsers.add_parser('transcribe', help='Transcribe audio from a file or URL')
+    parser_transcribe = subparsers.add_parser('transcribe', help='Transcribe audio from a file or stdin')
     transcribe_input = parser_transcribe.add_mutually_exclusive_group(required=True)
     transcribe_input.add_argument('--file', type=str, help='Path to audio file')
-    transcribe_input.add_argument('--url', type=str, help='URL to audio (live streams not supported)')
     transcribe_input.add_argument('--stdin', action='store_true', help='Read WAV audio from stdin (always uses VAD, outputs to stdout)')
     parser_transcribe.add_argument('--output', type=str, default=None,
                                    help='Output path for JSONL transcript (default: stdout)')
@@ -746,8 +745,8 @@ def main():
                     )
                     print(f"Transcribed {segment_count} segments from stdin", file=sys.stderr)
                 else:
-                    # File or URL mode
-                    audio_source = args.file if args.file else args.url
+                    # File mode
+                    audio_source = args.file
                     duration = validate_audio_source(audio_source)
 
                     print(f"Loading {args.model} model...", file=sys.stderr)

@@ -97,14 +97,13 @@ whisper-transcribe-py split --file audio.wav                 # always available
 Transcribe audio to text using Whisper models with optional VAD segmentation.
 
 ```bash
-whisper-transcribe-py transcribe (--file PATH | --url URL | --stdin) [OPTIONS]
+whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 ```
 
 ### Transcribe Options
 
-- `--file PATH`: Path to audio file (mutually exclusive with --url, --stdin)
-- `--url URL`: URL to audio file (mutually exclusive with --file, --stdin). Live streams not supported.
-- `--stdin`: Read WAV audio from stdin (mutually exclusive with --file, --url). Always uses VAD, always outputs JSONL to stdout.
+- `--file PATH`: Path to audio file (mutually exclusive with --stdin)
+- `--stdin`: Read WAV audio from stdin (mutually exclusive with --file). Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--lang LANG`: Language code for transcription (default: `en`)
 - `--model MODEL`: Whisper model to use (default: `large-v3-turbo`)
@@ -135,11 +134,6 @@ uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jso
 **Transcribe without VAD (max 2 hours):**
 ```bash
 uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --no-vad
-```
-
-**Transcribe from URL (must have fixed duration, not live):**
-```bash
-uv run whisper-transcribe-py transcribe --url https://example.com/audio.mp3 --output transcript.jsonl
 ```
 
 **Transcribe from stdin (WAV format, always uses VAD, outputs to stdout in JSONL format):**
