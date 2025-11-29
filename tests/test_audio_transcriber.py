@@ -77,25 +77,65 @@ def test_transcribed_segment_dataclass():
     assert segment.end == 3.0
 
 
-def test_process_text_chinese():
-    """Test that Chinese text is converted to Traditional Chinese."""
+def test_process_text_chinese_no_conversion():
+    """Test that Chinese text is not converted by default."""
     transcriber = audio_transcriber.WhisperTranscriber(
         language="zh",
         model="large-v3-turbo",
         backend="whisper_cpp",
     )
 
-    # zhconv converts simplified to traditional
+    # Default: no conversion
+    result = transcriber._process_text("简体中文")
+    assert result == "简体中文"
+
+
+def test_process_text_chinese_to_traditional():
+    """Test that Chinese text is converted to Traditional Chinese."""
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="zh",
+        model="large-v3-turbo",
+        backend="whisper_cpp",
+        chinese_conversion="traditional",
+    )
+
     result = transcriber._process_text("简体中文")
     assert result == "簡體中文"
 
 
-def test_process_text_cantonese():
+def test_process_text_chinese_to_simplified():
+    """Test that Chinese text is converted to Simplified Chinese."""
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="zh",
+        model="large-v3-turbo",
+        backend="whisper_cpp",
+        chinese_conversion="simplified",
+    )
+
+    result = transcriber._process_text("簡體中文")
+    assert result == "简体中文"
+
+
+def test_process_text_cantonese_no_conversion():
+    """Test that Cantonese text is not converted by default."""
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="yue",
+        model="large-v3-turbo",
+        backend="whisper_cpp",
+    )
+
+    # Default: no conversion
+    result = transcriber._process_text("简体中文")
+    assert result == "简体中文"
+
+
+def test_process_text_cantonese_to_traditional():
     """Test that Cantonese text is converted to Traditional Chinese."""
     transcriber = audio_transcriber.WhisperTranscriber(
         language="yue",
         model="large-v3-turbo",
         backend="whisper_cpp",
+        chinese_conversion="traditional",
     )
 
     result = transcriber._process_text("简体中文")

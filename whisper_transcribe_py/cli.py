@@ -637,6 +637,11 @@ def main():
     parser_transcribe.add_argument('--vad', action=argparse.BooleanOptionalAction, default=True,
                                    help='Use VAD segmentation (default: enabled). '
                                         'Use --no-vad to transcribe without VAD (max 2 hours)')
+    parser_transcribe.add_argument('--chinese-conversion', type=str,
+                                   choices=['none', 'simplified', 'traditional'],
+                                   default='none',
+                                   help='Chinese character conversion for zh/yue languages: '
+                                        'none (default), simplified (zh-Hans), traditional (zh-Hant)')
 
     # SPLIT subcommand
     parser_split = subparsers.add_parser('split', help='Split audio by VAD into Opus segments')
@@ -657,7 +662,8 @@ def main():
                 if getattr(args, 'stdin', False):
                     print(f"Loading {args.model} model...", file=sys.stderr)
                     transcriber = create_transcriber(
-                        args.lang, args.model, args.backend, args.n_threads
+                        args.lang, args.model, args.backend, args.n_threads,
+                        args.chinese_conversion
                     )
                     segment_count = stream_transcribe_stdin_with_vad(transcriber)
                     print(f"Transcribed {segment_count} segments from stdin", file=sys.stderr)
@@ -668,7 +674,8 @@ def main():
 
                     print(f"Loading {args.model} model...", file=sys.stderr)
                     transcriber = create_transcriber(
-                        args.lang, args.model, args.backend, args.n_threads
+                        args.lang, args.model, args.backend, args.n_threads,
+                        args.chinese_conversion
                     )
 
                     # Determine output destination

@@ -9,8 +9,10 @@ import numpy.typing as npt
 
 from zhconv_rs import zhconv
 
+from typing import Literal
+
 TARGET_SAMPLE_RATE = 16000
-DEFAULT_CHINESE_LOCALE = 'zh-Hant'
+ChineseConversion = Literal['none', 'simplified', 'traditional']
 
 
 def format_timestamp(seconds: float) -> str:
@@ -113,6 +115,7 @@ def create_transcriber(
     model: str = "large-v3-turbo",
     backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
     n_threads: int = 1,
+    chinese_conversion: ChineseConversion = 'none',
 ) -> 'WhisperTranscriber':
     """Factory function to create a WhisperTranscriber instance."""
     return WhisperTranscriber(
@@ -120,6 +123,7 @@ def create_transcriber(
         model=model,
         backend=backend,
         n_threads=n_threads,
+        chinese_conversion=chinese_conversion,
     )
 
 
@@ -132,11 +136,13 @@ class WhisperTranscriber:
         model: str = "large-v3-turbo",
         backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
         n_threads: int = 1,
+        chinese_conversion: ChineseConversion = 'none',
     ):
         self.language = language
         self.model = model
         self.backend = backend
         self.n_threads = n_threads
+        self.chinese_conversion = chinese_conversion
 
         # Load backend-specific model
         if self.backend == 'whisper_cpp':
@@ -255,6 +261,9 @@ class WhisperTranscriber:
 
     def _process_text(self, text: str) -> str:
         """Process text for storage (e.g., convert Chinese variants)."""
-        if self.language in ['yue', 'zh']:
-            return zhconv(text, DEFAULT_CHINESE_LOCALE)
+        if self.language in ['yue', 'zh'] and self.chinese_conversion != 'none':
+            if self.chinese_conversion == 'traditional':
+                return zhconv(text, 'zh-Hant')
+            elif self.chinese_conversion == 'simplified':
+                return zhconv(text, 'zh-Hans')
         return text

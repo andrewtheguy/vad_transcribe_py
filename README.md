@@ -11,7 +11,7 @@
 - **Smart Voice Detection**: Uses Silero VAD to detect speech segments
 - **Flexible Backend Selection**: Choose between whisper.cpp (default) or faster-whisper backends
 - **File Transcription**: Process audio files to JSON transcripts
-- **Split Mode**: Save detected speech segments as WAV files
+- **Split Mode**: Save detected speech segments as Opus files
 - **Multi-language Support**: Supports all languages available in OpenAI Whisper models
 - **CLI-Based**: Simple command-line interface for batch processing
 
@@ -76,7 +76,30 @@ whisper-transcribe-py transcribe --file audio.wav --lang en
 whisper-transcribe-py split --file audio.wav
 ```
 
-### Usage
+---
+
+## Transcribe Command
+
+Transcribe audio to text using Whisper models with optional VAD segmentation.
+
+```bash
+whisper-transcribe-py transcribe (--file PATH | --url URL | --stdin) [OPTIONS]
+```
+
+### Transcribe Options
+
+- `--file PATH`: Path to audio file (mutually exclusive with --url, --stdin)
+- `--url URL`: URL to audio file (mutually exclusive with --file, --stdin). Live streams not supported.
+- `--stdin`: Read WAV audio from stdin (mutually exclusive with --file, --url). Always uses VAD, always outputs JSONL to stdout.
+- `--output PATH`: Output path for JSONL transcript (default: stdout)
+- `--lang LANG`: Language code for transcription (default: `en`)
+- `--model MODEL`: Whisper model to use (default: `large-v3-turbo`)
+- `--backend {whisper_cpp, faster_whisper}`: Transcription backend (default: `whisper_cpp`)
+- `--n-threads N`: Number of threads for transcription (default: 1)
+- `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
+- `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
+
+### Transcribe Examples
 
 **Transcribe audio file with VAD to stdout (streaming JSONL):**
 ```bash
@@ -93,10 +116,18 @@ uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jso
 uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --no-vad
 ```
 
-**Split audio by VAD into Opus segments:**
+**Transcribe from URL (must have fixed duration, not live):**
 ```bash
-uv run whisper-transcribe-py split --file audio.wav
-# Outputs to tmp/audio/
+uv run whisper-transcribe-py transcribe --url https://example.com/audio.mp3 --output transcript.jsonl
+```
+
+**Transcribe from stdin (WAV format, always uses VAD, outputs to stdout in JSONL format):**
+```bash
+# Pipe WAV audio from ffmpeg
+ffmpeg -i video.mp4 -f wav - | uv run whisper-transcribe-py transcribe --stdin --lang en
+
+# Or from a file
+cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --lang en
 ```
 
 **Use faster-whisper backend:**
@@ -109,77 +140,69 @@ uv run whisper-transcribe-py transcribe --file audio.wav --backend faster_whispe
 uv run whisper-transcribe-py transcribe --file audio.wav --model large-v3 --n-threads 4
 ```
 
-**Transcribe from URL (must have fixed duration, not live):**
-```bash
-uv run whisper-transcribe-py transcribe --url https://example.com/audio.mp3 --output transcript.jsonl
-```
-
-**Transcribe from stdin (WAV format, always uses VAD, outputs to stdout):**
-```bash
-# Pipe WAV audio from ffmpeg
-ffmpeg -i video.mp4 -f wav - | uv run whisper-transcribe-py transcribe --stdin --lang en
-
-# Or from a file
-cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --lang en
-```
-
-## Command-Line Options
-
-### Transcribe Command
-
-```bash
-whisper-transcribe-py transcribe (--file PATH | --url URL | --stdin) [OPTIONS]
-```
-
-- `--file PATH`: Path to audio file (mutually exclusive with --url, --stdin)
-- `--url URL`: URL to audio file (mutually exclusive with --file, --stdin). Live streams not supported.
-- `--stdin`: Read WAV audio from stdin (mutually exclusive with --file, --url). Always uses VAD, always outputs JSONL to stdout.
-- `--output PATH`: Output path for JSONL transcript (default: stdout)
-- `--lang LANG`: Language code for transcription (default: `en`)
-- `--model MODEL`: Whisper model to use (default: `large-v3-turbo`)
-- `--backend {whisper_cpp, faster_whisper}`: Transcription backend (default: `whisper_cpp`)
-- `--n-threads N`: Number of threads for transcription (default: 1)
-- `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
-
-### Split Command
-
-```bash
-whisper-transcribe-py split (--file PATH | --url URL)
-```
-
-- `--file PATH`: Path to audio file (mutually exclusive with --url)
-- `--url URL`: URL to audio file (mutually exclusive with --file). Live streams not supported.
-- Output directory: `tmp/(filename without extension)/`
-
-## Output Format
-
-### Transcription Output (JSONL)
+### Transcribe Output Format (JSONL)
 
 Transcription outputs streaming JSONL (one JSON object per line). Each entry has a `type` field:
 
 **With VAD (default):** Includes segment boundaries and transcriptions:
 ```jsonl
-{"type": "segment_start", "timestamp": 0.5}
-{"type": "transcription", "start": 0.5, "end": 2.3, "text": "Hello world"}
-{"type": "segment_end", "timestamp": 2.3}
-{"type": "segment_start", "timestamp": 3.1}
-{"type": "transcription", "start": 3.1, "end": 5.8, "text": "This is a test"}
-{"type": "segment_end", "timestamp": 5.8}
+{"type": "segment_start", "timestamp": 0.5, "timestamp_formatted": "00:00:00.500"}
+{"type": "transcription", "start": 0.5, "start_formatted": "00:00:00.500", "end": 2.3, "end_formatted": "00:00:02.300", "text": "Hello world"}
+{"type": "segment_end", "timestamp": 2.3, "timestamp_formatted": "00:00:02.300"}
+{"type": "segment_start", "timestamp": 3.1, "timestamp_formatted": "00:00:03.100"}
+{"type": "transcription", "start": 3.1, "start_formatted": "00:00:03.100", "end": 5.8, "end_formatted": "00:00:05.800", "text": "This is a test"}
+{"type": "segment_end", "timestamp": 5.8, "timestamp_formatted": "00:00:05.800"}
 ```
 
 - `segment_start`: Marks the beginning of a VAD-detected speech segment
 - `transcription`: Contains the transcribed text with start/end timestamps
 - `segment_end`: Marks the end of a VAD-detected speech segment
+- `*_formatted`: Human-readable timestamps in `hh:mm:ss.ms` format
 
 **Without VAD (`--no-vad`):** Only transcriptions (no segment boundaries):
 ```jsonl
-{"type": "transcription", "start": 0.0, "end": 2.3, "text": "Hello world"}
-{"type": "transcription", "start": 2.3, "end": 5.8, "text": "This is a test"}
+{"type": "transcription", "start": 0.0, "start_formatted": "00:00:00.000", "end": 2.3, "end_formatted": "00:00:02.300", "text": "Hello world"}
+{"type": "transcription", "start": 2.3, "start_formatted": "00:00:02.300", "end": 5.8, "end_formatted": "00:00:05.800", "text": "This is a test"}
 ```
 
-### Split Mode
+---
 
-In split mode, detected speech segments are saved as Opus files (16kbps mono) to `tmp/(filename)/`:
+## Split Command
+
+Split audio into separate files based on VAD-detected speech segments (no transcription).
+
+```bash
+whisper-transcribe-py split (--file PATH | --url URL) [OPTIONS]
+```
+
+### Split Options
+
+- `--file PATH`: Path to audio file (mutually exclusive with --url)
+- `--url URL`: URL to audio file (mutually exclusive with --file). Live streams not supported.
+- `--preserve-sample-rate`: Preserve original sample rate (default: downsample to 16kHz)
+- `--format {opus, wav}`: Output format (default: opus)
+
+### Split Examples
+
+**Split audio by VAD into Opus segments:**
+```bash
+uv run whisper-transcribe-py split --file audio.wav
+# Outputs to tmp/audio/
+```
+
+**Split with preserved sample rate:**
+```bash
+uv run whisper-transcribe-py split --file audio.wav --preserve-sample-rate
+```
+
+**Split to WAV format:**
+```bash
+uv run whisper-transcribe-py split --file audio.wav --format wav
+```
+
+### Split Output Format
+
+Detected speech segments are saved as Opus files (16kbps mono) to `tmp/(filename)/`:
 
 ```
 tmp/audio/
@@ -189,6 +212,8 @@ tmp/audio/
 ```
 
 **Why Opus?** Opus is chosen because the output is expected to be speech, and Opus excels at encoding speech at low bitrates. The encoder uses `-application voip` mode which optimizes for speech content, providing better quality than general audio encoding at the same bitrate. At 16kbps mono, Opus delivers intelligible speech while keeping file sizes minimal.
+
+---
 
 ## Supported Languages
 
@@ -202,6 +227,13 @@ The tool supports all languages available in OpenAI Whisper models. Common langu
 - `yue` - Cantonese
 - `ja` - Japanese
 - `ru` - Russian
+
+**Chinese Character Conversion:** For Chinese language codes (`zh` and `yue`), you can optionally convert characters using `--chinese-conversion`:
+- `none` (default): No conversion, output as-is from Whisper
+- `simplified`: Convert to Simplified Chinese (zh-Hans)
+- `traditional`: Convert to Traditional Chinese (zh-Hant)
+
+Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 
 ## Performance Notes
 
