@@ -823,7 +823,7 @@ wheels = [
 
 [[package]]
 name = "whisper-transcribe-py"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "argparse" },
