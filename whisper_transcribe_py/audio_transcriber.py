@@ -71,7 +71,7 @@ def ffmpeg_stream_float32(
         command,
         stdin=sys.stdin.buffer if from_stdin else None,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+        stderr=None,  # Inherit parent's stderr
     )
 
     try:
@@ -83,12 +83,9 @@ def ffmpeg_stream_float32(
 
         returncode = process.wait()
         if returncode != 0:
-            stderr_output = process.stderr.read().decode('utf-8', errors='replace')
-            raise ValueError(f"ffmpeg command failed with return code {returncode}. Error: {stderr_output}")
+            raise ValueError(f"ffmpeg command failed with return code {returncode}")
     finally:
         process.stdout.close()
-        if process.stderr:
-            process.stderr.close()
 
 
 def get_window_size_samples():
