@@ -10,7 +10,6 @@ dependencies = [
     "argparse>=1.4.0,<2",
     "scipy>=1.14.1,<2",
     "python-dotenv>=1.0.1,<2",
-    "torch>=2.5.1,<3",
     "numpy>=2.2.1,<3",
     "zhconv-rs>=0.3.2.post2,<0.4",
 ]
@@ -20,17 +19,15 @@ whisper-transcribe-py = "whisper_transcribe_py.cli:main"
 
 [project.optional-dependencies]
 transcribe = [
-    "pywhispercpp",
+    "pywhispercpp @ git+https://github.com/absadiki/pywhispercpp@v1.3.3",
     "faster-whisper>=1.0.0,<2",
 ]
 dev = [
     "pytest>=9.0.0,<10",
 ]
 
-[tool.uv]
-
-[tool.uv.sources]
-pywhispercpp = { git = "https://github.com/absadiki/pywhispercpp", tag = "v1.3.3" }
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
