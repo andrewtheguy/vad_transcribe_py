@@ -40,18 +40,6 @@ def test_create_transcriber_factory():
     assert transcriber.n_threads == 2
 
 
-def test_pcm_conversion_functions():
-    """Test PCM audio conversion functions."""
-    # Test pcm_f32le_to_array - reads float32 directly
-    float32_audio = np.array([0.0, 0.5, -0.5, 1.0], dtype=np.float32)
-    pcm_bytes = float32_audio.tobytes()
-    result = audio_transcriber.pcm_f32le_to_array(pcm_bytes)
-
-    assert result.dtype == np.float32
-    assert len(result) == len(float32_audio)
-    np.testing.assert_array_equal(result, float32_audio)
-
-
 def test_get_window_size_samples():
     """Test window size calculation."""
     window_size = audio_transcriber.get_window_size_samples()

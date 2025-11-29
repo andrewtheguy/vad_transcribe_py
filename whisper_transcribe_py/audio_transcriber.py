@@ -1,15 +1,12 @@
 import subprocess
 import sys
-from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Literal
+from typing import Generator, Literal
 
 import numpy as np
 import numpy.typing as npt
 
 from zhconv_rs import zhconv
-
-from typing import Literal
 
 TARGET_SAMPLE_RATE = 16000
 ChineseConversion = Literal['none', 'simplified', 'traditional']
@@ -24,15 +21,24 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
 
-@contextmanager
-def ffmpeg_get_float32_pcm(full_audio_path=None, target_sample_rate=None, ac=None, from_stdin=False):
-    """Convert audio file to 32-bit float PCM using ffmpeg with streaming output.
+def ffmpeg_stream_float32(
+    full_audio_path: str | None = None,
+    target_sample_rate: int | None = None,
+    ac: int | None = None,
+    from_stdin: bool = False,
+    chunk_bytes: int = 4096,
+) -> Generator[npt.NDArray[np.float32], None, None]:
+    """Stream audio as float32 arrays from ffmpeg.
 
     Args:
         full_audio_path: Path to audio file or URL (ignored if from_stdin=True)
         target_sample_rate: Target sample rate for output
         ac: Number of audio channels
         from_stdin: If True, read WAV audio from stdin instead of file
+        chunk_bytes: Bytes to read per chunk (default 4096 = 1024 float32 samples)
+
+    Yields:
+        Float32 numpy arrays of audio samples
     """
     if from_stdin:
         command = [
@@ -61,30 +67,28 @@ def ffmpeg_get_float32_pcm(full_audio_path=None, target_sample_rate=None, ac=Non
         "pipe:"  # Output to stdout
     ])
 
-    process = None
+    process = subprocess.Popen(
+        command,
+        stdin=sys.stdin.buffer if from_stdin else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
 
     try:
-        process = subprocess.Popen(
-            command,
-            stdin=sys.stdin.buffer if from_stdin else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        yield process.stdout
+        while True:
+            chunk = process.stdout.read(chunk_bytes)
+            if not chunk:
+                break
+            yield np.frombuffer(chunk, dtype=np.float32)
+
         returncode = process.wait()
         if returncode != 0:
             stderr_output = process.stderr.read().decode('utf-8', errors='replace')
             raise ValueError(f"ffmpeg command failed with return code {returncode}. Error: {stderr_output}")
     finally:
-        if process is not None:
-            process.stdout.close()
-            if process.stderr:
-                process.stderr.close()
-
-
-def pcm_f32le_to_array(pcm_bytes: bytes) -> npt.NDArray[np.float32]:
-    """Convert raw PCM F32LE (32-bit float Little Endian) bytes to NumPy float32 array."""
-    return np.frombuffer(pcm_bytes, dtype=np.float32)
+        process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
 
 
 def get_window_size_samples():
