@@ -36,15 +36,22 @@ sudo apt install ffmpeg
 
 ### Installation
 
+The tool has two installation modes:
+
+| Installation | Commands Available | Use Case |
+|-------------|-------------------|----------|
+| Base | `split` only | VAD-based audio splitting without transcription |
+| With `[transcribe]` | `split` + `transcribe` | Full transcription with Whisper models |
+
 ```bash
 # Clone the repository
 git clone https://github.com/andrewtheguy/whisper_transcribe_py.git
 cd whisper_transcribe_py
 
-# Full installation with transcription support
+# Full installation with transcription support (recommended)
 uv sync --extra transcribe
 
-# Or minimal installation (VAD split only, no transcription)
+# Or minimal installation (split command only, no transcription)
 uv sync
 ```
 
@@ -53,7 +60,10 @@ uv sync
 For development, run commands with `uv run`:
 
 ```bash
+# Requires [transcribe] extra
 uv run whisper-transcribe-py transcribe --file audio.wav --lang en
+
+# Works with base installation
 uv run whisper-transcribe-py split --file audio.wav
 ```
 
@@ -62,18 +72,22 @@ uv run whisper-transcribe-py split --file audio.wav
 To install globally and run `whisper-transcribe-py` directly:
 
 ```bash
-# Install from GitHub (recommended)
+# Full installation from GitHub (recommended)
 uv tool install "whisper-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/whisper_transcribe_py.git@ref(tag or branch)"
 
+# VAD split only (no transcription)
+uv tool install "whisper-transcribe-py @ git+https://github.com/andrewtheguy/whisper_transcribe_py.git@ref(tag or branch)"
+
 # Or from local clone
-uv tool install ".[transcribe]"
+uv tool install ".[transcribe]"  # with transcription
+uv tool install "."              # split only
 ```
 
 After installation:
 
 ```bash
-whisper-transcribe-py transcribe --file audio.wav --lang en
-whisper-transcribe-py split --file audio.wav
+whisper-transcribe-py transcribe --file audio.wav --lang en  # requires [transcribe]
+whisper-transcribe-py split --file audio.wav                 # always available
 ```
 
 ---
@@ -98,6 +112,13 @@ whisper-transcribe-py transcribe (--file PATH | --url URL | --stdin) [OPTIONS]
 - `--n-threads N`: Number of threads for transcription (default: 1)
 - `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
+
+**VAD tuning options** (only apply when VAD is enabled):
+- `--min-speech-seconds FLOAT`: Minimum speech duration in seconds (default: 3.0)
+- `--max-speech-seconds FLOAT`: Maximum speech duration in seconds (default: 60.0)
+- `--speech-threshold FLOAT`: VAD speech detection threshold 0.0-1.0 (default: 0.5)
+- `--min-silence-duration-ms INT`: Minimum silence duration in ms to end segment (default: 2000)
+- `--look-back-seconds FLOAT`: Look-back buffer in seconds for segment start (default: 0.5)
 
 ### Transcribe Examples
 
@@ -178,9 +199,16 @@ whisper-transcribe-py split (--file PATH | --url URL) [OPTIONS]
 ### Split Options
 
 - `--file PATH`: Path to audio file (mutually exclusive with --url)
-- `--url URL`: URL to audio file (mutually exclusive with --file). Live streams not supported.
+- `--url URL`: URL to audio file (mutually exclusive with --file). Live streams not supported because there is no real use case for this.
 - `--preserve-sample-rate`: Preserve original sample rate (default: downsample to 16kHz)
 - `--format {opus, wav}`: Output format (default: opus)
+
+**VAD tuning options:**
+- `--min-speech-seconds FLOAT`: Minimum speech duration in seconds (default: 3.0)
+- `--max-speech-seconds FLOAT`: Maximum speech duration in seconds (default: 60.0)
+- `--speech-threshold FLOAT`: VAD speech detection threshold 0.0-1.0 (default: 0.5)
+- `--min-silence-duration-ms INT`: Minimum silence duration in ms to end segment (default: 2000)
+- `--look-back-seconds FLOAT`: Look-back buffer in seconds for segment start (default: 0.5)
 
 ### Split Examples
 

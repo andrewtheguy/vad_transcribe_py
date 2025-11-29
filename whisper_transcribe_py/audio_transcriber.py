@@ -159,8 +159,8 @@ class WhisperTranscriber:
         except ImportError:
             raise ImportError(
                 "pywhispercpp is not installed. "
-                "To use transcription, install with: uv pip install -e '.[transcribe]' "
-                "or use --no-transcribe flag for VAD-only mode."
+                "To use transcription, install with: uv pip install -e '.[transcribe]'. "
+                "For VAD-only mode without transcription, use the 'split' command instead."
             )
 
         self.whisper_cpp_model = Model(
@@ -190,8 +190,8 @@ class WhisperTranscriber:
         except ImportError:
             raise ImportError(
                 "faster-whisper is not installed. "
-                "To use transcription, install with: uv pip install -e '.[transcribe]' "
-                "or use --no-transcribe flag for VAD-only mode."
+                "To use transcription, install with: uv pip install -e '.[transcribe]'. "
+                "For VAD-only mode without transcription, use the 'split' command instead."
             )
 
         self.faster_whisper_model = WhisperModel(self.model)
