@@ -211,7 +211,7 @@ tmp/audio/
   ...
 ```
 
-**Why Opus?** Opus is chosen because the output is expected to be speech, and Opus excels at encoding speech at low bitrates. The encoder uses `-application voip` mode which optimizes for speech content, providing better quality than general audio encoding at the same bitrate. At 16kbps mono, Opus delivers intelligible speech while keeping file sizes minimal.
+**Why Opus at 16kbps?** The split command is designed for speech processing workflows (e.g., feeding segments to transcription APIs, archiving spoken content, or reviewing detected speech). Opus with `-application voip` mode is optimized specifically for speech, delivering clear and intelligible audio at just 16kbps mono. This is not intended for high-fidelity audio preservation—use `--format wav` if you need lossless output.
 
 ---
 
