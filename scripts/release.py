@@ -109,8 +109,12 @@ def update_version(pyproject_path: Path, new_version: str) -> None:
 
 def create_release(version: str) -> None:
     """Create git commit, tag, and GitHub release."""
+    # Sync dependencies to update lock file
+    print("Syncing dependencies...")
+    run_cmd(["uv", "sync"], capture=False)
+
     # Commit the version change
-    run_cmd(["git", "add", "pyproject.toml"])
+    run_cmd(["git", "add", "pyproject.toml", "uv.lock"])
     run_cmd(["git", "commit", "-m", f"chore: bump version to {version}"])
 
     # Create tag

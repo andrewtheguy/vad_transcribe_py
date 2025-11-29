@@ -699,7 +699,7 @@ def main():
     transcribe_input.add_argument('--stdin', action='store_true', help='Read WAV audio from stdin (always uses VAD, outputs to stdout)')
     parser_transcribe.add_argument('--output', type=str, default=None,
                                    help='Output path for JSONL transcript (default: stdout)')
-    parser_transcribe.add_argument('--lang', type=str, default='en',
+    parser_transcribe.add_argument('--language', type=str, default='en',
                                    help='Language code for transcription (default: en)')
     parser_transcribe.add_argument('--model', type=str, default='large-v3-turbo',
                                    help='Whisper model name (default: large-v3-turbo)')
@@ -737,7 +737,7 @@ def main():
                 if getattr(args, 'stdin', False):
                     print(f"Loading {args.model} model...", file=sys.stderr)
                     transcriber = create_transcriber(
-                        args.lang, args.model, args.backend, args.n_threads,
+                        args.language, args.model, args.backend, args.n_threads,
                         args.chinese_conversion
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
@@ -751,7 +751,7 @@ def main():
 
                     print(f"Loading {args.model} model...", file=sys.stderr)
                     transcriber = create_transcriber(
-                        args.lang, args.model, args.backend, args.n_threads,
+                        args.language, args.model, args.backend, args.n_threads,
                         args.chinese_conversion
                     )
 

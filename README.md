@@ -61,7 +61,7 @@ For development, run commands with `uv run`:
 
 ```bash
 # Requires [transcribe] extra
-uv run whisper-transcribe-py transcribe --file audio.wav --lang en
+uv run whisper-transcribe-py transcribe --file audio.wav --language en
 
 # Works with base installation
 uv run whisper-transcribe-py split --file audio.wav
@@ -86,7 +86,7 @@ uv tool install "."              # split only
 After installation:
 
 ```bash
-whisper-transcribe-py transcribe --file audio.wav --lang en  # requires [transcribe]
+whisper-transcribe-py transcribe --file audio.wav --language en  # requires [transcribe]
 whisper-transcribe-py split --file audio.wav                 # always available
 ```
 
@@ -105,7 +105,7 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--file PATH`: Path to audio file (mutually exclusive with --stdin)
 - `--stdin`: Read WAV audio from stdin (mutually exclusive with --file). Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
-- `--lang LANG`: Language code for transcription (default: `en`)
+- `--language LANG`: Language code for transcription (default: `en`)
 - `--model MODEL`: Whisper model to use (default: `large-v3-turbo`)
 - `--backend {whisper_cpp, faster_whisper}`: Transcription backend (default: `whisper_cpp`)
 - `--n-threads N`: Number of threads for transcription (default: 1)
@@ -123,12 +123,12 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 
 **Transcribe audio file with VAD to stdout (streaming JSONL):**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --lang en
+uv run whisper-transcribe-py transcribe --file audio.wav --language en
 ```
 
 **Transcribe to file:**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --lang en
+uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --language en
 ```
 
 **Transcribe without VAD (max 2 hours):**
@@ -139,10 +139,10 @@ uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jso
 **Transcribe from stdin (WAV format, always uses VAD, outputs to stdout in JSONL format):**
 ```bash
 # Pipe WAV audio from ffmpeg
-ffmpeg -i video.mp4 -f wav - | uv run whisper-transcribe-py transcribe --stdin --lang en
+ffmpeg -i video.mp4 -f wav - | uv run whisper-transcribe-py transcribe --stdin --language en
 
 # Or from a file
-cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --lang en
+cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --language en
 ```
 
 **Use faster-whisper backend:**
