@@ -25,8 +25,8 @@ def format_timestamp(seconds: float) -> str:
 
 
 @contextmanager
-def ffmpeg_get_16bit_pcm(full_audio_path=None, target_sample_rate=None, ac=None, from_stdin=False):
-    """Convert audio file to 16-bit PCM using ffmpeg with streaming output.
+def ffmpeg_get_float32_pcm(full_audio_path=None, target_sample_rate=None, ac=None, from_stdin=False):
+    """Convert audio file to 32-bit float PCM using ffmpeg with streaming output.
 
     Args:
         full_audio_path: Path to audio file or URL (ignored if from_stdin=True)
@@ -46,8 +46,8 @@ def ffmpeg_get_16bit_pcm(full_audio_path=None, target_sample_rate=None, ac=None,
         ]
 
     command.extend([
-        "-f", "s16le",  # Output format
-        "-acodec", "pcm_s16le",  # Audio codec
+        "-f", "f32le",  # Output format
+        "-acodec", "pcm_f32le",  # Audio codec
     ])
 
     if ac is not None:
@@ -82,19 +82,9 @@ def ffmpeg_get_16bit_pcm(full_audio_path=None, target_sample_rate=None, ac=None,
                 process.stderr.close()
 
 
-def pcm_int16_to_float32(audio_int16: np.ndarray) -> np.ndarray:
-    """Convert int16 PCM audio data to float32 format."""
-    max_int16 = np.iinfo(np.int16).max
-    audio_float32 = audio_int16.astype(np.float32) / (max_int16 + 1)
-    return audio_float32
-
-
-def pcm_s16le_to_float32(pcm_bytes: bytes) -> npt.NDArray[np.float32]:
-    """Convert raw PCM S16LE (Signed 16-bit Little Endian) bytes to NumPy float32 array."""
-    audio_int16 = np.frombuffer(pcm_bytes, dtype=np.int16)
-    max_int16 = np.iinfo(np.int16).max
-    audio_float32 = audio_int16.astype(np.float32) / (max_int16 + 1)
-    return audio_float32
+def pcm_f32le_to_array(pcm_bytes: bytes) -> npt.NDArray[np.float32]:
+    """Convert raw PCM F32LE (32-bit float Little Endian) bytes to NumPy float32 array."""
+    return np.frombuffer(pcm_bytes, dtype=np.float32)
 
 
 def get_window_size_samples():

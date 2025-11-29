@@ -42,20 +42,14 @@ def test_create_transcriber_factory():
 
 def test_pcm_conversion_functions():
     """Test PCM audio conversion functions."""
-    # Test pcm_int16_to_float32
-    int16_audio = np.array([0, 16384, -16384, 32767], dtype=np.int16)
-    float32_audio = audio_transcriber.pcm_int16_to_float32(int16_audio)
+    # Test pcm_f32le_to_array - reads float32 directly
+    float32_audio = np.array([0.0, 0.5, -0.5, 1.0], dtype=np.float32)
+    pcm_bytes = float32_audio.tobytes()
+    result = audio_transcriber.pcm_f32le_to_array(pcm_bytes)
 
-    assert float32_audio.dtype == np.float32
-    assert float32_audio[0] == 0.0
-    assert -1.0 <= float32_audio[3] <= 1.0
-
-    # Test pcm_s16le_to_float32
-    pcm_bytes = int16_audio.tobytes()
-    float32_from_bytes = audio_transcriber.pcm_s16le_to_float32(pcm_bytes)
-
-    assert float32_from_bytes.dtype == np.float32
-    assert len(float32_from_bytes) == len(int16_audio)
+    assert result.dtype == np.float32
+    assert len(result) == len(float32_audio)
+    np.testing.assert_array_equal(result, float32_audio)
 
 
 def test_get_window_size_samples():

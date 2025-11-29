@@ -12,8 +12,8 @@ from scipy import signal
 
 from whisper_transcribe_py.audio_transcriber import (
     TARGET_SAMPLE_RATE,
-    ffmpeg_get_16bit_pcm,
-    pcm_s16le_to_float32,
+    ffmpeg_get_float32_pcm,
+    pcm_f32le_to_array,
     get_window_size_samples,
     create_transcriber,
     TranscribedSegment,
@@ -182,7 +182,7 @@ def save_audio_segment(
         segment: AudioSegment with timing info
         output_dir: Directory to save the file
         index: Segment index for filename
-        original_audio: Optional int16 array at original sample rate/channels
+        original_audio: Optional float32 array at original sample rate/channels
         sample_rate: Sample rate of original_audio (default: 16kHz)
         channels: Number of channels in original_audio (default: 1)
         output_format: Output format - "opus" (16kbps) or "wav" (default: opus)
@@ -197,21 +197,20 @@ def save_audio_segment(
 
     # Determine audio source and format
     if original_audio is not None:
-        # Use original quality audio (already int16)
+        # Use original quality audio (float32)
         audio_to_encode = original_audio
         ar = sample_rate
         ac = channels
     else:
-        # Fall back to VAD audio (float32 -> int16)
-        max_int16 = np.iinfo(np.int16).max
-        audio_to_encode = (segment.audio * max_int16).astype(np.int16)
+        # Fall back to VAD audio (float32)
+        audio_to_encode = segment.audio
         ar = TARGET_SAMPLE_RATE
         ac = 1
 
     # Build ffmpeg command based on output format
     command = [
         "ffmpeg", "-y",
-        "-f", "s16le",
+        "-f", "f32le",
         "-ar", str(ar),
         "-ac", str(ac),
         "-i", "pipe:0",
@@ -343,7 +342,7 @@ def stream_transcribe_with_vad(
     chunks_read = 0
     total_bytes = 0
 
-    with ffmpeg_get_16bit_pcm(audio_file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+    with ffmpeg_get_float32_pcm(audio_file, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
         while True:
             chunk = stdout.read(4096)
             if not chunk:
@@ -351,7 +350,7 @@ def stream_transcribe_with_vad(
                 break
             chunks_read += 1
             total_bytes += len(chunk)
-            audio = pcm_s16le_to_float32(chunk)
+            audio = pcm_f32le_to_array(chunk)
             buffer.extend(audio)
 
             while len(buffer) >= window_size:
@@ -431,7 +430,7 @@ def stream_transcribe_stdin_with_vad(
     total_bytes = 0
 
     print("Reading WAV audio from stdin...", file=sys.stderr)
-    with ffmpeg_get_16bit_pcm(from_stdin=True, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+    with ffmpeg_get_float32_pcm(from_stdin=True, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
         while True:
             chunk = stdout.read(4096)
             if not chunk:
@@ -439,7 +438,7 @@ def stream_transcribe_stdin_with_vad(
                 break
             chunks_read += 1
             total_bytes += len(chunk)
-            audio = pcm_s16le_to_float32(chunk)
+            audio = pcm_f32le_to_array(chunk)
             buffer.extend(audio)
 
             while len(buffer) >= window_size:
@@ -490,13 +489,13 @@ def stream_transcribe_no_vad(
     audio_chunks: list[float] = []
     chunks_read = 0
 
-    with ffmpeg_get_16bit_pcm(audio_source, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+    with ffmpeg_get_float32_pcm(audio_source, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
         while True:
             chunk = stdout.read(4096)
             if not chunk:
                 break
             chunks_read += 1
-            audio = pcm_s16le_to_float32(chunk)
+            audio = pcm_f32le_to_array(chunk)
             audio_chunks.extend(audio)
 
             if chunks_read % 1000 == 0:
@@ -551,8 +550,8 @@ def split_by_vad(
         orig_sr = props["sample_rate"]
         print(f"Audio properties: {orig_sr}Hz (preserving sample rate)", file=sys.stderr)
 
-        # Rolling buffer for original audio (int16 mono)
-        original_buffer: list[int] = []
+        # Rolling buffer for original audio (float32 mono)
+        original_buffer: list[float] = []
         buffer_start_time = 0.0
 
         def on_segment_complete(segment: AudioSegment):
@@ -568,7 +567,7 @@ def split_by_vad(
             end_sample = min(len(original_buffer), end_sample)
 
             # Extract original audio for this segment
-            original_audio = np.array(original_buffer[start_sample:end_sample], dtype=np.int16)
+            original_audio = np.array(original_buffer[start_sample:end_sample], dtype=np.float32)
 
             # Save with original sample rate (mono)
             path = save_audio_segment(
@@ -605,7 +604,7 @@ def split_by_vad(
         chunks_read = 0
 
         # Stream at original sample rate, convert to mono
-        with ffmpeg_get_16bit_pcm(audio_source, ac=1) as stdout:
+        with ffmpeg_get_float32_pcm(audio_source, ac=1) as stdout:
             while True:
                 chunk = stdout.read(4096)
                 if not chunk:
@@ -613,12 +612,11 @@ def split_by_vad(
                     break
                 chunks_read += 1
 
-                # Store original audio (int16) for later extraction
-                chunk_int16 = np.frombuffer(chunk, dtype=np.int16)
-                original_buffer.extend(chunk_int16.tolist())
+                # Store original audio (float32) for later extraction
+                chunk_float = pcm_f32le_to_array(chunk)
+                original_buffer.extend(chunk_float.tolist())
 
-                # Convert to float32 and resample to 16kHz for VAD
-                chunk_float = pcm_s16le_to_float32(chunk)
+                # Resample to 16kHz for VAD
                 resampled = resample_to_16k(chunk_float, orig_sr)
                 vad_buffer.extend(resampled.tolist())
 
@@ -658,14 +656,14 @@ def split_by_vad(
         chunks_read = 0
 
         # Stream at 16kHz mono
-        with ffmpeg_get_16bit_pcm(audio_source, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
+        with ffmpeg_get_float32_pcm(audio_source, target_sample_rate=TARGET_SAMPLE_RATE, ac=1) as stdout:
             while True:
                 chunk = stdout.read(4096)
                 if not chunk:
                     print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
                     break
                 chunks_read += 1
-                audio = pcm_s16le_to_float32(chunk)
+                audio = pcm_f32le_to_array(chunk)
                 buffer.extend(audio)
 
                 while len(buffer) >= window_size:
