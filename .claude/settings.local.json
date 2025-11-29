@@ -29,7 +29,8 @@
       "mcp__context7__get-library-docs",
       "Bash(rm:*)",
       "Bash(uv run:*)",
-      "Bash(uv tool install --help:*)"
+      "Bash(uv tool install --help:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []
