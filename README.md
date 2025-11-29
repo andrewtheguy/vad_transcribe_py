@@ -63,7 +63,7 @@ To install globally and run `whisper-transcribe-py` directly:
 
 ```bash
 # Install from GitHub (recommended)
-uv tool install "whisper-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/whisper_transcribe_py.git@master"
+uv tool install "whisper-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/whisper_transcribe_py.git@ref(tag or branch)"
 
 # Or from local clone
 uv tool install ".[transcribe]"
