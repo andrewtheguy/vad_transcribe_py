@@ -30,7 +30,8 @@
       "Bash(rm:*)",
       "Bash(uv run:*)",
       "Bash(uv tool install --help:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(ls -la /home/debian/codes/moonshinetest/*.py)"
     ],
     "deny": [],
     "ask": []

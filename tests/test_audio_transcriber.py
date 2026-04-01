@@ -1,6 +1,10 @@
 import pytest
 
 import whisper_transcribe_py.audio_transcriber as audio_transcriber
+from whisper_transcribe_py.vad_processor import (
+    MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
+    MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -150,55 +154,44 @@ def test_hard_limit_seconds_whisper():
     assert transcriber.hard_limit_seconds == audio_transcriber.WHISPER_HARD_LIMIT_SECONDS
 
 
-def test_hard_limit_seconds_moonshine(monkeypatch):
-    """Test that moonshine backend reports correct hard limit."""
-    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
-    transcriber = audio_transcriber.WhisperTranscriber(
-        language="zh",
-        model="moonshine-base-zh",
-        backend="moonshine",
-    )
-    assert transcriber.hard_limit_seconds == audio_transcriber.MOONSHINE_HARD_LIMIT_SECONDS
+def test_moonshine_hard_limits_from_model_config():
+    """Test that moonshine hard limits come from model config."""
+    assert MOONSHINE_STREAMING_HARD_LIMIT_SECONDS == 60
+    assert MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS == 9
 
 
-def test_resolve_model_id_whisper():
-    """Test model ID resolution for whisper backend."""
-    assert audio_transcriber.resolve_model_id("large-v3-turbo", "whisper") == "openai/whisper-large-v3-turbo"
-    assert audio_transcriber.resolve_model_id("openai/whisper-large-v3", "whisper") == "openai/whisper-large-v3"
+def test_resolve_whisper_model_id():
+    """Test whisper model ID resolution."""
+    assert audio_transcriber._resolve_whisper_model_id("large-v3-turbo") == "openai/whisper-large-v3-turbo"
+    assert audio_transcriber._resolve_whisper_model_id("openai/whisper-large-v3") == "openai/whisper-large-v3"
 
 
-def test_resolve_model_id_moonshine():
-    """Test model ID resolution for moonshine backend."""
-    assert audio_transcriber.resolve_model_id("moonshine-base", "moonshine") == "UsefulSensors/moonshine-base"
-    assert audio_transcriber.resolve_model_id("moonshine-tiny-zh", "moonshine") == "UsefulSensors/moonshine-tiny-zh"
-    assert audio_transcriber.resolve_model_id("UsefulSensors/moonshine-tiny-zh", "moonshine") == "UsefulSensors/moonshine-tiny-zh"
+def test_moonshine_resolve_model():
+    """Test moonshine model resolution via models.py."""
+    from whisper_transcribe_py.moonshine.models import resolve_model
+
+    # English defaults to small-streaming
+    name, lang, arch, is_streaming, url, hard_limit, soft_limit = resolve_model("en")
+    assert name == "small-streaming-en"
+    assert is_streaming is True
+    assert hard_limit == MOONSHINE_STREAMING_HARD_LIMIT_SECONDS
+    assert soft_limit == 6.0
+
+    # Chinese defaults to base
+    name, lang, arch, is_streaming, url, hard_limit, soft_limit = resolve_model("zh")
+    assert name == "base-zh"
+    assert is_streaming is False
+    assert hard_limit == MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS
+    assert soft_limit == 6.0
+
+    # Explicit model
+    name, *_ = resolve_model("en", "tiny")
+    assert name == "tiny-en"
 
 
-def test_moonshine_default_model_english(monkeypatch):
-    """Test that moonshine auto-selects moonshine-base for English."""
-    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
-    transcriber = audio_transcriber.WhisperTranscriber(
-        language="en",
-        backend="moonshine",
-    )
-    assert transcriber.model == "moonshine-base"
+def test_moonshine_resolve_model_invalid_language():
+    """Test moonshine rejects unsupported language."""
+    from whisper_transcribe_py.moonshine.models import resolve_model
 
-
-def test_moonshine_default_model_chinese(monkeypatch):
-    """Test that moonshine auto-selects moonshine-base-zh for Chinese."""
-    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
-    transcriber = audio_transcriber.WhisperTranscriber(
-        language="zh",
-        backend="moonshine",
-    )
-    assert transcriber.model == "moonshine-base-zh"
-
-
-def test_moonshine_default_model_cantonese(monkeypatch):
-    """Test that moonshine auto-selects moonshine-base-zh for Cantonese."""
-    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
-    transcriber = audio_transcriber.WhisperTranscriber(
-        language="yue",
-        backend="moonshine",
-    )
-    assert transcriber.model == "moonshine-base-zh"
+    with pytest.raises(ValueError, match="Unknown language"):
+        resolve_model("fr")
