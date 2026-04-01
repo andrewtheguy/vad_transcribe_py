@@ -477,6 +477,15 @@ wheels = [
 ]
 
 [[package]]
+name = "platformdirs"
+version = "4.9.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/56/8d4c30c8a1d07013911a8fdbd8f89440ef9f08d07a1b50ab8ca8be5a20f9/platformdirs-4.9.4.tar.gz", hash = "sha256:1ec356301b7dc906d83f371c8f487070e99d3ccf9e501686456394622a01a934", size = 28737, upload-time = "2026-03-05T18:34:13.271Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/d7/97f7e3a6abb67d8080dd406fd4df842c2be0efaf712d1c899c32a075027c/platformdirs-4.9.4-py3-none-any.whl", hash = "sha256:68a9a4619a666ea6439f2ff250c12a853cd1cbd5158d258bd824a7df6be2f868", size = 21216, upload-time = "2026-03-05T18:34:12.172Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -895,6 +904,11 @@ dev = [
 ]
 transcribe = [
     { name = "accelerate" },
+    { name = "filelock" },
+    { name = "httpx" },
+    { name = "onnxruntime" },
+    { name = "platformdirs" },
+    { name = "tqdm" },
     { name = "transformers" },
 ]
 
@@ -902,12 +916,17 @@ transcribe = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'transcribe'", specifier = ">=1.0" },
     { name = "argparse", specifier = ">=1.4.0,<2" },
+    { name = "filelock", marker = "extra == 'transcribe'" },
+    { name = "httpx", marker = "extra == 'transcribe'" },
     { name = "numpy", specifier = ">=2.2.1,<3" },
+    { name = "onnxruntime", marker = "extra == 'transcribe'" },
+    { name = "platformdirs", marker = "extra == 'transcribe'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0,<10" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.6" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
+    { name = "tqdm", marker = "extra == 'transcribe'" },
     { name = "transformers", marker = "extra == 'transcribe'", specifier = ">=4.52" },
     { name = "zhconv-rs", specifier = ">=0.3.2.post2,<0.4" },
 ]

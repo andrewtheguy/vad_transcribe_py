@@ -14,7 +14,6 @@ TARGET_SAMPLE_RATE = 16000
 ChineseConversion = Literal['none', 'simplified', 'traditional']
 
 WHISPER_HARD_LIMIT_SECONDS = 30
-MOONSHINE_HARD_LIMIT_SECONDS = 14
 
 
 def format_timestamp(seconds: float) -> str:
@@ -224,15 +223,11 @@ def _get_device_and_dtype():
         return "cpu", torch.float32
 
 
-def resolve_model_id(model: str, backend: str) -> str:
-    """Resolve short model name to full HuggingFace model ID."""
+def _resolve_whisper_model_id(model: str) -> str:
+    """Resolve short whisper model name to full HuggingFace model ID."""
     if '/' in model:
         return model
-    if backend == 'whisper':
-        return f"openai/whisper-{model}"
-    elif backend == 'moonshine':
-        return f"UsefulSensors/{model}"
-    return model
+    return f"openai/whisper-{model}"
 
 
 def create_transcriber(
@@ -251,7 +246,7 @@ def create_transcriber(
 
 
 class WhisperTranscriber:
-    """Transcriber using HuggingFace Transformers backends."""
+    """Transcriber supporting Whisper (HF Transformers) and Moonshine (ONNX) backends."""
 
     def __init__(
         self,
@@ -264,30 +259,20 @@ class WhisperTranscriber:
         self.model = model
         self.backend = backend
         self.chinese_conversion = chinese_conversion
+        self._hard_limit_seconds = WHISPER_HARD_LIMIT_SECONDS
 
         # Load backend-specific model
         if self.backend == 'whisper':
             print(f"Loading {self.model} model...", file=sys.stderr)
             self._load_whisper()
         elif self.backend == 'moonshine':
-            # Auto-select moonshine model based on language if using whisper default
-            if self.model == 'large-v3-turbo':
-                if self.language in ('zh', 'yue'):
-                    self.model = 'moonshine-base-zh'
-                else:
-                    self.model = 'moonshine-base'
-            print(f"Loading {self.model} model...", file=sys.stderr)
             self._load_moonshine()
         else:
             raise ValueError(f"Unsupported backend: {self.backend}")
 
     @property
     def hard_limit_seconds(self) -> int:
-        if self.backend == 'whisper':
-            return WHISPER_HARD_LIMIT_SECONDS
-        elif self.backend == 'moonshine':
-            return MOONSHINE_HARD_LIMIT_SECONDS
-        return WHISPER_HARD_LIMIT_SECONDS
+        return self._hard_limit_seconds
 
     def _load_whisper(self):
         """Load Whisper model via HuggingFace Transformers pipeline."""
@@ -300,7 +285,7 @@ class WhisperTranscriber:
                 "For VAD-only mode without transcription, use the 'split' command instead."
             )
 
-        model_id = resolve_model_id(self.model, self.backend)
+        model_id = _resolve_whisper_model_id(self.model)
         device, torch_dtype = _get_device_and_dtype()
 
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
@@ -322,28 +307,32 @@ class WhisperTranscriber:
         print(f"Whisper model loaded: {model_id} on {device}", file=sys.stderr)
 
     def _load_moonshine(self):
-        """Load Moonshine model via HuggingFace Transformers."""
-        try:
-            from transformers import MoonshineForConditionalGeneration, AutoProcessor
-        except ImportError:
-            raise ImportError(
-                "transformers is not installed. "
-                "To use transcription, install with: uv pip install -e '.[transcribe]'. "
-                "For VAD-only mode without transcription, use the 'split' command instead."
-            )
+        """Load Moonshine model via ONNX runtime."""
+        from whisper_transcribe_py.moonshine import resolve_model, download_model, Transcriber, SAMPLE_RATE
 
-        model_id = resolve_model_id(self.model, self.backend)
-        device, torch_dtype = _get_device_and_dtype()
+        # resolve_model handles default model selection per language
+        model_arg = None if self.model == 'large-v3-turbo' else self.model
+        name, language, arch, is_streaming, url, hard_limit = resolve_model(
+            self.language, model_arg
+        )
+        self.model = name
+        self._hard_limit_seconds = hard_limit
 
-        self.moonshine_model = MoonshineForConditionalGeneration.from_pretrained(
-            model_id
-        ).to(device).to(torch_dtype)
+        print(f"Loading {name} model...", file=sys.stderr)
+        model_dir = download_model(language, arch, url)
 
-        self.moonshine_processor = AutoProcessor.from_pretrained(model_id)
-        self._moonshine_device = device
-        self._moonshine_dtype = torch_dtype
+        token_limit_factor = 6.5 / SAMPLE_RATE if is_streaming else 13 / SAMPLE_RATE
+        strip_cjk_spaces = self.language in ('zh', 'ja', 'ko')
 
-        print(f"Moonshine model loaded: {model_id} on {device}", file=sys.stderr)
+        self._moonshine_transcriber = Transcriber(
+            model_dir=model_dir,
+            model_arch=arch,
+            is_streaming=is_streaming,
+            strip_cjk_spaces=strip_cjk_spaces,
+            token_limit_factor=token_limit_factor,
+        )
+
+        print(f"Moonshine model loaded: {name}", file=sys.stderr)
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """
@@ -379,17 +368,7 @@ class WhisperTranscriber:
                 ))
 
         elif self.backend == 'moonshine':
-            inputs = self.moonshine_processor(
-                audio,
-                return_tensors="pt",
-                sampling_rate=self.moonshine_processor.feature_extractor.sampling_rate,
-            )
-            inputs = inputs.to(self._moonshine_device, self._moonshine_dtype)
-
-            # Model's generation_config.json has max_length: 194 which
-            # prevents hallucination loops (based on ~6.5 tokens/sec * 30s)
-            generated_ids = self.moonshine_model.generate(**inputs)
-            text = self.moonshine_processor.decode(generated_ids[0], skip_special_tokens=True)
+            text = self._moonshine_transcriber.transcribe_chunk(audio)
 
             end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
             start_fmt = format_timestamp(start_offset)

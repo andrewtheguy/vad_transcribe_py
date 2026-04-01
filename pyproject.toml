@@ -21,6 +21,11 @@ whisper-transcribe-py = "whisper_transcribe_py.cli:main"
 transcribe = [
     "transformers>=4.52",
     "accelerate>=1.0",
+    "onnxruntime",
+    "platformdirs",
+    "tqdm",
+    "filelock",
+    "httpx",
 ]
 dev = [
     "pytest>=9.0.0,<10",

@@ -1,9 +1,9 @@
 # Whisper Transcribe - File Transcription Tool
 
-**Whisper Transcribe** is a file-based audio transcription tool that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends via HuggingFace Transformers:
+**Whisper Transcribe** is a file-based audio transcription tool that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends:
 
-- [Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) (default) - OpenAI's Whisper large-v3-turbo, multilingual ASR
-- [Moonshine](https://huggingface.co/collections/UsefulSensors/flavors-of-moonshine) - Small ASR models for edge devices. Default: `moonshine-base` (English), `moonshine-base-zh` (Chinese)
+- [Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) (default) - OpenAI's Whisper large-v3-turbo via HuggingFace Transformers, multilingual ASR
+- [Moonshine](https://github.com/usefulsensors/moonshine) - Fast ONNX-based ASR models (English: streaming, Chinese: non-streaming). Auto-downloaded on first use.
 
 ## Features
 
@@ -106,7 +106,7 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--stdin`: Read WAV audio (mono, 16kHz) from stdin (mutually exclusive with --file). Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV. Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (default: `en`)
-- `--model MODEL`: Model name or HuggingFace model ID (default: `large-v3-turbo`). Short names are resolved per backend: `large-v3-turbo` → `openai/whisper-large-v3-turbo`, `moonshine-base` → `UsefulSensors/moonshine-base`. For moonshine, auto-selects `moonshine-base` (English) or `moonshine-base-zh` (Chinese) if not specified.
+- `--model MODEL`: Model name (default: `large-v3-turbo`). For whisper: HuggingFace model ID or short name (`large-v3-turbo` → `openai/whisper-large-v3-turbo`). For moonshine: `small-streaming` (English default), `base` (Chinese default), `tiny`, `medium-streaming`, etc. Auto-selected if omitted.
 - `--backend {whisper, moonshine}`: Transcription backend (default: `whisper`)
 - `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
@@ -147,16 +147,16 @@ ffmpeg -loglevel error -i video.mp4 -ac 1 -ar 16000 -f wav -acodec pcm_f32le - |
 cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --language en
 ```
 
-**Use Moonshine backend (auto-selects model by language):**
+**Use Moonshine backend (auto-selects model by language, ONNX models downloaded on first use):**
 ```bash
-# English — uses moonshine-base by default
+# English — uses small-streaming by default
 uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --language en
 
-# Chinese — uses moonshine-base-zh by default
+# Chinese — uses base by default
 uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --language zh
 
 # Or specify model explicitly
-uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --model moonshine-tiny
+uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --model tiny --language en
 ```
 
 **Use a different Whisper model:**
@@ -268,10 +268,11 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 
 ## Performance Notes
 
-- **Whisper** backend: Best for multilingual transcription, 30-second receptive field
-- **Moonshine** backend: Tiny specialized models for edge devices, 14-second receptive field
-- Device auto-detected: CUDA > MPS > CPU with appropriate dtype (float16 on GPU, float32 on CPU)
+- **Whisper** backend: Best for multilingual transcription, 30-second hard limit per segment
+- **Moonshine** backend: Fast ONNX inference. English (streaming, 60s hard limit), Chinese (non-streaming, 9s hard limit)
+- Whisper device auto-detected: CUDA > MPS > CPU. Moonshine uses ONNX runtime (CUDA or CPU)
 - Larger Whisper models (e.g., `large-v3`) provide better accuracy but require more memory
+- Moonshine supports English and Chinese only
 
 ## Development
 
@@ -307,7 +308,7 @@ pyproject.toml                  # Project configuration
 - File-based transcription only (no real-time/live transcription)
 - Live streams not supported (URLs must have fixed duration)
 - `--no-vad` mode limited to 2 hours to prevent memory issues
-- VAD enforces per-backend hard limits on segment duration (30s for Whisper, 14s for Moonshine) via force-split
+- VAD enforces per-backend hard limits on segment duration via force-split (30s Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming)
 - No database persistence (outputs to JSONL files or Opus segments)
 - No web interface
 

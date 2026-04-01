@@ -152,8 +152,8 @@ class SpeechDetector:
         # Detect speech in current window
         has_speech = self._detect_speech(audio_window)
 
-        # Get current segment duration
-        seconds = len(self._speech_section) / self.sample_rate
+        # Get current segment duration (including buffered silence)
+        seconds = (len(self._speech_section) + len(self._silence_buffer)) / self.sample_rate
 
         # Hard limit: force-split, then current window starts the next segment
         if seconds >= self.hard_limit_seconds:
