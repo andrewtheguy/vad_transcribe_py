@@ -267,8 +267,16 @@ class WhisperTranscriber:
 
         # Load backend-specific model
         if self.backend == 'whisper':
+            print(f"Loading {self.model} model...", file=sys.stderr)
             self._load_whisper()
         elif self.backend == 'moonshine':
+            # Auto-select moonshine model based on language if using whisper default
+            if self.model == 'large-v3-turbo':
+                if self.language in ('zh', 'yue'):
+                    self.model = 'moonshine-base-zh'
+                else:
+                    self.model = 'moonshine-base'
+            print(f"Loading {self.model} model...", file=sys.stderr)
             self._load_moonshine()
         else:
             raise ValueError(f"Unsupported backend: {self.backend}")

@@ -3,7 +3,7 @@
 **Whisper Transcribe** is a file-based audio transcription tool that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends via HuggingFace Transformers:
 
 - [Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) (default) - OpenAI's Whisper large-v3-turbo, multilingual ASR
-- [Moonshine](https://huggingface.co/collections/UsefulSensors/flavors-of-moonshine) - Tiny specialized ASR models for edge devices (language-specific)
+- [Moonshine](https://huggingface.co/collections/UsefulSensors/flavors-of-moonshine) - Small ASR models for edge devices. Default: `moonshine-base` (English), `moonshine-base-zh` (Chinese)
 
 ## Features
 
@@ -106,7 +106,7 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--stdin`: Read WAV audio (mono, 16kHz) from stdin (mutually exclusive with --file). Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV. Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (default: `en`)
-- `--model MODEL`: Model name or HuggingFace model ID (default: `large-v3-turbo`). Short names are resolved per backend: `large-v3-turbo` → `openai/whisper-large-v3-turbo`, `moonshine-tiny-zh` → `UsefulSensors/moonshine-tiny-zh`.
+- `--model MODEL`: Model name or HuggingFace model ID (default: `large-v3-turbo`). Short names are resolved per backend: `large-v3-turbo` → `openai/whisper-large-v3-turbo`, `moonshine-base` → `UsefulSensors/moonshine-base`. For moonshine, auto-selects `moonshine-base` (English) or `moonshine-base-zh` (Chinese) if not specified.
 - `--backend {whisper, moonshine}`: Transcription backend (default: `whisper`)
 - `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
@@ -147,9 +147,16 @@ ffmpeg -loglevel error -i video.mp4 -ac 1 -ar 16000 -f wav -acodec pcm_f32le - |
 cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --language en
 ```
 
-**Use Moonshine backend (language-specific model required):**
+**Use Moonshine backend (auto-selects model by language):**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --model moonshine-tiny-zh
+# English — uses moonshine-base by default
+uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --language en
+
+# Chinese — uses moonshine-base-zh by default
+uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --language zh
+
+# Or specify model explicitly
+uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --model moonshine-tiny
 ```
 
 **Use a different Whisper model:**

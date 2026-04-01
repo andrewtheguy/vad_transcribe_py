@@ -711,7 +711,6 @@ def main():
             if args.action == 'transcribe':
                 # Handle stdin mode separately (no validation, always VAD, always stdout)
                 if getattr(args, 'stdin', False):
-                    print(f"Loading {args.model} model...", file=sys.stderr)
                     transcriber = create_transcriber(
                         args.language, args.model, args.backend,
                         args.chinese_conversion
@@ -726,7 +725,6 @@ def main():
                     audio_source = args.file
                     duration = validate_audio_source(audio_source)
 
-                    print(f"Loading {args.model} model...", file=sys.stderr)
                     transcriber = create_transcriber(
                         args.language, args.model, args.backend,
                         args.chinese_conversion

@@ -155,7 +155,7 @@ def test_hard_limit_seconds_moonshine(monkeypatch):
     monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
     transcriber = audio_transcriber.WhisperTranscriber(
         language="zh",
-        model="moonshine-tiny-zh",
+        model="moonshine-base-zh",
         backend="moonshine",
     )
     assert transcriber.hard_limit_seconds == audio_transcriber.MOONSHINE_HARD_LIMIT_SECONDS
@@ -169,5 +169,36 @@ def test_resolve_model_id_whisper():
 
 def test_resolve_model_id_moonshine():
     """Test model ID resolution for moonshine backend."""
+    assert audio_transcriber.resolve_model_id("moonshine-base", "moonshine") == "UsefulSensors/moonshine-base"
     assert audio_transcriber.resolve_model_id("moonshine-tiny-zh", "moonshine") == "UsefulSensors/moonshine-tiny-zh"
-    assert audio_transcriber.resolve_model_id("UsefulSensors/moonshine-tiny-ja", "moonshine") == "UsefulSensors/moonshine-tiny-ja"
+    assert audio_transcriber.resolve_model_id("UsefulSensors/moonshine-tiny-zh", "moonshine") == "UsefulSensors/moonshine-tiny-zh"
+
+
+def test_moonshine_default_model_english(monkeypatch):
+    """Test that moonshine auto-selects moonshine-base for English."""
+    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="en",
+        backend="moonshine",
+    )
+    assert transcriber.model == "moonshine-base"
+
+
+def test_moonshine_default_model_chinese(monkeypatch):
+    """Test that moonshine auto-selects moonshine-base-zh for Chinese."""
+    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="zh",
+        backend="moonshine",
+    )
+    assert transcriber.model == "moonshine-base-zh"
+
+
+def test_moonshine_default_model_cantonese(monkeypatch):
+    """Test that moonshine auto-selects moonshine-base-zh for Cantonese."""
+    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="yue",
+        backend="moonshine",
+    )
+    assert transcriber.model == "moonshine-base-zh"
