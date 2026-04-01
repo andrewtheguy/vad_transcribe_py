@@ -281,23 +281,6 @@ uv sync --extra dev
 uv run pytest
 ```
 
-## Project Structure
-
-```
-whisper_transcribe_py/
-  ├── __init__.py
-  ├── cli.py                    # CLI entry point
-  ├── audio_transcriber.py      # Core transcription logic
-  ├── vad_processor.py          # Voice activity detection & config constants
-  ├── file_lock.py              # File locking for exclusive access
-  └── moonshine/                # Moonshine ONNX backend
-      ├── models.py             # Model registry (English, Chinese)
-      ├── download.py           # ONNX model download & caching
-      ├── transcriber.py        # Streaming & non-streaming ONNX inference
-      └── tokenizer.py          # Binary tokenizer format
-
-pyproject.toml                  # Project configuration
-```
 
 ## Requirements
 
