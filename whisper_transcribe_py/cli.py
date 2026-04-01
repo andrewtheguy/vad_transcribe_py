@@ -269,6 +269,13 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file):
     output_file.flush()
 
 
+def write_jsonl_marker(event: str, output_file):
+    """Write a stream marker (stream_start or stream_end) as JSONL."""
+    line = json.dumps({"type": event}, ensure_ascii=False)
+    output_file.write(line + "\n")
+    output_file.flush()
+
+
 def write_jsonl_boundary(event: str, timestamp: float, output_file):
     """Write a segment boundary event as JSONL.
 
@@ -314,23 +321,20 @@ def stream_transcribe_with_vad(
     Returns:
         Number of segments transcribed
     """
+    write_jsonl_marker("stream_start", output_file)
     segment_count = 0
 
     def on_segment_complete(segment: AudioSegment):
         nonlocal segment_count
-        # Print VAD status to stderr with formatted timestamp
         start_fmt = format_timestamp(segment.start)
         print(f"[VAD] Segment {segment_count}: {start_fmt} ({segment.start:.2f}s), duration={segment.duration_seconds:.2f}s", file=sys.stderr)
 
-        # Emit segment_start boundary
         write_jsonl_boundary("segment_start", segment.start, output_file)
 
-        # Transcribe immediately and output to JSONL
         transcribed = transcriber.transcribe(segment.audio, segment.start)
         for ts in transcribed:
             write_jsonl_segment(ts, output_file)
 
-        # Emit segment_end boundary
         segment_end_time = segment.start + segment.duration_seconds
         write_jsonl_boundary("segment_end", segment_end_time, output_file)
 
@@ -369,6 +373,7 @@ def stream_transcribe_with_vad(
 
     print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
     speech_detector.flush()
+    write_jsonl_marker("stream_end", output_file)
     print(f"Found {segment_count} speech segments", file=sys.stderr)
     return segment_count
 
@@ -400,22 +405,19 @@ def stream_transcribe_stdin_with_vad(
     """
     segment_count = 0
     output_file = sys.stdout
+    write_jsonl_marker("stream_start", output_file)
 
     def on_segment_complete(segment: AudioSegment):
         nonlocal segment_count
-        # Print VAD status to stderr with formatted timestamp
         start_fmt = format_timestamp(segment.start)
         print(f"[VAD] Segment {segment_count}: {start_fmt} ({segment.start:.2f}s), duration={segment.duration_seconds:.2f}s", file=sys.stderr)
 
-        # Emit segment_start boundary
         write_jsonl_boundary("segment_start", segment.start, output_file)
 
-        # Transcribe immediately and output to JSONL
         transcribed = transcriber.transcribe(segment.audio, segment.start)
         for ts in transcribed:
             write_jsonl_segment(ts, output_file)
 
-        # Emit segment_end boundary
         segment_end_time = segment.start + segment.duration_seconds
         write_jsonl_boundary("segment_end", segment_end_time, output_file)
 
@@ -454,6 +456,7 @@ def stream_transcribe_stdin_with_vad(
 
     print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
     speech_detector.flush()
+    write_jsonl_marker("stream_end", output_file)
     print(f"Found {segment_count} speech segments", file=sys.stderr)
     return segment_count
 
@@ -503,9 +506,11 @@ def stream_transcribe_no_vad(
     # Transcribe full audio and output as JSONL
     audio_array = np.array(audio_chunks, dtype=np.float32)
     print(f"Transcribing {len(audio_array) / TARGET_SAMPLE_RATE:.2f}s of audio...", file=sys.stderr)
+    write_jsonl_marker("stream_start", output_file)
     results = transcriber.transcribe(audio_array, 0.0)
     for segment in results:
         write_jsonl_segment(segment, output_file)
+    write_jsonl_marker("stream_end", output_file)
     return len(results)
 
 
