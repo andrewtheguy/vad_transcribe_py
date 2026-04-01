@@ -233,9 +233,12 @@ def _resolve_whisper_model_id(model: str) -> str:
     return f"openai/whisper-{model}"
 
 
+WHISPER_DEFAULT_MODEL = "large-v3-turbo"
+
+
 def create_transcriber(
     language: str,
-    model: str = "large-v3-turbo",
+    model: str | None = None,
     backend: Literal['whisper', 'moonshine'] = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
 ) -> 'WhisperTranscriber':
@@ -254,7 +257,7 @@ class WhisperTranscriber:
     def __init__(
         self,
         language: str,
-        model: str = "large-v3-turbo",
+        model: str | None = None,
         backend: Literal['whisper', 'moonshine'] = 'whisper',
         chinese_conversion: ChineseConversion = 'none',
     ):
@@ -267,10 +270,12 @@ class WhisperTranscriber:
 
         # Load backend-specific model
         if self.backend == 'whisper':
+            if self.model is None:
+                self.model = WHISPER_DEFAULT_MODEL
             print(f"Loading {self.model} model...", file=sys.stderr)
             self._load_whisper()
         elif self.backend == 'moonshine':
-            self._load_moonshine()
+            self._load_moonshine()  # handles model=None via resolve_model
         else:
             raise ValueError(f"Unsupported backend: {self.backend}")
 
@@ -318,10 +323,9 @@ class WhisperTranscriber:
         """Load Moonshine model via ONNX runtime."""
         from whisper_transcribe_py.moonshine import resolve_model, download_model, Transcriber, SAMPLE_RATE
 
-        # resolve_model handles default model selection per language
-        model_arg = None if self.model == 'large-v3-turbo' else self.model
+        # resolve_model handles default model selection per language when model is None
         name, language, arch, is_streaming, url, hard_limit, soft_limit = resolve_model(
-            self.language, model_arg
+            self.language, self.model
         )
         self.model = name
         self._hard_limit_seconds = hard_limit

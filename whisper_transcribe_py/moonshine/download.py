@@ -22,6 +22,39 @@ def get_cache_dir() -> Path:
     return Path(os.environ.get(env_var, user_cache_dir(APP_NAME)))
 
 
+def _write_stream(response, partial: Path, existing_size: int) -> None:
+    """Write an httpx streaming response to a partial file."""
+    if response.status_code not in (200, 206):
+        response.raise_for_status()
+
+    if response.status_code == 206:
+        content_range = response.headers.get("Content-Range", "")
+        if "/" in content_range:
+            total = int(content_range.split("/")[-1])
+        else:
+            cl = response.headers.get("Content-Length")
+            total = existing_size + int(cl) if cl else None
+    else:
+        existing_size = 0
+        partial.unlink(missing_ok=True)
+        cl = response.headers.get("Content-Length")
+        total = int(cl) if cl else None
+
+    mode = "ab" if existing_size > 0 else "wb"
+    with open(partial, mode) as f, tqdm(
+        total=total,
+        initial=existing_size,
+        unit="B",
+        unit_scale=True,
+        desc=partial.stem,
+        file=sys.stderr,
+        disable=not sys.stderr.isatty(),
+    ) as bar:
+        for chunk in response.iter_bytes(chunk_size=8192):
+            f.write(chunk)
+            bar.update(len(chunk))
+
+
 def _download_file(url: str, dest: Path, timeout: int = 30) -> Path:
     """Download a file with resume support and atomic writes."""
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -37,43 +70,20 @@ def _download_file(url: str, dest: Path, timeout: int = 30) -> Path:
         if existing_size > 0:
             headers["Range"] = f"bytes={existing_size}-"
 
+        # Try with Range header first; on 416 retry from scratch
         with httpx.stream("GET", url, headers=headers, timeout=timeout, follow_redirects=True) as response:
             if response.status_code == 416:
-                # Range not satisfiable — start over
                 existing_size = 0
                 partial.unlink(missing_ok=True)
-                response = httpx.stream("GET", url, timeout=timeout, follow_redirects=True).__enter__()
-
-            if response.status_code not in (200, 206):
-                response.raise_for_status()
-
-            if response.status_code == 206:
-                content_range = response.headers.get("Content-Range", "")
-                if "/" in content_range:
-                    total = int(content_range.split("/")[-1])
-                else:
-                    cl = response.headers.get("Content-Length")
-                    total = existing_size + int(cl) if cl else None
+                # Fall through — retry below
             else:
-                existing_size = 0
-                partial.unlink(missing_ok=True)
-                cl = response.headers.get("Content-Length")
-                total = int(cl) if cl else None
+                _write_stream(response, partial, existing_size)
+                partial.rename(dest)
+                return dest
 
-            mode = "ab" if existing_size > 0 else "wb"
-            filename = dest.name
-            with open(partial, mode) as f, tqdm(
-                total=total,
-                initial=existing_size,
-                unit="B",
-                unit_scale=True,
-                desc=filename,
-                file=sys.stderr,
-                disable=not sys.stderr.isatty(),
-            ) as bar:
-                for chunk in response.iter_bytes(chunk_size=8192):
-                    f.write(chunk)
-                    bar.update(len(chunk))
+        # Retry without Range header
+        with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as response:
+            _write_stream(response, partial, 0)
 
         partial.rename(dest)
     return dest

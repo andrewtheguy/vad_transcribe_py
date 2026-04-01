@@ -687,8 +687,8 @@ def main():
                                    help='Output path for JSONL transcript (default: stdout)')
     parser_transcribe.add_argument('--language', type=str, default='en',
                                    help='Language code for transcription (default: en)')
-    parser_transcribe.add_argument('--model', type=str, default='large-v3-turbo',
-                                   help='Whisper model name (default: large-v3-turbo)')
+    parser_transcribe.add_argument('--model', type=str, default=None,
+                                   help='Model name (default: large-v3-turbo for whisper, auto-selected for moonshine)')
     parser_transcribe.add_argument('--backend', type=str, choices=['whisper', 'moonshine'],
                                    default='whisper', help='Transcription backend (default: whisper)')
     parser_transcribe.add_argument('--vad', action=argparse.BooleanOptionalAction, default=True,
