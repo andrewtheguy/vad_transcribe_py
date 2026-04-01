@@ -386,12 +386,9 @@ class WhisperTranscriber:
             )
             inputs = inputs.to(self._moonshine_device, self._moonshine_dtype)
 
-            # Limit max tokens to prevent hallucination loops
-            token_limit_factor = 13 / self.moonshine_processor.feature_extractor.sampling_rate
-            seq_lens = inputs.attention_mask.sum(dim=-1)
-            max_length = int((seq_lens * token_limit_factor).max().item())
-
-            generated_ids = self.moonshine_model.generate(**inputs, max_length=max_length)
+            # Model's generation_config.json has max_length: 194 which
+            # prevents hallucination loops (based on ~6.5 tokens/sec * 30s)
+            generated_ids = self.moonshine_model.generate(**inputs)
             text = self.moonshine_processor.decode(generated_ids[0], skip_special_tokens=True)
 
             end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
