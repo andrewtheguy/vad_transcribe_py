@@ -1,9 +1,9 @@
 import pytest
 
 import whisper_transcribe_py.audio_transcriber as audio_transcriber
-from whisper_transcribe_py.moonshine.models import (
-    NON_STREAMING_HARD_MAX_SPEECH_SECONDS,
-    STREAMING_HARD_MAX_SPEECH_SECONDS,
+from whisper_transcribe_py.vad_processor import (
+    MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
+    MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,
 )
 
 
@@ -156,8 +156,8 @@ def test_hard_limit_seconds_whisper():
 
 def test_moonshine_hard_limits_from_model_config():
     """Test that moonshine hard limits come from model config."""
-    assert STREAMING_HARD_MAX_SPEECH_SECONDS == 60
-    assert NON_STREAMING_HARD_MAX_SPEECH_SECONDS == 9
+    assert MOONSHINE_STREAMING_HARD_LIMIT_SECONDS == 60
+    assert MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS == 9
 
 
 def test_resolve_whisper_model_id():
@@ -171,16 +171,18 @@ def test_moonshine_resolve_model():
     from whisper_transcribe_py.moonshine.models import resolve_model
 
     # English defaults to small-streaming
-    name, lang, arch, is_streaming, url, hard_limit = resolve_model("en")
+    name, lang, arch, is_streaming, url, hard_limit, soft_limit = resolve_model("en")
     assert name == "small-streaming-en"
     assert is_streaming is True
-    assert hard_limit == STREAMING_HARD_MAX_SPEECH_SECONDS
+    assert hard_limit == MOONSHINE_STREAMING_HARD_LIMIT_SECONDS
+    assert soft_limit == 6.0
 
     # Chinese defaults to base
-    name, lang, arch, is_streaming, url, hard_limit = resolve_model("zh")
+    name, lang, arch, is_streaming, url, hard_limit, soft_limit = resolve_model("zh")
     assert name == "base-zh"
     assert is_streaming is False
-    assert hard_limit == NON_STREAMING_HARD_MAX_SPEECH_SECONDS
+    assert hard_limit == MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS
+    assert soft_limit == 6.0
 
     # Explicit model
     name, *_ = resolve_model("en", "tiny")

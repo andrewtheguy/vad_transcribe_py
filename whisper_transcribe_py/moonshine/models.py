@@ -5,13 +5,17 @@ Trimmed to English (streaming) and Chinese (non-streaming) only.
 
 from enum import IntEnum
 
-SAMPLE_RATE = 16000
+from whisper_transcribe_py.vad_processor import (
+    MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
+    MOONSHINE_NON_STREAMING_SOFT_LIMIT_SECONDS,
+    MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,
+    MOONSHINE_STREAMING_SOFT_LIMIT_SECONDS,
+    TARGET_SAMPLE_RATE,
+)
+
+SAMPLE_RATE = TARGET_SAMPLE_RATE
 DEFAULT_LANGUAGE = "en"
 DEFAULT_MODEL = "small-streaming"
-
-# Hard limits by architecture type
-NON_STREAMING_HARD_MAX_SPEECH_SECONDS = 9
-STREAMING_HARD_MAX_SPEECH_SECONDS = 60
 
 
 class ModelArch(IntEnum):
@@ -41,7 +45,8 @@ def _moonshine_model(
         "model_name": model_name,
         "model_arch": model_arch,
         "download_url": download_url,
-        "hard_max_speech_seconds": STREAMING_HARD_MAX_SPEECH_SECONDS if is_streaming else NON_STREAMING_HARD_MAX_SPEECH_SECONDS,
+        "hard_max_speech_seconds": MOONSHINE_STREAMING_HARD_LIMIT_SECONDS if is_streaming else MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
+        "soft_max_speech_seconds": MOONSHINE_STREAMING_SOFT_LIMIT_SECONDS if is_streaming else MOONSHINE_NON_STREAMING_SOFT_LIMIT_SECONDS,
     }
 
 
@@ -121,12 +126,12 @@ def default_model_for_language(language: str) -> str:
 
 def resolve_model(
     language: str = DEFAULT_LANGUAGE, model: str | None = None
-) -> tuple[str, str, ModelArch, bool, str, int]:
+) -> tuple[str, str, ModelArch, bool, str, int, float | None]:
     """Resolve a language + scoped model name to model runtime settings.
 
     Returns:
         (model_name, language, model_arch, is_streaming, download_url,
-         hard_max_speech_seconds)
+         hard_max_speech_seconds, soft_max_speech_seconds)
     """
     language = language.lower()
     if language not in MODEL_INFO:
@@ -149,6 +154,7 @@ def resolve_model(
             is_streaming,
             model_info["download_url"],
             model_info["hard_max_speech_seconds"],
+            model_info["soft_max_speech_seconds"],
         )
 
     available = ", ".join(MODEL_NAMES_BY_LANGUAGE[language])

@@ -16,11 +16,24 @@ from silero_vad import load_silero_vad
 # Default sample rate for VAD processing
 TARGET_SAMPLE_RATE = 16000
 
-# Reduced silence duration when over soft_limit_seconds (one window ~32ms)
-ADAPTIVE_MIN_SILENCE_MS = 32
-
-# Default hard limit for split command (no transcriber)
+# VAD default configuration
+DEFAULT_MIN_SPEECH_SECONDS = 3.0
+DEFAULT_SOFT_LIMIT_SECONDS = 60.0
 DEFAULT_HARD_LIMIT_SECONDS = 60 * 60
+DEFAULT_SPEECH_THRESHOLD = 0.5
+DEFAULT_MIN_SILENCE_DURATION_MS = 2000
+DEFAULT_LOOK_BACK_SECONDS = 0.5
+ADAPTIVE_MIN_SILENCE_MS = 32  # reduced silence threshold when over soft limit (~one window)
+
+# Whisper backend limits
+WHISPER_HARD_LIMIT_SECONDS = 30
+WHISPER_SOFT_LIMIT_SECONDS = 6.0
+
+# Moonshine backend limits
+MOONSHINE_STREAMING_HARD_LIMIT_SECONDS = 60
+MOONSHINE_STREAMING_SOFT_LIMIT_SECONDS = 6.0
+MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS = 9
+MOONSHINE_NON_STREAMING_SOFT_LIMIT_SECONDS = 6.0
 
 
 class AudioSegment:
@@ -64,12 +77,12 @@ class SpeechDetector:
     def __init__(
         self,
         sample_rate: int = TARGET_SAMPLE_RATE,
-        min_speech_seconds: float = 3.0,
-        soft_limit_seconds: Optional[float] = 60.0,
+        min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
+        soft_limit_seconds: Optional[float] = DEFAULT_SOFT_LIMIT_SECONDS,
         hard_limit_seconds: float = DEFAULT_HARD_LIMIT_SECONDS,
-        speech_threshold: float = 0.5,
-        min_silence_duration_ms: int = 2000,
-        look_back_seconds: float = 0.5,
+        speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
+        min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
+        look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
         on_segment_complete: Optional[Callable[[AudioSegment], None]] = None,
     ):
         self.sample_rate = sample_rate

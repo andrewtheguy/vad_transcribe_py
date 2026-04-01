@@ -10,10 +10,13 @@ import torch
 
 from zhconv_rs import zhconv
 
+from whisper_transcribe_py.vad_processor import (
+    WHISPER_HARD_LIMIT_SECONDS,
+    WHISPER_SOFT_LIMIT_SECONDS,
+)
+
 TARGET_SAMPLE_RATE = 16000
 ChineseConversion = Literal['none', 'simplified', 'traditional']
-
-WHISPER_HARD_LIMIT_SECONDS = 30
 
 
 def format_timestamp(seconds: float) -> str:
@@ -260,6 +263,7 @@ class WhisperTranscriber:
         self.backend = backend
         self.chinese_conversion = chinese_conversion
         self._hard_limit_seconds = WHISPER_HARD_LIMIT_SECONDS
+        self._soft_limit_seconds = WHISPER_SOFT_LIMIT_SECONDS
 
         # Load backend-specific model
         if self.backend == 'whisper':
@@ -273,6 +277,10 @@ class WhisperTranscriber:
     @property
     def hard_limit_seconds(self) -> int:
         return self._hard_limit_seconds
+
+    @property
+    def soft_limit_seconds(self) -> float | None:
+        return self._soft_limit_seconds
 
     def _load_whisper(self):
         """Load Whisper model via HuggingFace Transformers pipeline."""
@@ -312,11 +320,12 @@ class WhisperTranscriber:
 
         # resolve_model handles default model selection per language
         model_arg = None if self.model == 'large-v3-turbo' else self.model
-        name, language, arch, is_streaming, url, hard_limit = resolve_model(
+        name, language, arch, is_streaming, url, hard_limit, soft_limit = resolve_model(
             self.language, model_arg
         )
         self.model = name
         self._hard_limit_seconds = hard_limit
+        self._soft_limit_seconds = soft_limit
 
         print(f"Loading {name} model...", file=sys.stderr)
         model_dir = download_model(language, arch, url)

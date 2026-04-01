@@ -19,22 +19,30 @@ from whisper_transcribe_py.audio_transcriber import (
     TranscribedSegment,
     WhisperTranscriber,
 )
-from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment
+from whisper_transcribe_py.vad_processor import (
+    SpeechDetector,
+    AudioSegment,
+    DEFAULT_MIN_SPEECH_SECONDS,
+    DEFAULT_SOFT_LIMIT_SECONDS,
+    DEFAULT_SPEECH_THRESHOLD,
+    DEFAULT_MIN_SILENCE_DURATION_MS,
+    DEFAULT_LOOK_BACK_SECONDS,
+)
 from whisper_transcribe_py.file_lock import acquire_lock, LockError
 
 
 def add_vad_arguments(parser):
     """Add common VAD arguments to a parser."""
-    parser.add_argument('--min-speech-seconds', type=float, default=3.0,
-                        help='Minimum speech duration in seconds (default: 3.0)')
-    parser.add_argument('--soft-limit-seconds', type=float, default=60.0,
-                        help='Soft limit on speech segment duration in seconds (default: 60.0)')
-    parser.add_argument('--speech-threshold', type=float, default=0.5,
-                        help='VAD speech detection threshold 0.0-1.0 (default: 0.5)')
-    parser.add_argument('--min-silence-duration-ms', type=int, default=2000,
-                        help='Minimum silence duration in ms to end segment (default: 2000)')
-    parser.add_argument('--look-back-seconds', type=float, default=0.5,
-                        help='Look-back buffer in seconds for segment start (default: 0.5)')
+    parser.add_argument('--min-speech-seconds', type=float, default=DEFAULT_MIN_SPEECH_SECONDS,
+                        help=f'Minimum speech duration in seconds (default: {DEFAULT_MIN_SPEECH_SECONDS})')
+    parser.add_argument('--soft-limit-seconds', type=float, default=DEFAULT_SOFT_LIMIT_SECONDS,
+                        help=f'Soft limit on speech segment duration in seconds (default: {DEFAULT_SOFT_LIMIT_SECONDS})')
+    parser.add_argument('--speech-threshold', type=float, default=DEFAULT_SPEECH_THRESHOLD,
+                        help=f'VAD speech detection threshold 0.0-1.0 (default: {DEFAULT_SPEECH_THRESHOLD})')
+    parser.add_argument('--min-silence-duration-ms', type=int, default=DEFAULT_MIN_SILENCE_DURATION_MS,
+                        help=f'Minimum silence duration in ms to end segment (default: {DEFAULT_MIN_SILENCE_DURATION_MS})')
+    parser.add_argument('--look-back-seconds', type=float, default=DEFAULT_LOOK_BACK_SECONDS,
+                        help=f'Look-back buffer in seconds for segment start (default: {DEFAULT_LOOK_BACK_SECONDS})')
 
 
 def get_vad_params(args) -> dict:
@@ -282,11 +290,11 @@ def stream_transcribe_with_vad(
     audio_file: str,
     transcriber: WhisperTranscriber,
     output_file,
-    min_speech_seconds: float = 3.0,
-    soft_limit_seconds: float = 60.0,
-    speech_threshold: float = 0.5,
-    min_silence_duration_ms: int = 2000,
-    look_back_seconds: float = 0.5,
+    min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
+    soft_limit_seconds: float = DEFAULT_SOFT_LIMIT_SECONDS,
+    speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
+    min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
+    look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
     hard_limit_seconds: Optional[float] = None,
 ) -> int:
     """
@@ -367,11 +375,11 @@ def stream_transcribe_with_vad(
 
 def stream_transcribe_stdin_with_vad(
     transcriber: WhisperTranscriber,
-    min_speech_seconds: float = 3.0,
-    soft_limit_seconds: float = 60.0,
-    speech_threshold: float = 0.5,
-    min_silence_duration_ms: int = 2000,
-    look_back_seconds: float = 0.5,
+    min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
+    soft_limit_seconds: float = DEFAULT_SOFT_LIMIT_SECONDS,
+    speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
+    min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
+    look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
     hard_limit_seconds: Optional[float] = None,
 ) -> int:
     """
@@ -505,11 +513,11 @@ def split_by_vad(
     audio_source: str,
     preserve_sample_rate: bool = False,
     output_format: str = "opus",
-    min_speech_seconds: float = 3.0,
-    soft_limit_seconds: float = 6.0,
-    speech_threshold: float = 0.5,
-    min_silence_duration_ms: int = 2000,
-    look_back_seconds: float = 0.5,
+    min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
+    soft_limit_seconds: float = DEFAULT_SOFT_LIMIT_SECONDS,
+    speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
+    min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
+    look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
 ) -> int:
     """
     Stream audio through VAD and save each segment to file.
@@ -691,7 +699,6 @@ def main():
                                    default='none',
                                    help='Chinese character conversion for zh/yue languages: '
                                         'none (default), simplified (zh-Hans), traditional (zh-Hant)')
-    add_vad_arguments(parser_transcribe)
 
     # SPLIT subcommand
     parser_split = subparsers.add_parser('split', help='Split audio by VAD into Opus segments')
@@ -716,8 +723,9 @@ def main():
                         args.chinese_conversion
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
-                        transcriber, **get_vad_params(args),
+                        transcriber,
                         hard_limit_seconds=transcriber.hard_limit_seconds,
+                        soft_limit_seconds=transcriber.soft_limit_seconds,
                     )
                     print(f"Transcribed {segment_count} segments from stdin", file=sys.stderr)
                 else:
@@ -744,8 +752,8 @@ def main():
                         if args.vad:
                             segment_count = stream_transcribe_with_vad(
                                 audio_source, transcriber, output_file,
-                                **get_vad_params(args),
                                 hard_limit_seconds=transcriber.hard_limit_seconds,
+                                soft_limit_seconds=transcriber.soft_limit_seconds,
                             )
                         else:
                             segment_count = stream_transcribe_no_vad(audio_source, transcriber, output_file, duration)
