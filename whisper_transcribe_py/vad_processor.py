@@ -65,7 +65,7 @@ class SpeechDetector:
         self,
         sample_rate: int = TARGET_SAMPLE_RATE,
         min_speech_seconds: float = 3.0,
-        soft_limit_seconds: float = 60.0,
+        soft_limit_seconds: Optional[float] = 60.0,
         hard_limit_seconds: float = DEFAULT_HARD_LIMIT_SECONDS,
         speech_threshold: float = 0.5,
         min_silence_duration_ms: int = 2000,
@@ -80,7 +80,7 @@ class SpeechDetector:
         self.min_silence_duration_ms = min_silence_duration_ms
         self.on_segment_complete = on_segment_complete
 
-        if self.soft_limit_seconds > self.hard_limit_seconds:
+        if self.soft_limit_seconds is not None and self.soft_limit_seconds > self.hard_limit_seconds:
             raise ValueError(
                 "soft_limit_seconds cannot exceed hard_limit_seconds."
             )
@@ -138,7 +138,12 @@ class SpeechDetector:
         return has_speech
 
     def _get_effective_min_silence_ms(self, current_duration_seconds: float) -> float:
-        if current_duration_seconds > self.soft_limit_seconds and self.min_silence_duration_ms > 0:
+        if (
+            self.soft_limit_seconds is not None
+            and self.soft_limit_seconds < self.hard_limit_seconds
+            and current_duration_seconds > self.soft_limit_seconds
+            and self.min_silence_duration_ms > 0
+        ):
             return ADAPTIVE_MIN_SILENCE_MS
         return self.min_silence_duration_ms
 
