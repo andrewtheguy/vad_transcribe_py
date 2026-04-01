@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from whisper_transcribe_py.cli import split_by_vad, get_audio_properties, resample_to_16k
+from vad_transcribe_py.cli import split_by_vad, get_audio_properties, resample_to_16k
 
 
 # Path to JFK speech sample (16kHz mono, ~11 seconds)
@@ -428,7 +428,7 @@ class TestCLIIntegration:
     def test_split_help_shows_preserve_option(self):
         """Test that --preserve-sample-rate appears in help."""
         result = subprocess.run(
-            ["uv", "run", "whisper-transcribe-py", "split", "--help"],
+            ["uv", "run", "vad-transcribe-py", "split", "--help"],
             capture_output=True, text=True
         )
         assert result.returncode == 0
@@ -437,7 +437,7 @@ class TestCLIIntegration:
     def test_split_command_default_with_real_speech(self, jfk_16k, tmp_path):
         """Test split command with real speech audio."""
         result = subprocess.run(
-            ["uv", "run", "whisper-transcribe-py", "split", "--file", jfk_16k],
+            ["uv", "run", "vad-transcribe-py", "split", "--file", jfk_16k],
             capture_output=True, text=True,
             cwd=tmp_path
         )
@@ -449,7 +449,7 @@ class TestCLIIntegration:
     def test_split_command_preserve_with_real_speech(self, jfk_48k, tmp_path):
         """Test split command with --preserve-sample-rate and real speech."""
         result = subprocess.run(
-            ["uv", "run", "whisper-transcribe-py", "split",
+            ["uv", "run", "vad-transcribe-py", "split",
              "--file", jfk_48k, "--preserve-sample-rate"],
             capture_output=True, text=True,
             cwd=tmp_path
@@ -462,7 +462,7 @@ class TestCLIIntegration:
     def test_split_command_nonexistent_file(self, tmp_path):
         """Test split command with nonexistent file."""
         result = subprocess.run(
-            ["uv", "run", "whisper-transcribe-py", "split",
+            ["uv", "run", "vad-transcribe-py", "split",
              "--file", "/nonexistent/audio.wav"],
             capture_output=True, text=True,
             cwd=tmp_path

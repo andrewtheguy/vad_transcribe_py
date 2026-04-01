@@ -931,7 +931,7 @@ wheels = [
 ]
 
 [[package]]
-name = "whisper-transcribe-py"
+name = "vad-transcribe-py"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [

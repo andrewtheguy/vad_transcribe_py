@@ -1,6 +1,6 @@
-# Whisper Transcribe - File Transcription Tool
+# VAD Transcribe - File Transcription Tool
 
-**Whisper Transcribe** is a file-based audio transcription tool that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends:
+**VAD Transcribe** is a file-based audio transcription tool that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends:
 
 - [Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) (default) - OpenAI's Whisper large-v3-turbo via HuggingFace Transformers, multilingual ASR
 - [Moonshine](https://github.com/usefulsensors/moonshine) - Fast ONNX-based ASR models (English: streaming, Chinese: non-streaming). Auto-downloaded on first use.
@@ -45,8 +45,8 @@ The tool has two installation modes:
 
 ```bash
 # Clone the repository
-git clone https://github.com/andrewtheguy/whisper_transcribe_py.git
-cd whisper_transcribe_py
+git clone https://github.com/andrewtheguy/vad_transcribe_py.git
+cd vad_transcribe_py
 
 # Full installation with transcription support (recommended)
 uv sync --extra transcribe
@@ -61,22 +61,22 @@ For development, run commands with `uv run`:
 
 ```bash
 # Requires [transcribe] extra
-uv run whisper-transcribe-py transcribe --file audio.wav --language en
+uv run vad-transcribe-py transcribe --file audio.wav --language en
 
 # Works with base installation
-uv run whisper-transcribe-py split --file audio.wav
+uv run vad-transcribe-py split --file audio.wav
 ```
 
 ### Installing as a Tool (Global)
 
-To install globally and run `whisper-transcribe-py` directly:
+To install globally and run `vad-transcribe-py` directly:
 
 ```bash
 # Full installation from GitHub (recommended)
-uv tool install "whisper-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/whisper_transcribe_py.git@ref(tag or branch)"
+uv tool install "vad-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@ref(tag or branch)"
 
 # VAD split only (no transcription)
-uv tool install "whisper-transcribe-py @ git+https://github.com/andrewtheguy/whisper_transcribe_py.git@ref(tag or branch)"
+uv tool install "vad-transcribe-py @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@ref(tag or branch)"
 
 # Or from local clone
 uv tool install ".[transcribe]"  # with transcription
@@ -86,8 +86,8 @@ uv tool install "."              # split only
 After installation:
 
 ```bash
-whisper-transcribe-py transcribe --file audio.wav --language en  # requires [transcribe]
-whisper-transcribe-py split --file audio.wav                 # always available
+vad-transcribe-py transcribe --file audio.wav --language en  # requires [transcribe]
+vad-transcribe-py split --file audio.wav                 # always available
 ```
 
 ---
@@ -97,7 +97,7 @@ whisper-transcribe-py split --file audio.wav                 # always available
 Transcribe audio to text using Whisper models with optional VAD segmentation.
 
 ```bash
-whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
+vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 ```
 
 ### Transcribe Options
@@ -116,41 +116,41 @@ VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 30s h
 
 **Transcribe audio file with VAD to stdout (streaming JSONL):**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --language en
+uv run vad-transcribe-py transcribe --file audio.wav --language en
 ```
 
 **Transcribe to file:**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --language en
+uv run vad-transcribe-py transcribe --file audio.wav --output transcript.jsonl --language en
 ```
 
 **Transcribe from stdin (mono 16kHz WAV — always uses VAD, outputs to stdout in JSONL format):**
 ```bash
 # Pipe WAV audio from ffmpeg (16-bit PCM, 32-bit PCM, or 32-bit float all accepted)
-ffmpeg -loglevel error -i video.mp4 -ac 1 -ar 16000 -f wav - | uv run whisper-transcribe-py transcribe --stdin --language en
+ffmpeg -loglevel error -i video.mp4 -ac 1 -ar 16000 -f wav - | uv run vad-transcribe-py transcribe --stdin --language en
 
 # Float32 WAV — no conversion needed, ffmpeg not required and can be replaced by other commands
-ffmpeg -loglevel error -i video.mp4 -ac 1 -ar 16000 -f wav -acodec pcm_f32le - | uv run whisper-transcribe-py transcribe --stdin --language en
+ffmpeg -loglevel error -i video.mp4 -ac 1 -ar 16000 -f wav -acodec pcm_f32le - | uv run vad-transcribe-py transcribe --stdin --language en
 
 # Or from an existing WAV file
-cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --language en
+cat audio.wav | uv run vad-transcribe-py transcribe --stdin --language en
 ```
 
 **Use Moonshine backend (auto-selects model by language, ONNX models downloaded on first use):**
 ```bash
 # English — uses small-streaming by default
-uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --language en
+uv run vad-transcribe-py transcribe --file audio.wav --backend moonshine --language en
 
 # Chinese — uses base by default
-uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --language zh
+uv run vad-transcribe-py transcribe --file audio.wav --backend moonshine --language zh
 
 # Or specify model explicitly
-uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --model tiny --language en
+uv run vad-transcribe-py transcribe --file audio.wav --backend moonshine --model tiny --language en
 ```
 
 **Use a different Whisper model:**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --model large-v3
+uv run vad-transcribe-py transcribe --file audio.wav --model large-v3
 ```
 
 ### Transcribe Output Format (JSONL)
@@ -179,7 +179,7 @@ Transcription outputs streaming JSONL (one JSON object per line). Each entry has
 Split audio into separate files based on VAD-detected speech segments (no transcription).
 
 ```bash
-whisper-transcribe-py split (--file PATH | --url URL) [OPTIONS]
+vad-transcribe-py split (--file PATH | --url URL) [OPTIONS]
 ```
 
 ### Split Options
@@ -200,18 +200,18 @@ whisper-transcribe-py split (--file PATH | --url URL) [OPTIONS]
 
 **Split audio by VAD into Opus segments:**
 ```bash
-uv run whisper-transcribe-py split --file audio.wav
+uv run vad-transcribe-py split --file audio.wav
 # Outputs to tmp/audio/
 ```
 
 **Split with preserved sample rate:**
 ```bash
-uv run whisper-transcribe-py split --file audio.wav --preserve-sample-rate
+uv run vad-transcribe-py split --file audio.wav --preserve-sample-rate
 ```
 
 **Split to WAV format:**
 ```bash
-uv run whisper-transcribe-py split --file audio.wav --format wav
+uv run vad-transcribe-py split --file audio.wav --format wav
 ```
 
 ### Split Output Format

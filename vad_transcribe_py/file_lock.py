@@ -51,7 +51,7 @@ class FileLock:
         temp_dir = tempfile.gettempdir()
 
         # File transcription only
-        filename = f"whisper_transcribe_{self.lock_name}.lock"
+        filename = f"vad_transcribe_{self.lock_name}.lock"
         return Path(temp_dir) / filename
 
     def _read_lock_pid(self) -> Optional[int]:

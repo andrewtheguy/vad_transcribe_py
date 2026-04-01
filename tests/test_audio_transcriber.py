@@ -1,7 +1,7 @@
 import pytest
 
-import whisper_transcribe_py.audio_transcriber as audio_transcriber
-from whisper_transcribe_py.vad_processor import (
+import vad_transcribe_py.audio_transcriber as audio_transcriber
+from vad_transcribe_py.vad_processor import (
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
     MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,
 )
@@ -168,7 +168,7 @@ def test_resolve_whisper_model_id():
 
 def test_moonshine_resolve_model():
     """Test moonshine model resolution via models.py."""
-    from whisper_transcribe_py.moonshine.models import resolve_model
+    from vad_transcribe_py.moonshine.models import resolve_model
 
     # English defaults to small-streaming
     name, lang, arch, is_streaming, url, hard_limit, soft_limit = resolve_model("en")
@@ -191,7 +191,7 @@ def test_moonshine_resolve_model():
 
 def test_moonshine_resolve_model_invalid_language():
     """Test moonshine rejects unsupported language."""
-    from whisper_transcribe_py.moonshine.models import resolve_model
+    from vad_transcribe_py.moonshine.models import resolve_model
 
     with pytest.raises(ValueError, match="Unknown language"):
         resolve_model("fr")

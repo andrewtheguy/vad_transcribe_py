@@ -1,5 +1,5 @@
 [project]
-name = "whisper-transcribe-py"
+name = "vad-transcribe-py"
 version = "0.2.0"
 description = ""
 authors = [{ name = "Andrew Chen", email = "andrew@jaanuu.com" }]
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-whisper-transcribe-py = "whisper_transcribe_py.cli:main"
+vad-transcribe-py = "vad_transcribe_py.cli:main"
 
 [project.optional-dependencies]
 transcribe = [

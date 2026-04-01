@@ -179,7 +179,7 @@ def main():
 
     print(f"\n=== Released {new_version} successfully! ===")
     print("\nTo install this version:")
-    print(f'  uv tool install "whisper-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/whisper_transcribe_py.git@{new_version}"')
+    print(f'  uv tool install "vad-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@{new_version}"')
 
 
 if __name__ == "__main__":

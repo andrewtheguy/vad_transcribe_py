@@ -5,7 +5,7 @@ Trimmed to English (streaming) and Chinese (non-streaming) only.
 
 from enum import IntEnum
 
-from whisper_transcribe_py.vad_processor import (
+from vad_transcribe_py.vad_processor import (
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
     MOONSHINE_NON_STREAMING_SOFT_LIMIT_SECONDS,
     MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,

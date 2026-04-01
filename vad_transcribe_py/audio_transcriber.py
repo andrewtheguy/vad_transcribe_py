@@ -10,7 +10,7 @@ import torch
 
 from zhconv_rs import zhconv
 
-from whisper_transcribe_py.vad_processor import (
+from vad_transcribe_py.vad_processor import (
     WHISPER_HARD_LIMIT_SECONDS,
     WHISPER_SOFT_LIMIT_SECONDS,
 )
@@ -321,7 +321,7 @@ class WhisperTranscriber:
 
     def _load_moonshine(self):
         """Load Moonshine model via ONNX runtime."""
-        from whisper_transcribe_py.moonshine import resolve_model, download_model, Transcriber, SAMPLE_RATE
+        from vad_transcribe_py.moonshine import resolve_model, download_model, Transcriber, SAMPLE_RATE
 
         # resolve_model handles default model selection per language when model is None
         name, language, arch, is_streaming, url, hard_limit, soft_limit = resolve_model(

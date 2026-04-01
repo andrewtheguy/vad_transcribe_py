@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import numpy as np
 from scipy import signal
 
-from whisper_transcribe_py.audio_transcriber import (
+from vad_transcribe_py.audio_transcriber import (
     TARGET_SAMPLE_RATE,
     ffmpeg_stream_float32,
     stream_stdin_wav,
@@ -19,7 +19,7 @@ from whisper_transcribe_py.audio_transcriber import (
     TranscribedSegment,
     WhisperTranscriber,
 )
-from whisper_transcribe_py.vad_processor import (
+from vad_transcribe_py.vad_processor import (
     SpeechDetector,
     AudioSegment,
     DEFAULT_MIN_SPEECH_SECONDS,
@@ -28,7 +28,7 @@ from whisper_transcribe_py.vad_processor import (
     DEFAULT_MIN_SILENCE_DURATION_MS,
     DEFAULT_LOOK_BACK_SECONDS,
 )
-from whisper_transcribe_py.file_lock import acquire_lock, LockError
+from vad_transcribe_py.file_lock import acquire_lock, LockError
 
 
 def add_vad_arguments(parser):

@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from unittest.mock import patch
 
-from whisper_transcribe_py.vad_processor import SpeechDetector, AudioSegment, get_window_size_samples
+from vad_transcribe_py.vad_processor import SpeechDetector, AudioSegment, get_window_size_samples
 
 
 NON_SPEECH_LEVEL = 1e-3
