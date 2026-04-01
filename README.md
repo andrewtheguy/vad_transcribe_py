@@ -138,10 +138,10 @@ uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jso
 **Transcribe from stdin (mono 16kHz WAV — always uses VAD, outputs to stdout in JSONL format):**
 ```bash
 # Pipe WAV audio from ffmpeg (16-bit PCM, 32-bit PCM, or 32-bit float all accepted)
-ffmpeg -i video.mp4 -ac 1 -ar 16000 -f wav - | uv run whisper-transcribe-py transcribe --stdin --language en
+ffmpeg -loglevel error -i video.mp4 -ac 1 -ar 16000 -f wav - | uv run whisper-transcribe-py transcribe --stdin --language en
 
 # Float32 WAV — no conversion needed, ffmpeg not required and can be replaced by other commands
-ffmpeg -i video.mp4 -ac 1 -ar 16000 -f wav -acodec pcm_f32le - | uv run whisper-transcribe-py transcribe --stdin --language en
+ffmpeg -loglevel error -i video.mp4 -ac 1 -ar 16000 -f wav -acodec pcm_f32le - | uv run whisper-transcribe-py transcribe --stdin --language en
 
 # Or from an existing WAV file
 cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --language en
