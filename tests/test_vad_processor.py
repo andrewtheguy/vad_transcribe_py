@@ -87,7 +87,7 @@ class TestSpeechDetector:
         return SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=3.0,
-            max_speech_seconds=60.0,
+            soft_limit_seconds=60.0,
             speech_threshold=0.5,
         )
 
@@ -114,7 +114,7 @@ class TestSpeechDetector:
         """Test SpeechDetector initialization."""
         assert detector.sample_rate == 16000
         assert detector.min_speech_seconds == 3.0
-        assert detector.max_speech_seconds == 60.0
+        assert detector.soft_limit_seconds == 60.0
         assert detector.speech_threshold == 0.5
         assert detector.is_in_speech is False
         assert detector.current_segment_duration == 0.0
@@ -219,14 +219,14 @@ class TestSpeechDetector:
         detector = SpeechDetector(
             sample_rate=8000,
             min_speech_seconds=1.0,
-            max_speech_seconds=30.0,
+            soft_limit_seconds=30.0,
             speech_threshold=0.7,
             look_back_seconds=0.5,
         )
 
         assert detector.sample_rate == 8000
         assert detector.min_speech_seconds == 1.0
-        assert detector.max_speech_seconds == 30.0
+        assert detector.soft_limit_seconds == 30.0
         assert detector.speech_threshold == 0.7
         assert detector.look_back_seconds == 0.5
         assert detector._window_size_samples == 256  # 8kHz uses 256 samples
@@ -296,7 +296,7 @@ class TestSpeechDetectorIntegration:
 
         detector = SpeechDetector(
             min_speech_seconds=0.1,  # Very short for testing
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             on_segment_complete=callback,
         )
 
@@ -352,7 +352,7 @@ class TestMinDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.1,  # 0.1s = ~3 windows
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -399,7 +399,7 @@ class TestMinDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.064,  # Exactly 2 windows
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -433,7 +433,7 @@ class TestMinSilenceDuration:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=100,
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -473,7 +473,7 @@ class TestMinSilenceDuration:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=64,
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -512,7 +512,7 @@ class TestMinSilenceDuration:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=100,
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -579,7 +579,7 @@ class TestMinSilenceDuration:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=64,  # 2 windows
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -617,7 +617,7 @@ class TestMinSilenceDuration:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=100,  # ~3 windows
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -666,7 +666,7 @@ class TestMinSilenceDuration:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=200,  # High threshold
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -705,7 +705,7 @@ class TestMinSilenceDuration:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=100,  # ~3 windows
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -754,7 +754,7 @@ class TestMaxDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=0.2,  # Only 0.2s max (~6 windows)
+            soft_limit_seconds=0.2,  # Only 0.2s max (~6 windows)
             min_silence_duration_ms=100,  # Normal silence threshold
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -785,7 +785,7 @@ class TestMaxDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=0.2,  # Only 0.2s max (~6 windows)
+            soft_limit_seconds=0.2,  # Only 0.2s max (~6 windows)
             min_silence_duration_ms=0,  # Immediate end on any silence
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -814,7 +814,7 @@ class TestMaxDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=0.192,  # Exactly 6 windows
+            soft_limit_seconds=0.192,  # Exactly 6 windows
             min_silence_duration_ms=100,  # Normal threshold
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -840,9 +840,9 @@ class TestMaxDurationEnforcement:
 
     def test_adaptive_threshold_only_when_over_max_speech(self):
         """
-        Test that ADAPTIVE_MIN_SILENCE_MS is only used when over max_speech_seconds.
+        Test that ADAPTIVE_MIN_SILENCE_MS is only used when over soft_limit_seconds.
 
-        Under max_speech_seconds, the normal min_silence_duration_ms should apply.
+        Under soft_limit_seconds, the normal min_silence_duration_ms should apply.
         """
         segments = []
         sample_rate = 16000
@@ -851,7 +851,7 @@ class TestMaxDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 10,  # 10 windows (~320ms)
+            soft_limit_seconds=window_seconds * 10,  # 10 windows (~320ms)
             min_silence_duration_ms=200,  # High threshold (~6 windows)
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -884,10 +884,10 @@ class TestMaxDurationEnforcement:
 
     def test_adaptive_threshold_activates_after_max_speech(self):
         """
-        Test that a single silence window ends segment when over max_speech_seconds.
+        Test that a single silence window ends segment when over soft_limit_seconds.
 
         With min_silence_duration_ms=2000 (default), normally 62+ windows of silence
-        would be needed. But after exceeding max_speech_seconds, ADAPTIVE_MIN_SILENCE_MS
+        would be needed. But after exceeding soft_limit_seconds, ADAPTIVE_MIN_SILENCE_MS
         (32ms = 1 window) should trigger the end.
         """
         segments = []
@@ -897,7 +897,7 @@ class TestMaxDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 3,  # 3 windows (~96ms)
+            soft_limit_seconds=window_seconds * 3,  # 3 windows (~96ms)
             min_silence_duration_ms=2000,  # Very high threshold
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -910,7 +910,7 @@ class TestMaxDurationEnforcement:
             for i in range(5):
                 detector.process_window(window, i * window_seconds)
 
-            # Over max_speech_seconds, adaptive mode is active
+            # Over soft_limit_seconds, adaptive mode is active
             assert len(segments) == 0
 
             # One silence window should trigger end (due to adaptive threshold)
@@ -924,7 +924,7 @@ class TestMaxDurationEnforcement:
 
     def test_normal_silence_threshold_under_max_speech(self):
         """
-        Test that under max_speech_seconds, min_silence_duration_ms is respected.
+        Test that under soft_limit_seconds, min_silence_duration_ms is respected.
 
         Multiple short silences should not end the segment if they don't meet
         the min_silence_duration_ms threshold.
@@ -937,7 +937,7 @@ class TestMaxDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 20,  # High max to stay under
+            soft_limit_seconds=window_seconds * 20,  # High max to stay under
             min_silence_duration_ms=128,  # ~4 windows of silence needed
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -975,8 +975,8 @@ class TestMaxDurationEnforcement:
         Test that adaptive threshold doesn't apply when min_silence_duration_ms=0.
 
         With min_silence_duration_ms=0, even a single silence window immediately
-        ends the segment, regardless of whether we're over max_speech_seconds.
-        This is the same behavior before and after max_speech_seconds.
+        ends the segment, regardless of whether we're over soft_limit_seconds.
+        This is the same behavior before and after soft_limit_seconds.
         """
         segments = []
         sample_rate = 16000
@@ -985,7 +985,7 @@ class TestMaxDurationEnforcement:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 10,  # High max
+            soft_limit_seconds=window_seconds * 10,  # High max
             min_silence_duration_ms=0,  # Immediate end on silence
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1012,7 +1012,7 @@ class TestMaxDurationEnforcement:
         Compare behavior with min_silence_duration_ms > 0 vs = 0 when over max.
 
         This test shows the difference between adaptive (>0) and non-adaptive (=0) modes
-        when the segment exceeds max_speech_seconds.
+        when the segment exceeds soft_limit_seconds.
         """
         sample_rate = 16000
         window_size = get_window_size_samples(sample_rate)
@@ -1023,7 +1023,7 @@ class TestMaxDurationEnforcement:
         detector_non_adaptive = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 3,  # 3 windows
+            soft_limit_seconds=window_seconds * 3,  # 3 windows
             min_silence_duration_ms=0,
             on_segment_complete=lambda s: segments_non_adaptive.append(s),
         )
@@ -1033,7 +1033,7 @@ class TestMaxDurationEnforcement:
         detector_adaptive = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 3,  # Same 3 windows
+            soft_limit_seconds=window_seconds * 3,  # Same 3 windows
             min_silence_duration_ms=2000,  # High threshold
             on_segment_complete=lambda s: segments_adaptive.append(s),
         )
@@ -1077,7 +1077,7 @@ class TestLookBackBuffer:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1119,7 +1119,7 @@ class TestLookBackBuffer:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1149,7 +1149,7 @@ class TestLookBackBuffer:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             look_back_seconds=window_seconds,
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1185,7 +1185,7 @@ class TestLookBackBuffer:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             look_back_seconds=look_back_seconds,
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1236,7 +1236,7 @@ class TestLookBackBuffer:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=window_seconds * 0.5,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             look_back_seconds=look_back_seconds,
             on_segment_complete=lambda s: segments.append(s),
@@ -1276,7 +1276,7 @@ class TestFinalWindowInclusion:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1308,7 +1308,7 @@ class TestFinalWindowInclusion:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=0.128,  # 4 windows
+            soft_limit_seconds=0.128,  # 4 windows
             min_silence_duration_ms=100,  # Normal threshold
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1343,7 +1343,7 @@ class TestMultiSegmentScenarios:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1389,7 +1389,7 @@ class TestMultiSegmentScenarios:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1419,7 +1419,7 @@ class TestEdgeCasesAndBoundaries:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             on_segment_complete=lambda s: segments.append(s),
         )
 
@@ -1466,7 +1466,7 @@ class TestEdgeCasesAndBoundaries:
         detector = SpeechDetector(
             sample_rate=16000,
             min_speech_seconds=0.05,
-            max_speech_seconds=10.0,
+            soft_limit_seconds=10.0,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1514,7 +1514,7 @@ class TestEdgeCasesAndBoundaries:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds * 2,
-            max_speech_seconds=window_seconds * 2.5,
+            soft_limit_seconds=window_seconds * 2.5,
             min_silence_duration_ms=100,  # Use adaptive mode
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1537,7 +1537,7 @@ class TestEdgeCasesAndBoundaries:
                 detector.process_window(win, ts)
                 ts += window_seconds
 
-            # At this point, exceeds max_speech_seconds but no silence yet
+            # At this point, exceeds soft_limit_seconds but no silence yet
             assert len(segments) == 0
 
             # Add silence to trigger adaptive split
@@ -1566,7 +1566,7 @@ class TestMixedBoundarySegments:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 10,
+            soft_limit_seconds=window_seconds * 10,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             look_back_seconds=window_seconds,
             on_segment_complete=lambda s: segments.append(s),
@@ -1639,7 +1639,7 @@ class TestMixedBoundarySegments:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 10,
+            soft_limit_seconds=window_seconds * 10,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1691,10 +1691,10 @@ class TestMixedBoundarySegments:
 
     def test_max_speech_split_preserves_contiguous_audio(self):
         """
-        Ensure max_speech_seconds splits create contiguous segments without losing samples.
+        Ensure soft_limit_seconds splits create contiguous segments without losing samples.
 
         With adaptive behavior, a silence window triggers the split after exceeding
-        max_speech_seconds. The silence window is included in the first segment.
+        soft_limit_seconds. The silence window is included in the first segment.
         """
         segments = []
         sample_rate = 16000
@@ -1703,7 +1703,7 @@ class TestMixedBoundarySegments:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 1.5,
+            soft_limit_seconds=window_seconds * 1.5,
             min_silence_duration_ms=0,  # Immediate end on silence
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1764,7 +1764,7 @@ class TestMixedBoundarySegments:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 3,
+            soft_limit_seconds=window_seconds * 3,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )
@@ -1820,7 +1820,7 @@ class TestMixedBoundarySegments:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            max_speech_seconds=window_seconds * 3,
+            soft_limit_seconds=window_seconds * 3,
             min_silence_duration_ms=0,  # Immediate end on silence for this test
             on_segment_complete=lambda s: segments.append(s),
         )

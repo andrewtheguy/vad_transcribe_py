@@ -114,7 +114,7 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 
 **VAD tuning options** (only apply when VAD is enabled):
 - `--min-speech-seconds FLOAT`: Minimum speech duration in seconds (default: 3.0)
-- `--max-speech-seconds FLOAT`: Maximum speech duration in seconds (default: 60.0)
+- `--soft-limit-seconds FLOAT`: Soft limit on speech segment duration in seconds (default: 60.0)
 - `--speech-threshold FLOAT`: VAD speech detection threshold 0.0-1.0 (default: 0.5)
 - `--min-silence-duration-ms INT`: Minimum silence duration in ms to end segment (default: 2000)
 - `--look-back-seconds FLOAT`: Look-back buffer in seconds for segment start (default: 0.5)
@@ -199,7 +199,7 @@ whisper-transcribe-py split (--file PATH | --url URL) [OPTIONS]
 
 **VAD tuning options:**
 - `--min-speech-seconds FLOAT`: Minimum speech duration in seconds (default: 3.0)
-- `--max-speech-seconds FLOAT`: Maximum speech duration in seconds (default: 60.0)
+- `--soft-limit-seconds FLOAT`: Soft limit on speech segment duration in seconds (default: 60.0)
 - `--speech-threshold FLOAT`: VAD speech detection threshold 0.0-1.0 (default: 0.5)
 - `--min-silence-duration-ms INT`: Minimum silence duration in ms to end segment (default: 2000)
 - `--look-back-seconds FLOAT`: Look-back buffer in seconds for segment start (default: 0.5)

@@ -16,11 +16,11 @@ from silero_vad import load_silero_vad
 # Default sample rate for VAD processing
 TARGET_SAMPLE_RATE = 16000
 
-# Reduced silence duration when over max_speech_seconds (one window ~32ms)
+# Reduced silence duration when over soft_limit_seconds (one window ~32ms)
 ADAPTIVE_MIN_SILENCE_MS = 32
 
 # Hard cap on speech segment duration (1 hour) - exceeding indicates VAD bug
-MAX_SPEECH_SEGMENT_SECONDS = 60 * 60
+HARD_LIMIT_SECONDS = 60 * 60
 
 
 class AudioSegment:
@@ -66,13 +66,13 @@ class SpeechDetector:
     Attributes:
         sample_rate: Audio sample rate (default: 16000 Hz)
         min_speech_seconds: Minimum valid speech duration (default: 3.0s)
-        max_speech_seconds: Maximum segment duration before split (default: 60.0s)
+        soft_limit_seconds: Maximum segment duration before split (default: 60.0s)
         speech_threshold: Probability threshold for speech detection (default: 0.5)
         min_silence_duration_ms: Minimum silence duration to end speech segment (default: 2000)
         on_segment_complete: Callback when speech segment completes
 
     Notes:
-        When speech duration exceeds max_speech_seconds and min_silence_duration_ms > 0,
+        When speech duration exceeds soft_limit_seconds and min_silence_duration_ms > 0,
         the detector uses adaptive silence detection: it lowers the effective silence
         threshold to allow ending at natural speech boundaries (short silences) rather
         than cutting abruptly mid-speech.
@@ -82,7 +82,7 @@ class SpeechDetector:
         self,
         sample_rate: int = TARGET_SAMPLE_RATE,
         min_speech_seconds: float = 3.0,
-        max_speech_seconds: float = 60.0,
+        soft_limit_seconds: float = 60.0,
         speech_threshold: float = 0.5,
         min_silence_duration_ms: int = 2000,
         look_back_seconds: float = 0.5,
@@ -94,7 +94,7 @@ class SpeechDetector:
         Args:
             sample_rate: Audio sample rate
             min_speech_seconds: Minimum duration to consider as valid speech
-            max_speech_seconds: Maximum duration before forcing segment split
+            soft_limit_seconds: Maximum duration before forcing segment split
             speech_threshold: Probability threshold for speech detection
             min_silence_duration_ms: Minimum silence duration to end speech segment (default: 2000ms)
             look_back_seconds: Amount of non-speech audio to prepend when speech starts (default: 0.5s)
@@ -102,7 +102,7 @@ class SpeechDetector:
         """
         self.sample_rate = sample_rate
         self.min_speech_seconds = min_speech_seconds
-        self.max_speech_seconds = max_speech_seconds
+        self.soft_limit_seconds = soft_limit_seconds
         self.speech_threshold = speech_threshold
         self.min_silence_duration_ms = min_silence_duration_ms
         self.on_segment_complete = on_segment_complete
@@ -151,7 +151,7 @@ class SpeechDetector:
         seconds = len(self._speech_section) / self.sample_rate
 
         # Hard cap: abort if segment exceeds 1 hour (indicates VAD bug)
-        if seconds > MAX_SPEECH_SEGMENT_SECONDS:
+        if seconds > HARD_LIMIT_SECONDS:
             raise RuntimeError(
                 f"VAD bug: speech segment duration {seconds/3600:.2f}h exceeds 1-hour limit. "
                 f"This indicates VAD failed to detect silence."
@@ -197,7 +197,7 @@ class SpeechDetector:
         """
         Get the effective minimum silence duration based on current segment duration.
 
-        When speech duration exceeds max_speech_seconds and min_silence_duration_ms > 0,
+        When speech duration exceeds soft_limit_seconds and min_silence_duration_ms > 0,
         returns a reduced silence threshold (ADAPTIVE_MIN_SILENCE_MS) to allow ending
         at natural speech boundaries.
 
@@ -207,7 +207,7 @@ class SpeechDetector:
         Returns:
             Effective minimum silence duration in milliseconds
         """
-        if current_duration_seconds > self.max_speech_seconds and self.min_silence_duration_ms > 0:
+        if current_duration_seconds > self.soft_limit_seconds and self.min_silence_duration_ms > 0:
             # Use reduced silence threshold to end at next speech boundary
             return ADAPTIVE_MIN_SILENCE_MS
         return self.min_silence_duration_ms

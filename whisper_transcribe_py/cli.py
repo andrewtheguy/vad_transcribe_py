@@ -26,7 +26,7 @@ def add_vad_arguments(parser):
     """Add common VAD arguments to a parser."""
     parser.add_argument('--min-speech-seconds', type=float, default=3.0,
                         help='Minimum speech duration in seconds (default: 3.0)')
-    parser.add_argument('--max-speech-seconds', type=float, default=60.0,
+    parser.add_argument('--soft-limit-seconds', type=float, default=60.0,
                         help='Maximum speech duration in seconds (default: 60.0)')
     parser.add_argument('--speech-threshold', type=float, default=0.5,
                         help='VAD speech detection threshold 0.0-1.0 (default: 0.5)')
@@ -40,7 +40,7 @@ def get_vad_params(args) -> dict:
     """Extract VAD parameters from parsed arguments."""
     return {
         "min_speech_seconds": args.min_speech_seconds,
-        "max_speech_seconds": args.max_speech_seconds,
+        "soft_limit_seconds": args.soft_limit_seconds,
         "speech_threshold": args.speech_threshold,
         "min_silence_duration_ms": args.min_silence_duration_ms,
         "look_back_seconds": args.look_back_seconds,
@@ -282,7 +282,7 @@ def stream_transcribe_with_vad(
     transcriber: WhisperTranscriber,
     output_file,
     min_speech_seconds: float = 3.0,
-    max_speech_seconds: float = 60.0,
+    soft_limit_seconds: float = 60.0,
     speech_threshold: float = 0.5,
     min_silence_duration_ms: int = 2000,
     look_back_seconds: float = 0.5,
@@ -295,7 +295,7 @@ def stream_transcribe_with_vad(
         transcriber: Pre-loaded WhisperTranscriber instance
         output_file: File object to write JSONL output
         min_speech_seconds: Minimum speech duration in seconds
-        max_speech_seconds: Maximum speech duration in seconds
+        soft_limit_seconds: Maximum speech duration in seconds
         speech_threshold: VAD speech detection threshold (0.0-1.0)
         min_silence_duration_ms: Minimum silence duration in ms to end segment
         look_back_seconds: Look-back buffer in seconds for segment start
@@ -329,7 +329,7 @@ def stream_transcribe_with_vad(
         sample_rate=TARGET_SAMPLE_RATE,
         on_segment_complete=on_segment_complete,
         min_speech_seconds=min_speech_seconds,
-        max_speech_seconds=max_speech_seconds,
+        soft_limit_seconds=soft_limit_seconds,
         speech_threshold=speech_threshold,
         min_silence_duration_ms=min_silence_duration_ms,
         look_back_seconds=look_back_seconds,
@@ -362,7 +362,7 @@ def stream_transcribe_with_vad(
 def stream_transcribe_stdin_with_vad(
     transcriber: WhisperTranscriber,
     min_speech_seconds: float = 3.0,
-    max_speech_seconds: float = 60.0,
+    soft_limit_seconds: float = 60.0,
     speech_threshold: float = 0.5,
     min_silence_duration_ms: int = 2000,
     look_back_seconds: float = 0.5,
@@ -374,7 +374,7 @@ def stream_transcribe_stdin_with_vad(
     Args:
         transcriber: Pre-loaded WhisperTranscriber instance
         min_speech_seconds: Minimum speech duration in seconds
-        max_speech_seconds: Maximum speech duration in seconds
+        soft_limit_seconds: Maximum speech duration in seconds
         speech_threshold: VAD speech detection threshold (0.0-1.0)
         min_silence_duration_ms: Minimum silence duration in ms to end segment
         look_back_seconds: Look-back buffer in seconds for segment start
@@ -409,7 +409,7 @@ def stream_transcribe_stdin_with_vad(
         sample_rate=TARGET_SAMPLE_RATE,
         on_segment_complete=on_segment_complete,
         min_speech_seconds=min_speech_seconds,
-        max_speech_seconds=max_speech_seconds,
+        soft_limit_seconds=soft_limit_seconds,
         speech_threshold=speech_threshold,
         min_silence_duration_ms=min_silence_duration_ms,
         look_back_seconds=look_back_seconds,
@@ -496,7 +496,7 @@ def split_by_vad(
     preserve_sample_rate: bool = False,
     output_format: str = "opus",
     min_speech_seconds: float = 3.0,
-    max_speech_seconds: float = 60.0,
+    soft_limit_seconds: float = 60.0,
     speech_threshold: float = 0.5,
     min_silence_duration_ms: int = 2000,
     look_back_seconds: float = 0.5,
@@ -510,7 +510,7 @@ def split_by_vad(
                               If False (default), downsample to 16kHz mono.
         output_format: Output format - "opus" (16kbps) or "wav" (default: opus)
         min_speech_seconds: Minimum speech duration in seconds
-        max_speech_seconds: Maximum speech duration in seconds
+        soft_limit_seconds: Maximum speech duration in seconds
         speech_threshold: VAD speech detection threshold (0.0-1.0)
         min_silence_duration_ms: Minimum silence duration in ms to end segment
         look_back_seconds: Look-back buffer in seconds for segment start
@@ -572,7 +572,7 @@ def split_by_vad(
             sample_rate=TARGET_SAMPLE_RATE,
             on_segment_complete=on_segment_complete,
             min_speech_seconds=min_speech_seconds,
-            max_speech_seconds=max_speech_seconds,
+            soft_limit_seconds=soft_limit_seconds,
             speech_threshold=speech_threshold,
             min_silence_duration_ms=min_silence_duration_ms,
             look_back_seconds=look_back_seconds,
@@ -619,7 +619,7 @@ def split_by_vad(
             sample_rate=TARGET_SAMPLE_RATE,
             on_segment_complete=on_segment_complete,
             min_speech_seconds=min_speech_seconds,
-            max_speech_seconds=max_speech_seconds,
+            soft_limit_seconds=soft_limit_seconds,
             speech_threshold=speech_threshold,
             min_silence_duration_ms=min_silence_duration_ms,
             look_back_seconds=look_back_seconds,
