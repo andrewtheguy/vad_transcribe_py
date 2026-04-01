@@ -1,3 +1,4 @@
+import struct
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -25,6 +26,89 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
 
+def _parse_wav_header(f):
+    """Parse WAV header from file-like object.
+
+    Returns:
+        (header_bytes, format_info) where format_info is a dict with
+        audio_format, channels, sample_rate, bits_per_sample, data_size,
+        or None if not a valid WAV.
+        header_bytes contains all bytes consumed from the stream.
+    """
+    header_bytes = b''
+
+    riff = f.read(12)
+    header_bytes += riff
+    if len(riff) < 12 or riff[:4] != b'RIFF' or riff[8:12] != b'WAVE':
+        return header_bytes, None
+
+    fmt_info = None
+
+    while True:
+        chunk_hdr = f.read(8)
+        header_bytes += chunk_hdr
+        if len(chunk_hdr) < 8:
+            return header_bytes, None
+
+        chunk_id = chunk_hdr[:4]
+        chunk_size = struct.unpack_from('<I', chunk_hdr, 4)[0]
+
+        if chunk_id == b'fmt ':
+            fmt_data = f.read(chunk_size)
+            header_bytes += fmt_data
+            if len(fmt_data) < 16:
+                return header_bytes, None
+            fmt_info = {
+                'audio_format': struct.unpack_from('<H', fmt_data, 0)[0],
+                'channels': struct.unpack_from('<H', fmt_data, 2)[0],
+                'sample_rate': struct.unpack_from('<I', fmt_data, 4)[0],
+                'bits_per_sample': struct.unpack_from('<H', fmt_data, 14)[0],
+            }
+        elif chunk_id == b'data':
+            if fmt_info is not None:
+                fmt_info['data_size'] = chunk_size
+                return header_bytes, fmt_info
+            return header_bytes, None
+        else:
+            skip = f.read(chunk_size)
+            header_bytes += skip
+            if len(skip) < chunk_size:
+                return header_bytes, None
+
+
+def _wav_format_matches(fmt_info, target_sample_rate, ac):
+    """Check if WAV format is float32 and matches requested params."""
+    if fmt_info is None:
+        return False
+    if fmt_info['audio_format'] != 3 or fmt_info['bits_per_sample'] != 32:
+        return False
+    if ac is not None and fmt_info['channels'] != ac:
+        return False
+    if target_sample_rate is not None and fmt_info['sample_rate'] != target_sample_rate:
+        return False
+    return True
+
+
+def _stream_raw_float32(f, data_size, chunk_bytes=4096):
+    """Stream raw float32 data from file-like object."""
+    if data_size == 0 or data_size == 0xFFFFFFFF:
+        while True:
+            chunk = f.read(chunk_bytes)
+            if not chunk:
+                break
+            yield np.frombuffer(chunk, dtype=np.float32)
+    else:
+        remaining = data_size
+        while remaining > 0:
+            to_read = min(chunk_bytes, remaining)
+            chunk = f.read(to_read)
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield np.frombuffer(chunk, dtype=np.float32)
+
+
+
 def ffmpeg_stream_float32(
     full_audio_path: str | None = None,
     target_sample_rate: int | None = None,
@@ -32,7 +116,7 @@ def ffmpeg_stream_float32(
     from_stdin: bool = False,
     chunk_bytes: int = 4096,
 ) -> Generator[npt.NDArray[np.float32], None, None]:
-    """Stream audio as float32 arrays from ffmpeg.
+    """Stream audio as float32 arrays, skipping ffmpeg if already float32 WAV.
 
     Args:
         full_audio_path: Path to audio file or URL (ignored if from_stdin=True)
@@ -44,21 +128,37 @@ def ffmpeg_stream_float32(
     Yields:
         Float32 numpy arrays of audio samples
     """
-    if from_stdin:
-        command = [
-            "ffmpeg",
-            "-i", "pipe:0",  # Read from stdin
-        ]
-    else:
-        command = [
-            "ffmpeg",
-            "-i", full_audio_path,
-        ]
+    # Try direct WAV reading for files (not URLs)
+    if not from_stdin and full_audio_path and not full_audio_path.startswith(('http://', 'https://', 'rtmp://', 'rtsp://')):
+        try:
+            with open(full_audio_path, 'rb') as f:
+                _, fmt_info = _parse_wav_header(f)
+                if _wav_format_matches(fmt_info, target_sample_rate, ac):
+                    print(f"Direct float32 WAV read: {full_audio_path}", file=sys.stderr)
+                    yield from _stream_raw_float32(f, fmt_info['data_size'], chunk_bytes)
+                    return
+        except OSError:
+            pass
 
-    command.extend([
-        "-f", "f32le",  # Output format
-        "-acodec", "pcm_f32le",  # Audio codec
-    ])
+    # Parse WAV header from stdin — must be float32 mono at target rate
+    if from_stdin:
+        _, fmt_info = _parse_wav_header(sys.stdin.buffer)
+        if not _wav_format_matches(fmt_info, target_sample_rate, ac):
+            raise ValueError(
+                f"stdin must be float32 WAV (mono, {target_sample_rate}Hz). "
+                f"Got: {fmt_info}"
+            )
+        print("Direct float32 WAV read from stdin", file=sys.stderr)
+        yield from _stream_raw_float32(sys.stdin.buffer, fmt_info['data_size'], chunk_bytes)
+        return
+
+    # Fall back to ffmpeg
+    command = [
+        "ffmpeg",
+        "-i", full_audio_path,
+        "-f", "f32le",
+        "-acodec", "pcm_f32le",
+    ]
 
     if ac is not None:
         command.extend(["-ac", str(ac)])
@@ -67,15 +167,14 @@ def ffmpeg_stream_float32(
         command.extend(["-ar", str(target_sample_rate)])
 
     command.extend([
-        "-loglevel", "error",  # Suppress extra logs
-        "pipe:"  # Output to stdout
+        "-loglevel", "error",
+        "pipe:",
     ])
 
     process = subprocess.Popen(
         command,
-        stdin=sys.stdin.buffer if from_stdin else None,
         stdout=subprocess.PIPE,
-        stderr=None,  # Inherit parent's stderr
+        stderr=None,
     )
 
     try:
