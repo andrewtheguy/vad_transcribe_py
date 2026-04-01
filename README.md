@@ -111,12 +111,7 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 
-**VAD tuning options** (only apply when VAD is enabled):
-- `--min-speech-seconds FLOAT`: Minimum speech duration in seconds (default: 3.0)
-- `--soft-limit-seconds FLOAT`: Soft limit on speech segment duration in seconds (default: 60.0). Triggers adaptive silence detection.
-- `--speech-threshold FLOAT`: VAD speech detection threshold 0.0-1.0 (default: 0.5)
-- `--min-silence-duration-ms INT`: Minimum silence duration in ms to end segment (default: 2000)
-- `--look-back-seconds FLOAT`: Look-back buffer in seconds for segment start (default: 0.5)
+VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 30s hard, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s). Use the `split` command for manual VAD tuning.
 
 ### Transcribe Examples
 
@@ -206,9 +201,9 @@ whisper-transcribe-py split (--file PATH | --url URL) [OPTIONS]
 - `--preserve-sample-rate`: Preserve original sample rate (default: downsample to 16kHz)
 - `--format {opus, wav}`: Output format (default: opus)
 
-**VAD tuning options:**
+**VAD tuning options** (split command only — transcribe uses backend-specific defaults):
 - `--min-speech-seconds FLOAT`: Minimum speech duration in seconds (default: 3.0)
-- `--soft-limit-seconds FLOAT`: Soft limit on speech segment duration in seconds (default: 60.0)
+- `--soft-limit-seconds FLOAT`: Soft limit on speech segment duration in seconds (default: 60.0). Triggers adaptive silence detection.
 - `--speech-threshold FLOAT`: VAD speech detection threshold 0.0-1.0 (default: 0.5)
 - `--min-silence-duration-ms INT`: Minimum silence duration in ms to end segment (default: 2000)
 - `--look-back-seconds FLOAT`: Look-back buffer in seconds for segment start (default: 0.5)
@@ -293,15 +288,21 @@ whisper_transcribe_py/
   ├── __init__.py
   ├── cli.py                    # CLI entry point
   ├── audio_transcriber.py      # Core transcription logic
-  ├── vad_processor.py          # Voice activity detection
+  ├── vad_processor.py          # Voice activity detection & config constants
   ├── file_lock.py              # File locking for exclusive access
+  └── moonshine/                # Moonshine ONNX backend
+      ├── models.py             # Model registry (English, Chinese)
+      ├── download.py           # ONNX model download & caching
+      ├── transcriber.py        # Streaming & non-streaming ONNX inference
+      └── tokenizer.py          # Binary tokenizer format
 
 pyproject.toml                  # Project configuration
 ```
 
 ## Requirements
 
-- OpenAI Whisper model files (~1-3GB depending on model size) - downloaded automatically on first use
+- Whisper: HuggingFace model files (~1-3GB depending on model size) - downloaded automatically on first use
+- Moonshine: ONNX model files (~10-100MB) - downloaded automatically from `download.moonshine.ai` on first use
 
 ## Known Limitations
 
