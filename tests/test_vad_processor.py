@@ -2057,5 +2057,80 @@ class TestHardLimitForceSplit:
             )
 
 
+    def test_soft_limit_none_skips_adaptive(self):
+        """With soft_limit_seconds=None, adaptive silence is never used."""
+        segments = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        hard_limit = window_seconds * 6
+
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            soft_limit_seconds=None,
+            hard_limit_seconds=hard_limit,
+            min_silence_duration_ms=int(window_seconds * 3 * 1000),  # 3 windows
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        speech = np.full(window_size, 0.5, dtype=np.float32)
+        silence = make_non_speech_window(length=window_size, level=0.01)
+
+        with patch.object(detector, '_detect_speech') as mock_vad:
+            ts = 0.0
+
+            def run(window, is_speech):
+                nonlocal ts
+                mock_vad.return_value = is_speech
+                detector.process_window(window, ts)
+                ts += window_seconds
+
+            # 3 speech + 1 silence — without adaptive, 1 silence window
+            # is NOT enough (need 3 windows of silence)
+            run(speech, True)
+            run(speech, True)
+            run(speech, True)
+            run(silence, False)  # only 1 silence window, need 3
+            run(speech, True)    # speech resumes, silence flushed back
+
+        detector.flush()
+
+        # Should be 1 segment — the single silence window didn't end it
+        assert len(segments) == 1
+        assert len(segments[0].audio) == window_size * 5  # 3 speech + 1 silence + 1 speech
+
+    def test_soft_limit_none_still_force_splits_at_hard_limit(self):
+        """With soft_limit_seconds=None, hard limit still force-splits."""
+        segments = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        hard_limit = window_seconds * 3
+
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            soft_limit_seconds=None,
+            hard_limit_seconds=hard_limit,
+            min_silence_duration_ms=2000,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        speech = np.full(window_size, 0.5, dtype=np.float32)
+
+        with patch.object(detector, '_detect_speech', return_value=True):
+            for i in range(7):
+                detector.process_window(speech, i * window_seconds)
+
+        detector.flush()
+
+        # Should split into [0,1,2], [3,4,5], [6]
+        assert len(segments) == 3
+        assert len(segments[0].audio) == window_size * 3
+        assert len(segments[1].audio) == window_size * 3
+        assert len(segments[2].audio) == window_size * 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
