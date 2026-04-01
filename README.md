@@ -103,7 +103,7 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 ### Transcribe Options
 
 - `--file PATH`: Path to audio file (mutually exclusive with --stdin)
-- `--stdin`: Read WAV audio from stdin (mutually exclusive with --file). Always uses VAD, always outputs JSONL to stdout.
+- `--stdin`: Read WAV audio (mono, 16kHz) from stdin (mutually exclusive with --file). Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV. Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (default: `en`)
 - `--model MODEL`: Model name or HuggingFace model ID (default: `large-v3-turbo`). Short names are resolved per backend: `large-v3-turbo` → `openai/whisper-large-v3-turbo`, `moonshine-tiny-zh` → `UsefulSensors/moonshine-tiny-zh`.
@@ -135,12 +135,12 @@ uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jso
 uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --no-vad
 ```
 
-**Transcribe from stdin (WAV format, always uses VAD, outputs to stdout in JSONL format):**
+**Transcribe from stdin (mono 16kHz WAV — always uses VAD, outputs to stdout in JSONL format):**
 ```bash
-# Pipe WAV audio from ffmpeg
-ffmpeg -i video.mp4 -f wav - | uv run whisper-transcribe-py transcribe --stdin --language en
+# Pipe WAV audio from ffmpeg (16-bit PCM, 32-bit PCM, or 32-bit float all accepted)
+ffmpeg -i video.mp4 -ac 1 -ar 16000 -f wav - | uv run whisper-transcribe-py transcribe --stdin --language en
 
-# Or from a file
+# Or from an existing WAV file
 cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --language en
 ```
 

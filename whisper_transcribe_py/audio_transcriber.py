@@ -26,131 +26,141 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
 
-def _parse_wav_header(f):
-    """Parse WAV header from file-like object.
+def _validate_wav_header(stream):
+    """Read and validate a WAV header from a binary stream.
 
-    Returns:
-        (header_bytes, format_info) where format_info is a dict with
-        audio_format, channels, sample_rate, bits_per_sample, data_size,
-        or None if not a valid WAV.
-        header_bytes contains all bytes consumed from the stream.
+    Accepts mono WAV at target sample rate in 16-bit PCM, 32-bit PCM,
+    or 32-bit IEEE float. Returns (audio_format, bits_per_sample, sample_rate,
+    channels, data_size). Raises ValueError on invalid format.
     """
-    header_bytes = b''
+    riff = stream.read(4)
+    if riff != b'RIFF':
+        raise ValueError(f"Not a WAV file: expected RIFF, got {riff!r}")
 
-    riff = f.read(12)
-    header_bytes += riff
-    if len(riff) < 12 or riff[:4] != b'RIFF' or riff[8:12] != b'WAVE':
-        return header_bytes, None
+    stream.read(4)  # file size (ignore)
 
-    fmt_info = None
+    wave = stream.read(4)
+    if wave != b'WAVE':
+        raise ValueError(f"Not a WAV file: expected WAVE, got {wave!r}")
 
+    # Find fmt chunk
     while True:
-        chunk_hdr = f.read(8)
-        header_bytes += chunk_hdr
-        if len(chunk_hdr) < 8:
-            return header_bytes, None
-
-        chunk_id = chunk_hdr[:4]
-        chunk_size = struct.unpack_from('<I', chunk_hdr, 4)[0]
+        chunk_id = stream.read(4)
+        if len(chunk_id) < 4:
+            raise ValueError("WAV file missing fmt chunk")
+        chunk_size = struct.unpack('<I', stream.read(4))[0]
 
         if chunk_id == b'fmt ':
-            fmt_data = f.read(chunk_size)
-            header_bytes += fmt_data
-            if len(fmt_data) < 16:
-                return header_bytes, None
-            fmt_info = {
-                'audio_format': struct.unpack_from('<H', fmt_data, 0)[0],
-                'channels': struct.unpack_from('<H', fmt_data, 2)[0],
-                'sample_rate': struct.unpack_from('<I', fmt_data, 4)[0],
-                'bits_per_sample': struct.unpack_from('<H', fmt_data, 14)[0],
-            }
-        elif chunk_id == b'data':
-            if fmt_info is not None:
-                fmt_info['data_size'] = chunk_size
-                return header_bytes, fmt_info
-            return header_bytes, None
-        else:
-            skip = f.read(chunk_size)
-            header_bytes += skip
-            if len(skip) < chunk_size:
-                return header_bytes, None
+            break
+        skipped = stream.read(chunk_size)
+        if len(skipped) != chunk_size:
+            raise ValueError("WAV file truncated while skipping chunk")
 
+    fmt_data = stream.read(chunk_size)
+    if len(fmt_data) < 16:
+        raise ValueError("WAV fmt chunk too short")
 
-def _wav_format_matches(fmt_info, target_sample_rate, ac):
-    """Check if WAV format is float32 and matches requested params."""
-    if fmt_info is None:
-        return False
-    if fmt_info['audio_format'] != 3 or fmt_info['bits_per_sample'] != 32:
-        return False
-    if ac is not None and fmt_info['channels'] != ac:
-        return False
-    if target_sample_rate is not None and fmt_info['sample_rate'] != target_sample_rate:
-        return False
-    return True
+    audio_format, channels, sample_rate, _, _, bits_per_sample = struct.unpack(
+        '<HHIIHH', fmt_data[:16]
+    )
 
-
-def _stream_raw_float32(f, data_size, chunk_bytes=4096):
-    """Stream raw float32 data from file-like object."""
-    if data_size == 0 or data_size == 0xFFFFFFFF:
-        while True:
-            chunk = f.read(chunk_bytes)
-            if not chunk:
-                break
-            yield np.frombuffer(chunk, dtype=np.float32)
+    if audio_format == 1:  # PCM integer
+        if bits_per_sample not in (16, 32):
+            raise ValueError(f"Expected 16-bit or 32-bit PCM, got {bits_per_sample}")
+    elif audio_format == 3:  # IEEE float
+        if bits_per_sample != 32:
+            raise ValueError(f"Expected 32-bit float, got {bits_per_sample}")
     else:
-        remaining = data_size
-        while remaining > 0:
-            to_read = min(chunk_bytes, remaining)
-            chunk = f.read(to_read)
-            if not chunk:
-                break
-            remaining -= len(chunk)
-            yield np.frombuffer(chunk, dtype=np.float32)
+        raise ValueError(f"Expected PCM (1) or IEEE float (3) format, got {audio_format}")
 
+    if channels != 1:
+        raise ValueError(f"Expected mono (1 channel), got {channels}")
+    if sample_rate != TARGET_SAMPLE_RATE:
+        raise ValueError(f"Expected {TARGET_SAMPLE_RATE} Hz, got {sample_rate}")
+
+    # Find data chunk
+    data_size = 0
+    while True:
+        chunk_id = stream.read(4)
+        if len(chunk_id) < 4:
+            raise ValueError("WAV file missing data chunk")
+        chunk_size_bytes = stream.read(4)
+        if len(chunk_size_bytes) < 4:
+            raise ValueError("WAV file truncated")
+
+        if chunk_id == b'data':
+            data_size = struct.unpack('<I', chunk_size_bytes)[0]
+            break
+        chunk_size = struct.unpack('<I', chunk_size_bytes)[0]
+        skipped = stream.read(chunk_size)
+        if len(skipped) != chunk_size:
+            raise ValueError("WAV file truncated while skipping chunk")
+
+    return audio_format, bits_per_sample, sample_rate, channels, data_size
+
+
+def _stream_wav_as_float32(stream, audio_format, bits_per_sample, chunk_bytes=4096):
+    """Stream WAV data as float32 arrays, converting from PCM if needed."""
+    if audio_format == 3:
+        dtype = np.float32
+    elif bits_per_sample == 16:
+        dtype = np.int16
+    else:
+        dtype = np.int32
+
+    while True:
+        chunk = stream.read(chunk_bytes)
+        if not chunk:
+            break
+        samples = np.frombuffer(chunk, dtype=dtype)
+        if dtype == np.int16:
+            samples = samples.astype(np.float32) / 32768.0
+        elif dtype == np.int32:
+            samples = samples.astype(np.float32) / 2147483648.0
+        yield samples
+
+
+
+def stream_stdin_wav(
+    chunk_bytes: int = 4096,
+) -> Generator[npt.NDArray[np.float32], None, None]:
+    """Read WAV from stdin and yield float32 audio chunks.
+
+    Validates the WAV header, then streams PCM data as float32 arrays.
+    Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV (mono, 16kHz).
+    """
+    audio_format, bits_per_sample, *_ = _validate_wav_header(sys.stdin.buffer)
+    print("Reading WAV from stdin", file=sys.stderr)
+    yield from _stream_wav_as_float32(sys.stdin.buffer, audio_format, bits_per_sample, chunk_bytes)
 
 
 def ffmpeg_stream_float32(
-    full_audio_path: str | None = None,
+    full_audio_path: str,
     target_sample_rate: int | None = None,
     ac: int | None = None,
-    from_stdin: bool = False,
     chunk_bytes: int = 4096,
 ) -> Generator[npt.NDArray[np.float32], None, None]:
-    """Stream audio as float32 arrays, skipping ffmpeg if already float32 WAV.
+    """Stream audio as float32 arrays from a file, using direct WAV read or ffmpeg.
 
     Args:
-        full_audio_path: Path to audio file or URL (ignored if from_stdin=True)
+        full_audio_path: Path to audio file or URL
         target_sample_rate: Target sample rate for output
         ac: Number of audio channels
-        from_stdin: If True, read WAV audio from stdin instead of file
         chunk_bytes: Bytes to read per chunk (default 4096 = 1024 float32 samples)
 
     Yields:
         Float32 numpy arrays of audio samples
     """
     # Try direct WAV reading for files (not URLs)
-    if not from_stdin and full_audio_path and not full_audio_path.startswith(('http://', 'https://', 'rtmp://', 'rtsp://')):
+    if not full_audio_path.startswith(('http://', 'https://', 'rtmp://', 'rtsp://')):
         try:
             with open(full_audio_path, 'rb') as f:
-                _, fmt_info = _parse_wav_header(f)
-                if _wav_format_matches(fmt_info, target_sample_rate, ac):
-                    print(f"Direct float32 WAV read: {full_audio_path}", file=sys.stderr)
-                    yield from _stream_raw_float32(f, fmt_info['data_size'], chunk_bytes)
-                    return
-        except OSError:
+                audio_format, bits_per_sample, *_ = _validate_wav_header(f)
+                print(f"Direct WAV read: {full_audio_path}", file=sys.stderr)
+                yield from _stream_wav_as_float32(f, audio_format, bits_per_sample, chunk_bytes)
+                return
+        except (OSError, ValueError):
             pass
-
-    # Parse WAV header from stdin — must be float32 mono at target rate
-    if from_stdin:
-        _, fmt_info = _parse_wav_header(sys.stdin.buffer)
-        if not _wav_format_matches(fmt_info, target_sample_rate, ac):
-            raise ValueError(
-                f"stdin must be float32 WAV (mono, {target_sample_rate}Hz). "
-                f"Got: {fmt_info}"
-            )
-        print("Direct float32 WAV read from stdin", file=sys.stderr)
-        yield from _stream_raw_float32(sys.stdin.buffer, fmt_info['data_size'], chunk_bytes)
-        return
 
     # Fall back to ffmpeg
     command = [

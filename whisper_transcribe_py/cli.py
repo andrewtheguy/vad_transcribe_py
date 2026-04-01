@@ -13,6 +13,7 @@ from scipy import signal
 from whisper_transcribe_py.audio_transcriber import (
     TARGET_SAMPLE_RATE,
     ffmpeg_stream_float32,
+    stream_stdin_wav,
     get_window_size_samples,
     create_transcriber,
     TranscribedSegment,
@@ -430,8 +431,7 @@ def stream_transcribe_stdin_with_vad(
     current_ts = 0.0
     chunks_read = 0
 
-    print("Reading WAV audio from stdin...", file=sys.stderr)
-    for audio in ffmpeg_stream_float32(from_stdin=True, target_sample_rate=TARGET_SAMPLE_RATE, ac=1):
+    for audio in stream_stdin_wav():
         chunks_read += 1
         buffer.extend(audio)
 
