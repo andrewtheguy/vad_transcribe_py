@@ -299,7 +299,7 @@ class SpeechDetector:
     def _handle_force_split(self, timestamp: float) -> None:
         """Force-split the current segment at the hard limit."""
         self._emit_segment()
-        # Start fresh — next window will trigger new speech start if speech continues
+        # Start fresh — caller adds current window to continue speech
         self._has_speech_begin_timestamp = timestamp
         self._look_back_buffer.clear()
         self._look_back_buffer_duration = 0.0
