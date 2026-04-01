@@ -1,15 +1,15 @@
 # Whisper Transcribe - File Transcription Tool
 
-**Whisper Transcribe** is a file-based audio transcription tool that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends:
+**Whisper Transcribe** is a file-based audio transcription tool that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends via HuggingFace Transformers:
 
-- [whispercpp](https://github.com/absadiki/pywhispercpp) (default) - Python binding for whisper.cpp (Faster on Mac with MPS support)
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) - CTranslate2-based implementation for faster GPU/CPU inference
+- [Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) (default) - OpenAI's Whisper large-v3-turbo, multilingual ASR
+- [Moonshine](https://huggingface.co/collections/UsefulSensors/flavors-of-moonshine) - Tiny specialized ASR models for edge devices (language-specific)
 
 ## Features
 
 - **Streaming Audio Processing**: Audio is streamed from ffmpeg - never loads full file into memory
 - **Smart Voice Detection**: Uses Silero VAD to detect speech segments
-- **Flexible Backend Selection**: Choose between whisper.cpp (default) or faster-whisper backends
+- **Flexible Backend Selection**: Choose between Whisper (default) or Moonshine backends
 - **File Transcription**: Process audio files to JSON transcripts
 - **Split Mode**: Save detected speech segments as Opus files
 - **Multi-language Support**: Supports all languages available in OpenAI Whisper models
@@ -106,15 +106,14 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--stdin`: Read WAV audio from stdin (mutually exclusive with --file). Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (default: `en`)
-- `--model MODEL`: Whisper model to use (default: `large-v3-turbo`)
-- `--backend {whisper_cpp, faster_whisper}`: Transcription backend (default: `whisper_cpp`)
-- `--n-threads N`: Number of threads for transcription (default: 1)
+- `--model MODEL`: Model name or HuggingFace model ID (default: `large-v3-turbo`). Short names are resolved per backend: `large-v3-turbo` → `openai/whisper-large-v3-turbo`, `moonshine-tiny-zh` → `UsefulSensors/moonshine-tiny-zh`.
+- `--backend {whisper, moonshine}`: Transcription backend (default: `whisper`)
 - `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 
 **VAD tuning options** (only apply when VAD is enabled):
 - `--min-speech-seconds FLOAT`: Minimum speech duration in seconds (default: 3.0)
-- `--soft-limit-seconds FLOAT`: Soft limit on speech segment duration in seconds (default: 60.0)
+- `--soft-limit-seconds FLOAT`: Soft limit on speech segment duration in seconds (default: 60.0). Triggers adaptive silence detection.
 - `--speech-threshold FLOAT`: VAD speech detection threshold 0.0-1.0 (default: 0.5)
 - `--min-silence-duration-ms INT`: Minimum silence duration in ms to end segment (default: 2000)
 - `--look-back-seconds FLOAT`: Look-back buffer in seconds for segment start (default: 0.5)
@@ -145,14 +144,14 @@ ffmpeg -i video.mp4 -f wav - | uv run whisper-transcribe-py transcribe --stdin -
 cat audio.wav | uv run whisper-transcribe-py transcribe --stdin --language en
 ```
 
-**Use faster-whisper backend:**
+**Use Moonshine backend (language-specific model required):**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --backend faster_whisper
+uv run whisper-transcribe-py transcribe --file audio.wav --backend moonshine --model moonshine-tiny-zh
 ```
 
-**Use different Whisper model with more threads:**
+**Use a different Whisper model:**
 ```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --model large-v3 --n-threads 4
+uv run whisper-transcribe-py transcribe --file audio.wav --model large-v3
 ```
 
 ### Transcribe Output Format (JSONL)
@@ -259,10 +258,10 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 
 ## Performance Notes
 
-- **whisper.cpp** backend: Optimized for Mac (MPS support), good for CPU-only systems
-- **faster-whisper** backend: Better for GPU or CPU-only Linux systems
-- Larger models (e.g., `large-v3`) provide better accuracy but require more memory and time
-- Use `--n-threads` to speed up transcription on multi-core systems
+- **Whisper** backend: Best for multilingual transcription, 30-second receptive field
+- **Moonshine** backend: Tiny specialized models for edge devices, 14-second receptive field
+- Device auto-detected: CUDA > MPS > CPU with appropriate dtype (float16 on GPU, float32 on CPU)
+- Larger Whisper models (e.g., `large-v3`) provide better accuracy but require more memory
 
 ## Development
 
@@ -298,7 +297,7 @@ pyproject.toml                  # Project configuration
 - File-based transcription only (no real-time/live transcription)
 - Live streams not supported (URLs must have fixed duration)
 - `--no-vad` mode limited to 2 hours to prevent memory issues
-- VAD mode has a 1-hour hard cap per speech segment (aborts if exceeded, indicating a VAD bug)
+- VAD enforces per-backend hard limits on segment duration (30s for Whisper, 14s for Moonshine) via force-split
 - No database persistence (outputs to JSONL files or Opus segments)
 - No web interface
 

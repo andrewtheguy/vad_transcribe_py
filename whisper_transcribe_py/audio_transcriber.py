@@ -5,11 +5,15 @@ from typing import Generator, Literal
 
 import numpy as np
 import numpy.typing as npt
+import torch
 
 from zhconv_rs import zhconv
 
 TARGET_SAMPLE_RATE = 16000
 ChineseConversion = Literal['none', 'simplified', 'traditional']
+
+WHISPER_HARD_LIMIT_SECONDS = 30
+MOONSHINE_HARD_LIMIT_SECONDS = 14
 
 
 def format_timestamp(seconds: float) -> str:
@@ -101,11 +105,31 @@ class TranscribedSegment:
     end: float
 
 
+def _get_device_and_dtype():
+    """Auto-detect best device and dtype."""
+    if torch.cuda.is_available():
+        return "cuda:0", torch.float16
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps", torch.float16
+    else:
+        return "cpu", torch.float32
+
+
+def resolve_model_id(model: str, backend: str) -> str:
+    """Resolve short model name to full HuggingFace model ID."""
+    if '/' in model:
+        return model
+    if backend == 'whisper':
+        return f"openai/whisper-{model}"
+    elif backend == 'moonshine':
+        return f"UsefulSensors/{model}"
+    return model
+
+
 def create_transcriber(
     language: str,
     model: str = "large-v3-turbo",
-    backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
-    n_threads: int = 1,
+    backend: Literal['whisper', 'moonshine'] = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
 ) -> 'WhisperTranscriber':
     """Factory function to create a WhisperTranscriber instance."""
@@ -113,79 +137,96 @@ def create_transcriber(
         language=language,
         model=model,
         backend=backend,
-        n_threads=n_threads,
         chinese_conversion=chinese_conversion,
     )
 
 
 class WhisperTranscriber:
-    """Simple transcriber without VAD or queues."""
+    """Transcriber using HuggingFace Transformers backends."""
 
     def __init__(
         self,
         language: str,
         model: str = "large-v3-turbo",
-        backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
-        n_threads: int = 1,
+        backend: Literal['whisper', 'moonshine'] = 'whisper',
         chinese_conversion: ChineseConversion = 'none',
     ):
         self.language = language
         self.model = model
         self.backend = backend
-        self.n_threads = n_threads
         self.chinese_conversion = chinese_conversion
 
         # Load backend-specific model
-        if self.backend == 'whisper_cpp':
-            self._load_whisper_cpp()
-        elif self.backend == 'faster_whisper':
-            self._load_faster_whisper()
+        if self.backend == 'whisper':
+            self._load_whisper()
+        elif self.backend == 'moonshine':
+            self._load_moonshine()
         else:
             raise ValueError(f"Unsupported backend: {self.backend}")
 
-    def _load_whisper_cpp(self):
-        """Load whisper.cpp model."""
+    @property
+    def hard_limit_seconds(self) -> int:
+        if self.backend == 'whisper':
+            return WHISPER_HARD_LIMIT_SECONDS
+        elif self.backend == 'moonshine':
+            return MOONSHINE_HARD_LIMIT_SECONDS
+        return WHISPER_HARD_LIMIT_SECONDS
+
+    def _load_whisper(self):
+        """Load Whisper model via HuggingFace Transformers pipeline."""
         try:
-            from pywhispercpp.model import Model
+            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
         except ImportError:
             raise ImportError(
-                "pywhispercpp is not installed. "
+                "transformers is not installed. "
                 "To use transcription, install with: uv pip install -e '.[transcribe]'. "
                 "For VAD-only mode without transcription, use the 'split' command instead."
             )
 
-        self.whisper_cpp_model = Model(
-            self.model,
-            print_realtime=False,
-            print_progress=False,
-            print_timestamps=False,
-            n_threads=self.n_threads,
-            # Anti-looping settings
-            single_segment=False,  # Allow multiple segments (was True, causing loops)
-            #no_context=True,  # Don't use past transcription as prompt (prevents loops)
-            # Use beam search for better accuracy
-            params_sampling_strategy=1,  # 1 = BEAM_SEARCH
-            beam_search={"beam_size": 5, "patience": -1.0},
-            # anti-looping settings
-            n_max_text_ctx=64,  # Use max context length
+        model_id = resolve_model_id(self.model, self.backend)
+        device, torch_dtype = _get_device_and_dtype()
+
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
+        )
+        model.to(device)
+
+        processor = AutoProcessor.from_pretrained(model_id)
+
+        self.pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+            torch_dtype=torch_dtype,
+            device=device,
         )
 
-        print("Whisper.cpp model loaded:", file=sys.stderr)
-        print(self.whisper_cpp_model.get_params(), file=sys.stderr)
-        print(self.whisper_cpp_model.system_info(), file=sys.stderr)
+        print(f"Whisper model loaded: {model_id} on {device}", file=sys.stderr)
 
-    def _load_faster_whisper(self):
-        """Load faster-whisper model."""
+    def _load_moonshine(self):
+        """Load Moonshine model via HuggingFace Transformers."""
         try:
-            from faster_whisper import WhisperModel
+            from transformers import MoonshineForConditionalGeneration, AutoProcessor
         except ImportError:
             raise ImportError(
-                "faster-whisper is not installed. "
+                "transformers is not installed. "
                 "To use transcription, install with: uv pip install -e '.[transcribe]'. "
                 "For VAD-only mode without transcription, use the 'split' command instead."
             )
 
-        self.faster_whisper_model = WhisperModel(self.model)
+        model_id = resolve_model_id(self.model, self.backend)
+        device, torch_dtype = _get_device_and_dtype()
+
+        self.moonshine_model = MoonshineForConditionalGeneration.from_pretrained(
+            model_id
+        ).to(device).to(torch_dtype)
+
+        self.moonshine_processor = AutoProcessor.from_pretrained(model_id)
+        self._moonshine_device = device
+        self._moonshine_dtype = torch_dtype
+
+        print(f"Moonshine model loaded: {model_id} on {device}", file=sys.stderr)
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """
@@ -200,53 +241,52 @@ class WhisperTranscriber:
         """
         results: list[TranscribedSegment] = []
 
-        if self.backend == 'whisper_cpp':
-            def print_segment(segment):
-                # whisper.cpp timestamps are in centiseconds (10ms units)
-                start = start_offset + segment.t0 / 100
-                end = start_offset + segment.t1 / 100
-                start_fmt = format_timestamp(start)
-                end_fmt = format_timestamp(end)
-                print("[%s -> %s] %s" % (start_fmt, end_fmt, segment.text), file=sys.stderr)
-
-            whispercpp_results = self.whisper_cpp_model.transcribe(
-                audio, new_segment_callback=print_segment, language=self.language
+        if self.backend == 'whisper':
+            result = self.pipe(
+                audio.copy(),
+                return_timestamps=True,
+                generate_kwargs={"language": self.language},
             )
-            for segment in whispercpp_results:
-                text = self._process_text(segment.text)
-                # whisper.cpp timestamps are in centiseconds (10ms units), not milliseconds
+
+            for chunk in result["chunks"]:
+                chunk_start = start_offset + chunk["timestamp"][0]
+                chunk_end = start_offset + (chunk["timestamp"][1] if chunk["timestamp"][1] is not None else len(audio) / TARGET_SAMPLE_RATE)
+                start_fmt = format_timestamp(chunk_start)
+                end_fmt = format_timestamp(chunk_end)
+                print("[%s -> %s] %s" % (start_fmt, end_fmt, chunk["text"]), file=sys.stderr)
+                text = self._process_text(chunk["text"])
                 results.append(TranscribedSegment(
                     text=text,
-                    start=start_offset + segment.t0 / 100,
-                    end=start_offset + segment.t1 / 100,
+                    start=chunk_start,
+                    end=chunk_end,
                 ))
 
-        elif self.backend == 'faster_whisper':
-            segments, _ = self.faster_whisper_model.transcribe(
+        elif self.backend == 'moonshine':
+            inputs = self.moonshine_processor(
                 audio,
-                beam_size=5,
-                language=self.language,
-                vad_filter=False,
-                # Anti-looping settings
-                condition_on_previous_text=False,  # Don't use past output as prompt
-                repetition_penalty=1.2,  # Penalize repeated tokens
-                no_repeat_ngram_size=3,  # Prevent 3-gram repetition
-                compression_ratio_threshold=2.4,  # Default, but explicit
-                log_prob_threshold=-1.0,  # Default, but explicit
+                return_tensors="pt",
+                sampling_rate=self.moonshine_processor.feature_extractor.sampling_rate,
             )
+            inputs = inputs.to(self._moonshine_device, self._moonshine_dtype)
 
-            for segment in segments:
-                start = start_offset + segment.start
-                end = start_offset + segment.end
-                start_fmt = format_timestamp(start)
-                end_fmt = format_timestamp(end)
-                print("[%s -> %s] %s" % (start_fmt, end_fmt, segment.text), file=sys.stderr)
-                text = self._process_text(segment.text)
-                results.append(TranscribedSegment(
-                    text=text,
-                    start=start,
-                    end=end,
-                ))
+            # Limit max tokens to prevent hallucination loops
+            token_limit_factor = 13 / self.moonshine_processor.feature_extractor.sampling_rate
+            seq_lens = inputs.attention_mask.sum(dim=-1)
+            max_length = int((seq_lens * token_limit_factor).max().item())
+
+            generated_ids = self.moonshine_model.generate(**inputs, max_length=max_length)
+            text = self.moonshine_processor.decode(generated_ids[0], skip_special_tokens=True)
+
+            end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
+            start_fmt = format_timestamp(start_offset)
+            end_fmt = format_timestamp(end_time)
+            print("[%s -> %s] %s" % (start_fmt, end_fmt, text), file=sys.stderr)
+            text = self._process_text(text)
+            results.append(TranscribedSegment(
+                text=text,
+                start=start_offset,
+                end=end_time,
+            ))
 
         return results
 

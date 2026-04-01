@@ -19,8 +19,8 @@ whisper-transcribe-py = "whisper_transcribe_py.cli:main"
 
 [project.optional-dependencies]
 transcribe = [
-    "pywhispercpp @ git+https://github.com/absadiki/pywhispercpp@v1.3.3",
-    "faster-whisper>=1.0.0,<2",
+    "transformers>=4.52",
+    "accelerate>=1.0",
 ]
 dev = [
     "pytest>=9.0.0,<10",

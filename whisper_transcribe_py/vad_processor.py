@@ -19,8 +19,8 @@ TARGET_SAMPLE_RATE = 16000
 # Reduced silence duration when over soft_limit_seconds (one window ~32ms)
 ADAPTIVE_MIN_SILENCE_MS = 32
 
-# Hard cap on speech segment duration (1 hour) - exceeding indicates VAD bug
-HARD_LIMIT_SECONDS = 60 * 60
+# Default hard limit for split command (no transcriber)
+DEFAULT_HARD_LIMIT_SECONDS = 60 * 60
 
 
 class AudioSegment:
@@ -66,7 +66,8 @@ class SpeechDetector:
     Attributes:
         sample_rate: Audio sample rate (default: 16000 Hz)
         min_speech_seconds: Minimum valid speech duration (default: 3.0s)
-        soft_limit_seconds: Maximum segment duration before split (default: 60.0s)
+        soft_limit_seconds: Segment duration that triggers adaptive silence detection (default: 6.0s)
+        hard_limit_seconds: Maximum segment duration, force-splits at this point (default: 3600s)
         speech_threshold: Probability threshold for speech detection (default: 0.5)
         min_silence_duration_ms: Minimum silence duration to end speech segment (default: 2000)
         on_segment_complete: Callback when speech segment completes
@@ -75,7 +76,8 @@ class SpeechDetector:
         When speech duration exceeds soft_limit_seconds and min_silence_duration_ms > 0,
         the detector uses adaptive silence detection: it lowers the effective silence
         threshold to allow ending at natural speech boundaries (short silences) rather
-        than cutting abruptly mid-speech.
+        than cutting abruptly mid-speech. If no silence is found by hard_limit_seconds,
+        the segment is force-split.
     """
 
     def __init__(
@@ -83,6 +85,7 @@ class SpeechDetector:
         sample_rate: int = TARGET_SAMPLE_RATE,
         min_speech_seconds: float = 3.0,
         soft_limit_seconds: float = 60.0,
+        hard_limit_seconds: float = DEFAULT_HARD_LIMIT_SECONDS,
         speech_threshold: float = 0.5,
         min_silence_duration_ms: int = 2000,
         look_back_seconds: float = 0.5,
@@ -94,7 +97,8 @@ class SpeechDetector:
         Args:
             sample_rate: Audio sample rate
             min_speech_seconds: Minimum duration to consider as valid speech
-            soft_limit_seconds: Maximum duration before forcing segment split
+            soft_limit_seconds: Duration that triggers adaptive silence detection (default: 6.0s)
+            hard_limit_seconds: Maximum duration, force-splits at this point
             speech_threshold: Probability threshold for speech detection
             min_silence_duration_ms: Minimum silence duration to end speech segment (default: 2000ms)
             look_back_seconds: Amount of non-speech audio to prepend when speech starts (default: 0.5s)
@@ -103,6 +107,7 @@ class SpeechDetector:
         self.sample_rate = sample_rate
         self.min_speech_seconds = min_speech_seconds
         self.soft_limit_seconds = soft_limit_seconds
+        self.hard_limit_seconds = hard_limit_seconds
         self.speech_threshold = speech_threshold
         self.min_silence_duration_ms = min_silence_duration_ms
         self.on_segment_complete = on_segment_complete
@@ -150,12 +155,13 @@ class SpeechDetector:
         # Get current segment duration
         seconds = len(self._speech_section) / self.sample_rate
 
-        # Hard cap: abort if segment exceeds 1 hour (indicates VAD bug)
-        if seconds > HARD_LIMIT_SECONDS:
-            raise RuntimeError(
-                f"VAD bug: speech segment duration {seconds/3600:.2f}h exceeds 1-hour limit. "
-                f"This indicates VAD failed to detect silence."
-            )
+        # Hard limit: force-split if segment exceeds the limit
+        if seconds >= self.hard_limit_seconds:
+            self._flush_silence_buffer()
+            self._handle_speech_continue(audio_window)
+            self._handle_force_split(timestamp)
+            self._prev_has_speech = has_speech
+            return has_speech
 
         # State machine transitions
         if not self._prev_has_speech:
@@ -288,6 +294,16 @@ class SpeechDetector:
         if self._silence_buffer:
             self._speech_section.extend(self._silence_buffer)
             self._silence_buffer = []
+        self._accumulated_silence_ms = 0.0
+
+    def _handle_force_split(self, timestamp: float) -> None:
+        """Force-split the current segment at the hard limit."""
+        self._emit_segment()
+        # Start fresh — next window will trigger new speech start if speech continues
+        self._has_speech_begin_timestamp = timestamp
+        self._look_back_buffer.clear()
+        self._look_back_buffer_duration = 0.0
+        self._silence_buffer = []
         self._accumulated_silence_ms = 0.0
 
     def _handle_speech_end(self) -> None:

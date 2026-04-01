@@ -4,9 +4,9 @@ import whisper_transcribe_py.audio_transcriber as audio_transcriber
 
 
 @pytest.fixture(autouse=True)
-def stub_whisper_cpp(monkeypatch):
-    """Stub out whisper.cpp model loading."""
-    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_whisper_cpp", lambda _self: None)
+def stub_whisper(monkeypatch):
+    """Stub out Whisper model loading."""
+    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_whisper", lambda _self: None)
 
 
 def test_transcriber_initialization():
@@ -14,14 +14,12 @@ def test_transcriber_initialization():
     transcriber = audio_transcriber.WhisperTranscriber(
         language="en",
         model="large-v3-turbo",
-        backend="whisper_cpp",
-        n_threads=4,
+        backend="whisper",
     )
 
     assert transcriber.language == "en"
     assert transcriber.model == "large-v3-turbo"
-    assert transcriber.backend == "whisper_cpp"
-    assert transcriber.n_threads == 4
+    assert transcriber.backend == "whisper"
 
 
 def test_create_transcriber_factory():
@@ -29,14 +27,12 @@ def test_create_transcriber_factory():
     transcriber = audio_transcriber.create_transcriber(
         language="zh",
         model="large-v3",
-        backend="whisper_cpp",
-        n_threads=2,
+        backend="whisper",
     )
 
     assert transcriber.language == "zh"
     assert transcriber.model == "large-v3"
-    assert transcriber.backend == "whisper_cpp"
-    assert transcriber.n_threads == 2
+    assert transcriber.backend == "whisper"
 
 
 def test_get_window_size_samples():
@@ -63,7 +59,7 @@ def test_process_text_chinese_no_conversion():
     transcriber = audio_transcriber.WhisperTranscriber(
         language="zh",
         model="large-v3-turbo",
-        backend="whisper_cpp",
+        backend="whisper",
     )
 
     # Default: no conversion
@@ -76,7 +72,7 @@ def test_process_text_chinese_to_traditional():
     transcriber = audio_transcriber.WhisperTranscriber(
         language="zh",
         model="large-v3-turbo",
-        backend="whisper_cpp",
+        backend="whisper",
         chinese_conversion="traditional",
     )
 
@@ -89,7 +85,7 @@ def test_process_text_chinese_to_simplified():
     transcriber = audio_transcriber.WhisperTranscriber(
         language="zh",
         model="large-v3-turbo",
-        backend="whisper_cpp",
+        backend="whisper",
         chinese_conversion="simplified",
     )
 
@@ -102,7 +98,7 @@ def test_process_text_cantonese_no_conversion():
     transcriber = audio_transcriber.WhisperTranscriber(
         language="yue",
         model="large-v3-turbo",
-        backend="whisper_cpp",
+        backend="whisper",
     )
 
     # Default: no conversion
@@ -115,7 +111,7 @@ def test_process_text_cantonese_to_traditional():
     transcriber = audio_transcriber.WhisperTranscriber(
         language="yue",
         model="large-v3-turbo",
-        backend="whisper_cpp",
+        backend="whisper",
         chinese_conversion="traditional",
     )
 
@@ -128,7 +124,7 @@ def test_process_text_english():
     transcriber = audio_transcriber.WhisperTranscriber(
         language="en",
         model="large-v3-turbo",
-        backend="whisper_cpp",
+        backend="whisper",
     )
 
     result = transcriber._process_text("Hello world")
@@ -143,3 +139,35 @@ def test_unsupported_backend():
             model="large-v3-turbo",
             backend="unsupported_backend",
         )
+
+
+def test_hard_limit_seconds_whisper():
+    """Test that whisper backend reports correct hard limit."""
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="en",
+        backend="whisper",
+    )
+    assert transcriber.hard_limit_seconds == audio_transcriber.WHISPER_HARD_LIMIT_SECONDS
+
+
+def test_hard_limit_seconds_moonshine(monkeypatch):
+    """Test that moonshine backend reports correct hard limit."""
+    monkeypatch.setattr(audio_transcriber.WhisperTranscriber, "_load_moonshine", lambda _self: None)
+    transcriber = audio_transcriber.WhisperTranscriber(
+        language="zh",
+        model="moonshine-tiny-zh",
+        backend="moonshine",
+    )
+    assert transcriber.hard_limit_seconds == audio_transcriber.MOONSHINE_HARD_LIMIT_SECONDS
+
+
+def test_resolve_model_id_whisper():
+    """Test model ID resolution for whisper backend."""
+    assert audio_transcriber.resolve_model_id("large-v3-turbo", "whisper") == "openai/whisper-large-v3-turbo"
+    assert audio_transcriber.resolve_model_id("openai/whisper-large-v3", "whisper") == "openai/whisper-large-v3"
+
+
+def test_resolve_model_id_moonshine():
+    """Test model ID resolution for moonshine backend."""
+    assert audio_transcriber.resolve_model_id("moonshine-tiny-zh", "moonshine") == "UsefulSensors/moonshine-tiny-zh"
+    assert audio_transcriber.resolve_model_id("UsefulSensors/moonshine-tiny-ja", "moonshine") == "UsefulSensors/moonshine-tiny-ja"
