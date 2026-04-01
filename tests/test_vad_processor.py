@@ -1875,7 +1875,7 @@ class TestHardLimitForceSplit:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            soft_limit_seconds=hard_limit * 2,  # High so adaptive doesn't kick in
+            soft_limit_seconds=hard_limit,
             hard_limit_seconds=hard_limit,
             min_silence_duration_ms=2000,
             on_segment_complete=lambda s: segments.append(s),
@@ -1907,7 +1907,7 @@ class TestHardLimitForceSplit:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            soft_limit_seconds=hard_limit * 2,
+            soft_limit_seconds=hard_limit,
             hard_limit_seconds=hard_limit,
             min_silence_duration_ms=2000,
             on_segment_complete=lambda s: segments.append(s),
@@ -1940,7 +1940,7 @@ class TestHardLimitForceSplit:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            soft_limit_seconds=hard_limit * 2,
+            soft_limit_seconds=hard_limit,
             hard_limit_seconds=hard_limit,
             min_silence_duration_ms=2000,
             look_back_seconds=0.0,
@@ -1974,7 +1974,7 @@ class TestHardLimitForceSplit:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            soft_limit_seconds=hard_limit * 2,
+            soft_limit_seconds=hard_limit,
             hard_limit_seconds=hard_limit,
             min_silence_duration_ms=0,
             on_segment_complete=lambda s: segments.append(s),
@@ -2020,7 +2020,7 @@ class TestHardLimitForceSplit:
         detector = SpeechDetector(
             sample_rate=sample_rate,
             min_speech_seconds=window_seconds,
-            soft_limit_seconds=hard_limit * 2,  # High so adaptive doesn't kick in
+            soft_limit_seconds=hard_limit,
             hard_limit_seconds=hard_limit,
             min_silence_duration_ms=int(window_seconds * 3 * 1000),  # 3 windows of silence needed
             on_segment_complete=lambda s: segments.append(s),
