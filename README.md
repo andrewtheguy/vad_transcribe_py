@@ -108,7 +108,6 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--language LANG`: Language code for transcription (default: `en`)
 - `--model MODEL`: Model name (auto-selected if omitted). For whisper: HuggingFace short name or full ID (default: `large-v3-turbo` → `openai/whisper-large-v3-turbo`). For moonshine: use short names like `small-streaming`, `base`, `tiny` — these map to language-specific variants (e.g., `small-streaming` → `small-streaming-en`). Defaults: `small-streaming` (English), `base` (Chinese).
 - `--backend {whisper, moonshine}`: Transcription backend (default: `whisper`)
-- `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 
 VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 30s hard, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s). Use the `split` command for manual VAD tuning.
@@ -123,11 +122,6 @@ uv run whisper-transcribe-py transcribe --file audio.wav --language en
 **Transcribe to file:**
 ```bash
 uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --language en
-```
-
-**Transcribe without VAD (max 2 hours):**
-```bash
-uv run whisper-transcribe-py transcribe --file audio.wav --output transcript.jsonl --no-vad
 ```
 
 **Transcribe from stdin (mono 16kHz WAV — always uses VAD, outputs to stdout in JSONL format):**
@@ -177,12 +171,6 @@ Transcription outputs streaming JSONL (one JSON object per line). Each entry has
 - `transcription`: Contains the transcribed text with start/end timestamps
 - `segment_end`: Marks the end of a VAD-detected speech segment
 - `*_formatted`: Human-readable timestamps in `hh:mm:ss.ms` format
-
-**Without VAD (`--no-vad`):** Only transcriptions (no segment boundaries):
-```jsonl
-{"type": "transcription", "start": 0.0, "start_formatted": "00:00:00.000", "end": 2.3, "end_formatted": "00:00:02.300", "text": "Hello world"}
-{"type": "transcription", "start": 2.3, "start_formatted": "00:00:02.300", "end": 5.8, "end_formatted": "00:00:05.800", "text": "This is a test"}
-```
 
 ---
 
@@ -291,7 +279,6 @@ uv run pytest
 
 - File-based transcription only (no real-time/live transcription)
 - Live streams not supported (URLs must have fixed duration)
-- `--no-vad` mode limited to 2 hours to prevent memory issues
 - VAD enforces per-backend hard limits on segment duration via force-split (30s Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming)
 - No database persistence (outputs to JSONL files or Opus segments)
 - No web interface
