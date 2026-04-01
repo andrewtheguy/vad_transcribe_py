@@ -21,6 +21,11 @@ def load_tokenizer(path: str) -> list[bytes]:
                     break
                 length = (second[0] * 128) + first - 128
             token_bytes = f.read(length)
+            if len(token_bytes) != length:
+                raise ValueError(
+                    f"Truncated tokenizer file {path}: token {len(vocab)} "
+                    f"expected {length} bytes, got {len(token_bytes)}"
+                )
             vocab.append(token_bytes)
     return vocab
 

@@ -106,7 +106,7 @@ whisper-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--stdin`: Read WAV audio (mono, 16kHz) from stdin (mutually exclusive with --file). Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV. Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (default: `en`)
-- `--model MODEL`: Model name (default: `large-v3-turbo`). For whisper: HuggingFace model ID or short name (`large-v3-turbo` → `openai/whisper-large-v3-turbo`). For moonshine: `small-streaming` (English default), `base` (Chinese default), `tiny`, `medium-streaming`, etc. Auto-selected if omitted.
+- `--model MODEL`: Model name (auto-selected if omitted). For whisper: HuggingFace short name or full ID (default: `large-v3-turbo` → `openai/whisper-large-v3-turbo`). For moonshine: use short names like `small-streaming`, `base`, `tiny` — these map to language-specific variants (e.g., `small-streaming` → `small-streaming-en`). Defaults: `small-streaming` (English), `base` (Chinese).
 - `--backend {whisper, moonshine}`: Transcription backend (default: `whisper`)
 - `--vad / --no-vad`: Use VAD segmentation (default: enabled). `--no-vad` has a 2-hour limit.
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)

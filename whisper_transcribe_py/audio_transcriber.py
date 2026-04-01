@@ -334,6 +334,9 @@ class WhisperTranscriber:
         print(f"Loading {name} model...", file=sys.stderr)
         model_dir = download_model(language, arch, url)
 
+        # Max tokens = audio_samples * token_limit_factor. Streaming models produce
+        # ~6.5 tokens/sec, non-streaming ~13 tokens/sec. Dividing by SAMPLE_RATE
+        # converts from per-second to per-sample. (Source: moonshine-ai/moonshine)
         token_limit_factor = 6.5 / SAMPLE_RATE if is_streaming else 13 / SAMPLE_RATE
         strip_cjk_spaces = self.language in ('zh', 'ja', 'ko')
 
