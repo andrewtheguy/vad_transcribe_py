@@ -71,9 +71,6 @@ def format_timestamp(seconds: float, include_decimals=True) -> str:
         return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
 
 
-# Maximum duration for --no-vad mode (2 hours) to prevent OOM
-MAX_NO_VAD_DURATION_SECONDS = 2 * 60 * 60
-
 
 def is_url(path: str) -> bool:
     """Check if the path is a URL."""
@@ -148,9 +145,9 @@ def resample_to_16k(audio: np.ndarray, orig_sr: int) -> np.ndarray:
     return resampled.astype(np.float32)
 
 
-def validate_audio_source(audio_source: str) -> float:
+def validate_audio_source(audio_source: str) -> None:
     """
-    Validate audio source (file or URL) and return duration.
+    Validate audio source (file or URL).
 
     Raises:
         ValueError: If source is invalid or is a live stream
@@ -168,7 +165,6 @@ def validate_audio_source(audio_source: str) -> float:
         )
 
     print(f"Audio duration: {duration:.2f}s", file=sys.stderr)
-    return duration
 
 
 def save_audio_segment(
@@ -461,58 +457,6 @@ def stream_transcribe_stdin_with_vad(
     return segment_count
 
 
-def stream_transcribe_no_vad(
-    audio_source: str,
-    transcriber: WhisperTranscriber,
-    output_file,
-    duration: float,
-) -> int:
-    """
-    Stream audio directly to transcriber without VAD.
-
-    Args:
-        audio_source: Path to audio file or URL
-        transcriber: Pre-loaded WhisperTranscriber instance
-        output_file: File object to write JSONL output
-        duration: Pre-validated audio duration in seconds
-
-    Returns:
-        Number of segments transcribed
-
-    Raises:
-        ValueError: If audio duration exceeds 2-hour limit
-    """
-    # Check duration limit
-    if duration > MAX_NO_VAD_DURATION_SECONDS:
-        raise ValueError(
-            f"Audio duration {duration/3600:.1f}h exceeds 2-hour limit for --no-vad mode. "
-            "Use --vad for longer files."
-        )
-
-    print(f"Streaming audio ({duration:.2f}s) without VAD...", file=sys.stderr)
-
-    # Stream and accumulate audio
-    audio_chunks: list[float] = []
-    chunks_read = 0
-
-    for audio in ffmpeg_stream_float32(audio_source, target_sample_rate=TARGET_SAMPLE_RATE, ac=1):
-        chunks_read += 1
-        audio_chunks.extend(audio)
-
-        if chunks_read % 1000 == 0:
-            current_duration = len(audio_chunks) / TARGET_SAMPLE_RATE
-            print(f"Progress: {current_duration:.2f}s", file=sys.stderr)
-
-    # Transcribe full audio and output as JSONL
-    audio_array = np.array(audio_chunks, dtype=np.float32)
-    print(f"Transcribing {len(audio_array) / TARGET_SAMPLE_RATE:.2f}s of audio...", file=sys.stderr)
-    write_jsonl_marker("stream_start", output_file)
-    results = transcriber.transcribe(audio_array, 0.0)
-    for segment in results:
-        write_jsonl_segment(segment, output_file)
-    write_jsonl_marker("stream_end", output_file)
-    return len(results)
-
 
 def split_by_vad(
     audio_source: str,
@@ -696,9 +640,6 @@ def main():
                                    help='Model name (default: large-v3-turbo for whisper, auto-selected for moonshine)')
     parser_transcribe.add_argument('--backend', type=str, choices=['whisper', 'moonshine'],
                                    default='whisper', help='Transcription backend (default: whisper)')
-    parser_transcribe.add_argument('--vad', action=argparse.BooleanOptionalAction, default=True,
-                                   help='Use VAD segmentation (default: enabled). '
-                                        'Use --no-vad to transcribe without VAD (max 2 hours)')
     parser_transcribe.add_argument('--chinese-conversion', type=str,
                                    choices=['none', 'simplified', 'traditional'],
                                    default='none',
@@ -736,7 +677,7 @@ def main():
                 else:
                     # File mode
                     audio_source = args.file
-                    duration = validate_audio_source(audio_source)
+                    validate_audio_source(audio_source)
 
                     transcriber = create_transcriber(
                         args.language, args.model, args.backend,
@@ -753,15 +694,11 @@ def main():
                         output_file = sys.stdout
 
                     try:
-                        # Transcribe with or without VAD, streaming JSONL output
-                        if args.vad:
-                            segment_count = stream_transcribe_with_vad(
-                                audio_source, transcriber, output_file,
-                                hard_limit_seconds=transcriber.hard_limit_seconds,
-                                soft_limit_seconds=transcriber.soft_limit_seconds,
-                            )
-                        else:
-                            segment_count = stream_transcribe_no_vad(audio_source, transcriber, output_file, duration)
+                        segment_count = stream_transcribe_with_vad(
+                            audio_source, transcriber, output_file,
+                            hard_limit_seconds=transcriber.hard_limit_seconds,
+                            soft_limit_seconds=transcriber.soft_limit_seconds,
+                        )
 
                         if args.output:
                             print(f"Transcript written to {args.output} ({segment_count} segments)", file=sys.stderr)
