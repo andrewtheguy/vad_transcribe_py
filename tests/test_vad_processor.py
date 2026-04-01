@@ -1861,5 +1861,149 @@ class TestMixedBoundarySegments:
         )
 
 
+class TestHardLimitForceSplit:
+    """Tests for hard limit force-split behavior."""
+
+    def test_force_split_at_hard_limit(self):
+        """Segment is emitted exactly at the hard limit, not one window over."""
+        segments = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        hard_limit = window_seconds * 5  # 5 windows
+
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            soft_limit_seconds=hard_limit * 2,  # High so adaptive doesn't kick in
+            hard_limit_seconds=hard_limit,
+            min_silence_duration_ms=2000,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        speech = np.full(window_size, 0.5, dtype=np.float32)
+
+        with patch.object(detector, '_detect_speech', return_value=True):
+            for i in range(8):
+                detector.process_window(speech, i * window_seconds)
+
+        detector.flush()
+
+        # First segment should be exactly 5 windows (the hard limit)
+        assert len(segments) == 2
+        assert len(segments[0].audio) == window_size * 5
+        assert segments[0].duration_seconds == pytest.approx(hard_limit)
+        # Second segment gets the remaining 3 windows
+        assert len(segments[1].audio) == window_size * 3
+
+    def test_force_split_contiguous_audio(self):
+        """No samples lost or duplicated across force-split boundary."""
+        segments = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        hard_limit = window_seconds * 3
+
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            soft_limit_seconds=hard_limit * 2,
+            hard_limit_seconds=hard_limit,
+            min_silence_duration_ms=2000,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        # Each window has a unique value so we can verify order
+        windows = [np.full(window_size, i * 0.1, dtype=np.float32) for i in range(7)]
+
+        with patch.object(detector, '_detect_speech', return_value=True):
+            for i, w in enumerate(windows):
+                detector.process_window(w, i * window_seconds)
+
+        detector.flush()
+
+        # Should split into: [0,1,2], [3,4,5], [6]
+        assert len(segments) == 3
+
+        all_audio = np.concatenate([s.audio for s in segments])
+        expected = np.concatenate(windows)
+        assert np.allclose(all_audio, expected)
+
+    def test_force_split_timestamps(self):
+        """Timestamps are correct after force-split."""
+        segments = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        hard_limit = window_seconds * 3
+
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            soft_limit_seconds=hard_limit * 2,
+            hard_limit_seconds=hard_limit,
+            min_silence_duration_ms=2000,
+            look_back_seconds=0.0,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        speech = np.full(window_size, 0.5, dtype=np.float32)
+
+        with patch.object(detector, '_detect_speech', return_value=True):
+            for i in range(7):
+                detector.process_window(speech, i * window_seconds)
+
+        detector.flush()
+
+        assert len(segments) == 3
+        # First segment starts at 0
+        assert segments[0].start == pytest.approx(0.0)
+        # Second segment starts where first ended
+        assert segments[1].start == pytest.approx(hard_limit)
+        # Third segment starts where second ended
+        assert segments[2].start == pytest.approx(hard_limit * 2)
+
+    def test_force_split_then_silence_ends_normally(self):
+        """After a force-split, silence still ends the next segment normally."""
+        segments = []
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        hard_limit = window_seconds * 3
+
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            soft_limit_seconds=hard_limit * 2,
+            hard_limit_seconds=hard_limit,
+            min_silence_duration_ms=0,
+            on_segment_complete=lambda s: segments.append(s),
+        )
+
+        speech = np.full(window_size, 0.5, dtype=np.float32)
+        silence = make_non_speech_window(length=window_size, level=0.01)
+
+        with patch.object(detector, '_detect_speech') as mock_vad:
+            ts = 0.0
+
+            def run(window, is_speech):
+                nonlocal ts
+                mock_vad.return_value = is_speech
+                detector.process_window(window, ts)
+                ts += window_seconds
+
+            # 4 speech windows — force-split at 3
+            run(speech, True)
+            run(speech, True)
+            run(speech, True)
+            run(speech, True)  # starts new segment after force-split
+            run(speech, True)
+            run(silence, False)  # ends second segment via silence
+
+        assert len(segments) == 2
+        assert len(segments[0].audio) == window_size * 3  # hard limit
+        assert len(segments[1].audio) == window_size * 3  # 2 speech + 1 silence
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

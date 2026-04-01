@@ -155,11 +155,11 @@ class SpeechDetector:
         # Get current segment duration
         seconds = len(self._speech_section) / self.sample_rate
 
-        # Hard limit: force-split if segment exceeds the limit
+        # Hard limit: force-split, then current window starts the next segment
         if seconds >= self.hard_limit_seconds:
             self._flush_silence_buffer()
-            self._handle_speech_continue(audio_window)
             self._handle_force_split(timestamp)
+            self._speech_section.extend(audio_window)
             self._prev_has_speech = has_speech
             return has_speech
 
