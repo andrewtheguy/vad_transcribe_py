@@ -1,3 +1,4 @@
+import struct
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -5,11 +6,15 @@ from typing import Generator, Literal
 
 import numpy as np
 import numpy.typing as npt
+import torch
 
 from zhconv_rs import zhconv
 
 TARGET_SAMPLE_RATE = 16000
 ChineseConversion = Literal['none', 'simplified', 'traditional']
+
+WHISPER_HARD_LIMIT_SECONDS = 30
+MOONSHINE_HARD_LIMIT_SECONDS = 14
 
 
 def format_timestamp(seconds: float) -> str:
@@ -21,40 +26,149 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
 
-def ffmpeg_stream_float32(
-    full_audio_path: str | None = None,
-    target_sample_rate: int | None = None,
-    ac: int | None = None,
-    from_stdin: bool = False,
+def _validate_wav_header(stream):
+    """Read and validate a WAV header from a binary stream.
+
+    Accepts mono WAV at target sample rate in 16-bit PCM, 32-bit PCM,
+    or 32-bit IEEE float. Returns (audio_format, bits_per_sample, sample_rate,
+    channels, data_size). Raises ValueError on invalid format.
+    """
+    riff = stream.read(4)
+    if riff != b'RIFF':
+        raise ValueError(f"Not a WAV file: expected RIFF, got {riff!r}")
+
+    stream.read(4)  # file size (ignore)
+
+    wave = stream.read(4)
+    if wave != b'WAVE':
+        raise ValueError(f"Not a WAV file: expected WAVE, got {wave!r}")
+
+    # Find fmt chunk
+    while True:
+        chunk_id = stream.read(4)
+        if len(chunk_id) < 4:
+            raise ValueError("WAV file missing fmt chunk")
+        chunk_size = struct.unpack('<I', stream.read(4))[0]
+
+        if chunk_id == b'fmt ':
+            break
+        skipped = stream.read(chunk_size)
+        if len(skipped) != chunk_size:
+            raise ValueError("WAV file truncated while skipping chunk")
+
+    fmt_data = stream.read(chunk_size)
+    if len(fmt_data) < 16:
+        raise ValueError("WAV fmt chunk too short")
+
+    audio_format, channels, sample_rate, _, _, bits_per_sample = struct.unpack(
+        '<HHIIHH', fmt_data[:16]
+    )
+
+    if audio_format == 1:  # PCM integer
+        if bits_per_sample not in (16, 32):
+            raise ValueError(f"Expected 16-bit or 32-bit PCM, got {bits_per_sample}")
+    elif audio_format == 3:  # IEEE float
+        if bits_per_sample != 32:
+            raise ValueError(f"Expected 32-bit float, got {bits_per_sample}")
+    else:
+        raise ValueError(f"Expected PCM (1) or IEEE float (3) format, got {audio_format}")
+
+    if channels != 1:
+        raise ValueError(f"Expected mono (1 channel), got {channels}")
+    if sample_rate != TARGET_SAMPLE_RATE:
+        raise ValueError(f"Expected {TARGET_SAMPLE_RATE} Hz, got {sample_rate}")
+
+    # Find data chunk
+    data_size = 0
+    while True:
+        chunk_id = stream.read(4)
+        if len(chunk_id) < 4:
+            raise ValueError("WAV file missing data chunk")
+        chunk_size_bytes = stream.read(4)
+        if len(chunk_size_bytes) < 4:
+            raise ValueError("WAV file truncated")
+
+        if chunk_id == b'data':
+            data_size = struct.unpack('<I', chunk_size_bytes)[0]
+            break
+        chunk_size = struct.unpack('<I', chunk_size_bytes)[0]
+        skipped = stream.read(chunk_size)
+        if len(skipped) != chunk_size:
+            raise ValueError("WAV file truncated while skipping chunk")
+
+    return audio_format, bits_per_sample, sample_rate, channels, data_size
+
+
+def _stream_wav_as_float32(stream, audio_format, bits_per_sample, chunk_bytes=4096):
+    """Stream WAV data as float32 arrays, converting from PCM if needed."""
+    if audio_format == 3:
+        dtype = np.float32
+    elif bits_per_sample == 16:
+        dtype = np.int16
+    else:
+        dtype = np.int32
+
+    while True:
+        chunk = stream.read(chunk_bytes)
+        if not chunk:
+            break
+        samples = np.frombuffer(chunk, dtype=dtype)
+        if dtype == np.int16:
+            samples = samples.astype(np.float32) / 32768.0
+        elif dtype == np.int32:
+            samples = samples.astype(np.float32) / 2147483648.0
+        yield samples
+
+
+
+def stream_stdin_wav(
     chunk_bytes: int = 4096,
 ) -> Generator[npt.NDArray[np.float32], None, None]:
-    """Stream audio as float32 arrays from ffmpeg.
+    """Read WAV from stdin and yield float32 audio chunks.
+
+    Validates the WAV header, then streams PCM data as float32 arrays.
+    Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV (mono, 16kHz).
+    """
+    audio_format, bits_per_sample, *_ = _validate_wav_header(sys.stdin.buffer)
+    print("Reading WAV from stdin", file=sys.stderr)
+    yield from _stream_wav_as_float32(sys.stdin.buffer, audio_format, bits_per_sample, chunk_bytes)
+
+
+def ffmpeg_stream_float32(
+    full_audio_path: str,
+    target_sample_rate: int | None = None,
+    ac: int | None = None,
+    chunk_bytes: int = 4096,
+) -> Generator[npt.NDArray[np.float32], None, None]:
+    """Stream audio as float32 arrays from a file, using direct WAV read or ffmpeg.
 
     Args:
-        full_audio_path: Path to audio file or URL (ignored if from_stdin=True)
+        full_audio_path: Path to audio file or URL
         target_sample_rate: Target sample rate for output
         ac: Number of audio channels
-        from_stdin: If True, read WAV audio from stdin instead of file
         chunk_bytes: Bytes to read per chunk (default 4096 = 1024 float32 samples)
 
     Yields:
         Float32 numpy arrays of audio samples
     """
-    if from_stdin:
-        command = [
-            "ffmpeg",
-            "-i", "pipe:0",  # Read from stdin
-        ]
-    else:
-        command = [
-            "ffmpeg",
-            "-i", full_audio_path,
-        ]
+    # Try direct WAV reading for files (not URLs)
+    if not full_audio_path.startswith(('http://', 'https://', 'rtmp://', 'rtsp://')):
+        try:
+            with open(full_audio_path, 'rb') as f:
+                audio_format, bits_per_sample, *_ = _validate_wav_header(f)
+                print(f"Direct WAV read: {full_audio_path}", file=sys.stderr)
+                yield from _stream_wav_as_float32(f, audio_format, bits_per_sample, chunk_bytes)
+                return
+        except (OSError, ValueError):
+            pass
 
-    command.extend([
-        "-f", "f32le",  # Output format
-        "-acodec", "pcm_f32le",  # Audio codec
-    ])
+    # Fall back to ffmpeg
+    command = [
+        "ffmpeg",
+        "-i", full_audio_path,
+        "-f", "f32le",
+        "-acodec", "pcm_f32le",
+    ]
 
     if ac is not None:
         command.extend(["-ac", str(ac)])
@@ -63,15 +177,14 @@ def ffmpeg_stream_float32(
         command.extend(["-ar", str(target_sample_rate)])
 
     command.extend([
-        "-loglevel", "error",  # Suppress extra logs
-        "pipe:"  # Output to stdout
+        "-loglevel", "error",
+        "pipe:",
     ])
 
     process = subprocess.Popen(
         command,
-        stdin=sys.stdin.buffer if from_stdin else None,
         stdout=subprocess.PIPE,
-        stderr=None,  # Inherit parent's stderr
+        stderr=None,
     )
 
     try:
@@ -101,11 +214,31 @@ class TranscribedSegment:
     end: float
 
 
+def _get_device_and_dtype():
+    """Auto-detect best device and dtype."""
+    if torch.cuda.is_available():
+        return "cuda:0", torch.float16
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps", torch.float16
+    else:
+        return "cpu", torch.float32
+
+
+def resolve_model_id(model: str, backend: str) -> str:
+    """Resolve short model name to full HuggingFace model ID."""
+    if '/' in model:
+        return model
+    if backend == 'whisper':
+        return f"openai/whisper-{model}"
+    elif backend == 'moonshine':
+        return f"UsefulSensors/{model}"
+    return model
+
+
 def create_transcriber(
     language: str,
     model: str = "large-v3-turbo",
-    backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
-    n_threads: int = 1,
+    backend: Literal['whisper', 'moonshine'] = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
 ) -> 'WhisperTranscriber':
     """Factory function to create a WhisperTranscriber instance."""
@@ -113,79 +246,104 @@ def create_transcriber(
         language=language,
         model=model,
         backend=backend,
-        n_threads=n_threads,
         chinese_conversion=chinese_conversion,
     )
 
 
 class WhisperTranscriber:
-    """Simple transcriber without VAD or queues."""
+    """Transcriber using HuggingFace Transformers backends."""
 
     def __init__(
         self,
         language: str,
         model: str = "large-v3-turbo",
-        backend: Literal['whisper_cpp', 'faster_whisper'] = 'whisper_cpp',
-        n_threads: int = 1,
+        backend: Literal['whisper', 'moonshine'] = 'whisper',
         chinese_conversion: ChineseConversion = 'none',
     ):
         self.language = language
         self.model = model
         self.backend = backend
-        self.n_threads = n_threads
         self.chinese_conversion = chinese_conversion
 
         # Load backend-specific model
-        if self.backend == 'whisper_cpp':
-            self._load_whisper_cpp()
-        elif self.backend == 'faster_whisper':
-            self._load_faster_whisper()
+        if self.backend == 'whisper':
+            print(f"Loading {self.model} model...", file=sys.stderr)
+            self._load_whisper()
+        elif self.backend == 'moonshine':
+            # Auto-select moonshine model based on language if using whisper default
+            if self.model == 'large-v3-turbo':
+                if self.language in ('zh', 'yue'):
+                    self.model = 'moonshine-base-zh'
+                else:
+                    self.model = 'moonshine-base'
+            print(f"Loading {self.model} model...", file=sys.stderr)
+            self._load_moonshine()
         else:
             raise ValueError(f"Unsupported backend: {self.backend}")
 
-    def _load_whisper_cpp(self):
-        """Load whisper.cpp model."""
+    @property
+    def hard_limit_seconds(self) -> int:
+        if self.backend == 'whisper':
+            return WHISPER_HARD_LIMIT_SECONDS
+        elif self.backend == 'moonshine':
+            return MOONSHINE_HARD_LIMIT_SECONDS
+        return WHISPER_HARD_LIMIT_SECONDS
+
+    def _load_whisper(self):
+        """Load Whisper model via HuggingFace Transformers pipeline."""
         try:
-            from pywhispercpp.model import Model
+            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
         except ImportError:
             raise ImportError(
-                "pywhispercpp is not installed. "
+                "transformers is not installed. "
                 "To use transcription, install with: uv pip install -e '.[transcribe]'. "
                 "For VAD-only mode without transcription, use the 'split' command instead."
             )
 
-        self.whisper_cpp_model = Model(
-            self.model,
-            print_realtime=False,
-            print_progress=False,
-            print_timestamps=False,
-            n_threads=self.n_threads,
-            # Anti-looping settings
-            single_segment=False,  # Allow multiple segments (was True, causing loops)
-            #no_context=True,  # Don't use past transcription as prompt (prevents loops)
-            # Use beam search for better accuracy
-            params_sampling_strategy=1,  # 1 = BEAM_SEARCH
-            beam_search={"beam_size": 5, "patience": -1.0},
-            # anti-looping settings
-            n_max_text_ctx=64,  # Use max context length
+        model_id = resolve_model_id(self.model, self.backend)
+        device, torch_dtype = _get_device_and_dtype()
+
+        model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            model_id, dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
+        )
+        model.to(device)
+
+        processor = AutoProcessor.from_pretrained(model_id)
+
+        self.pipe = pipeline(
+            "automatic-speech-recognition",
+            model=model,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+            dtype=torch_dtype,
+            device=device,
         )
 
-        print("Whisper.cpp model loaded:", file=sys.stderr)
-        print(self.whisper_cpp_model.get_params(), file=sys.stderr)
-        print(self.whisper_cpp_model.system_info(), file=sys.stderr)
+        print(f"Whisper model loaded: {model_id} on {device}", file=sys.stderr)
 
-    def _load_faster_whisper(self):
-        """Load faster-whisper model."""
+    def _load_moonshine(self):
+        """Load Moonshine model via HuggingFace Transformers."""
         try:
-            from faster_whisper import WhisperModel
+            from transformers import MoonshineForConditionalGeneration, AutoProcessor
         except ImportError:
             raise ImportError(
-                "faster-whisper is not installed. "
+                "transformers is not installed. "
                 "To use transcription, install with: uv pip install -e '.[transcribe]'. "
                 "For VAD-only mode without transcription, use the 'split' command instead."
             )
 
-        self.faster_whisper_model = WhisperModel(self.model)
+        model_id = resolve_model_id(self.model, self.backend)
+        device, torch_dtype = _get_device_and_dtype()
+
+        self.moonshine_model = MoonshineForConditionalGeneration.from_pretrained(
+            model_id
+        ).to(device).to(torch_dtype)
+
+        self.moonshine_processor = AutoProcessor.from_pretrained(model_id)
+        self._moonshine_device = device
+        self._moonshine_dtype = torch_dtype
+
+        print(f"Moonshine model loaded: {model_id} on {device}", file=sys.stderr)
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """
@@ -200,53 +358,49 @@ class WhisperTranscriber:
         """
         results: list[TranscribedSegment] = []
 
-        if self.backend == 'whisper_cpp':
-            def print_segment(segment):
-                # whisper.cpp timestamps are in centiseconds (10ms units)
-                start = start_offset + segment.t0 / 100
-                end = start_offset + segment.t1 / 100
-                start_fmt = format_timestamp(start)
-                end_fmt = format_timestamp(end)
-                print("[%s -> %s] %s" % (start_fmt, end_fmt, segment.text), file=sys.stderr)
-
-            whispercpp_results = self.whisper_cpp_model.transcribe(
-                audio, new_segment_callback=print_segment, language=self.language
+        if self.backend == 'whisper':
+            result = self.pipe(
+                audio.copy(),
+                return_timestamps=True,
+                generate_kwargs={"language": self.language},
             )
-            for segment in whispercpp_results:
-                text = self._process_text(segment.text)
-                # whisper.cpp timestamps are in centiseconds (10ms units), not milliseconds
+
+            for chunk in result["chunks"]:
+                chunk_start = start_offset + chunk["timestamp"][0]
+                chunk_end = start_offset + (chunk["timestamp"][1] if chunk["timestamp"][1] is not None else len(audio) / TARGET_SAMPLE_RATE)
+                start_fmt = format_timestamp(chunk_start)
+                end_fmt = format_timestamp(chunk_end)
+                print("[%s -> %s] %s" % (start_fmt, end_fmt, chunk["text"]), file=sys.stderr)
+                text = self._process_text(chunk["text"])
                 results.append(TranscribedSegment(
                     text=text,
-                    start=start_offset + segment.t0 / 100,
-                    end=start_offset + segment.t1 / 100,
+                    start=chunk_start,
+                    end=chunk_end,
                 ))
 
-        elif self.backend == 'faster_whisper':
-            segments, _ = self.faster_whisper_model.transcribe(
+        elif self.backend == 'moonshine':
+            inputs = self.moonshine_processor(
                 audio,
-                beam_size=5,
-                language=self.language,
-                vad_filter=False,
-                # Anti-looping settings
-                condition_on_previous_text=False,  # Don't use past output as prompt
-                repetition_penalty=1.2,  # Penalize repeated tokens
-                no_repeat_ngram_size=3,  # Prevent 3-gram repetition
-                compression_ratio_threshold=2.4,  # Default, but explicit
-                log_prob_threshold=-1.0,  # Default, but explicit
+                return_tensors="pt",
+                sampling_rate=self.moonshine_processor.feature_extractor.sampling_rate,
             )
+            inputs = inputs.to(self._moonshine_device, self._moonshine_dtype)
 
-            for segment in segments:
-                start = start_offset + segment.start
-                end = start_offset + segment.end
-                start_fmt = format_timestamp(start)
-                end_fmt = format_timestamp(end)
-                print("[%s -> %s] %s" % (start_fmt, end_fmt, segment.text), file=sys.stderr)
-                text = self._process_text(segment.text)
-                results.append(TranscribedSegment(
-                    text=text,
-                    start=start,
-                    end=end,
-                ))
+            # Model's generation_config.json has max_length: 194 which
+            # prevents hallucination loops (based on ~6.5 tokens/sec * 30s)
+            generated_ids = self.moonshine_model.generate(**inputs)
+            text = self.moonshine_processor.decode(generated_ids[0], skip_special_tokens=True)
+
+            end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
+            start_fmt = format_timestamp(start_offset)
+            end_fmt = format_timestamp(end_time)
+            print("[%s -> %s] %s" % (start_fmt, end_fmt, text), file=sys.stderr)
+            text = self._process_text(text)
+            results.append(TranscribedSegment(
+                text=text,
+                start=start_offset,
+                end=end_time,
+            ))
 
         return results
 
