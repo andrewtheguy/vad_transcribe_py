@@ -1,6 +1,6 @@
 """Whisper backend using HuggingFace Transformers."""
 
-import sys
+import logging
 from typing import Any
 
 import numpy as np
@@ -17,6 +17,8 @@ from vad_transcribe_py.vad_processor import (
     WHISPER_HARD_LIMIT_SECONDS,
     WHISPER_SOFT_LIMIT_SECONDS,
 )
+
+logger = logging.getLogger(__name__)
 
 WHISPER_DEFAULT_MODEL = "large-v3-turbo"
 
@@ -51,7 +53,7 @@ class WhisperBackend(TranscriberBase):
         self.model = model
         self.pipe: Any = None
 
-        print(f"Loading {self.model} model...", file=sys.stderr)
+        logger.info("Loading %s model...", self.model)
         self._load_whisper()
 
     @property
@@ -92,7 +94,7 @@ class WhisperBackend(TranscriberBase):
             device=device,
         )
 
-        print(f"Whisper model loaded: {model_id} on {device}", file=sys.stderr)
+        logger.info("Whisper model loaded: %s on %s", model_id, device)
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return segments with sub-sentence timestamps."""

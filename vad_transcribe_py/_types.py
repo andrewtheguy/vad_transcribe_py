@@ -1,6 +1,6 @@
 """Shared types and utilities for transcriber backends."""
 
-import sys
+import logging
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
@@ -8,6 +8,8 @@ import numpy as np
 import numpy.typing as npt
 
 from zhconv_rs import zhconv
+
+logger = logging.getLogger(__name__)
 
 TARGET_SAMPLE_RATE = 16000
 ChineseConversion = Literal['none', 'simplified', 'traditional']
@@ -64,6 +66,6 @@ class TranscriberBase:
         """Format timestamps, print to stderr, process text, and return a TranscribedSegment."""
         start_fmt = format_timestamp(start)
         end_fmt = format_timestamp(end)
-        print("[%s -> %s] %s" % (start_fmt, end_fmt, text), file=sys.stderr)
+        logger.info("[%s -> %s] %s", start_fmt, end_fmt, text)
         text = process_text(text, self.language, self.chinese_conversion)
         return TranscribedSegment(text=text, start=start, end=end)

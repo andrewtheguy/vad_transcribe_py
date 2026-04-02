@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -30,6 +31,8 @@ from vad_transcribe_py.vad_processor import (
     DEFAULT_LOOK_BACK_SECONDS,
 )
 from vad_transcribe_py.file_lock import acquire_lock, LockError
+
+logger = logging.getLogger(__name__)
 
 
 def add_vad_arguments(parser: argparse.ArgumentParser) -> None:
@@ -156,7 +159,7 @@ def validate_audio_source(audio_source: str) -> None:
     if not is_url(audio_source) and not os.path.exists(audio_source):
         raise ValueError(f"File does not exist: {audio_source}")
 
-    print(f"Checking audio source: {audio_source}", file=sys.stderr)
+    logger.info("Checking audio source: %s", audio_source)
     duration = get_audio_duration(audio_source)
 
     if duration is None:
@@ -165,7 +168,7 @@ def validate_audio_source(audio_source: str) -> None:
             "Please provide a file or URL with fixed duration."
         )
 
-    print(f"Audio duration: {duration:.2f}s", file=sys.stderr)
+    logger.info("Audio duration: %.2fs", duration)
 
 
 def save_audio_segment(
@@ -326,7 +329,7 @@ def stream_transcribe_with_vad(
         nonlocal segment_count
         assert segment.duration_seconds is not None
         start_fmt = format_timestamp(segment.start)
-        print(f"[VAD] Segment {segment_count}: {start_fmt} ({segment.start:.2f}s), duration={segment.duration_seconds:.2f}s", file=sys.stderr)
+        logger.info("[VAD] Segment %d: %s (%.2fs), duration=%.2fs", segment_count, start_fmt, segment.start, segment.duration_seconds)
 
         write_jsonl_boundary("segment_start", segment.start, output_file)
 
@@ -366,12 +369,12 @@ def stream_transcribe_with_vad(
             current_ts += window_size / TARGET_SAMPLE_RATE
 
         if chunks_read % 1000 == 0:
-            print(f"Progress: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+            logger.info("Progress: %d chunks, %.2fs", chunks_read, current_ts)
 
-    print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+    logger.info("End of stream: %d chunks, %.2fs", chunks_read, current_ts)
     speech_detector.flush()
     write_jsonl_marker("stream_end", output_file)
-    print(f"Found {segment_count} speech segments", file=sys.stderr)
+    logger.info("Found %d speech segments", segment_count)
     return segment_count
 
 
@@ -408,7 +411,7 @@ def stream_transcribe_stdin_with_vad(
         nonlocal segment_count
         assert segment.duration_seconds is not None
         start_fmt = format_timestamp(segment.start)
-        print(f"[VAD] Segment {segment_count}: {start_fmt} ({segment.start:.2f}s), duration={segment.duration_seconds:.2f}s", file=sys.stderr)
+        logger.info("[VAD] Segment %d: %s (%.2fs), duration=%.2fs", segment_count, start_fmt, segment.start, segment.duration_seconds)
 
         write_jsonl_boundary("segment_start", segment.start, output_file)
 
@@ -448,12 +451,12 @@ def stream_transcribe_stdin_with_vad(
             current_ts += window_size / TARGET_SAMPLE_RATE
 
         if chunks_read % 1000 == 0:
-            print(f"Progress: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+            logger.info("Progress: %d chunks, %.2fs", chunks_read, current_ts)
 
-    print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+    logger.info("End of stream: %d chunks, %.2fs", chunks_read, current_ts)
     speech_detector.flush()
     write_jsonl_marker("stream_end", output_file)
-    print(f"Found {segment_count} speech segments", file=sys.stderr)
+    logger.info("Found %d speech segments", segment_count)
     return segment_count
 
 
@@ -495,7 +498,7 @@ def split_by_vad(
         # Get original sample rate for preservation mode
         props = get_audio_properties(audio_source)
         orig_sr = props["sample_rate"]
-        print(f"Audio properties: {orig_sr}Hz (preserving sample rate)", file=sys.stderr)
+        logger.info("Audio properties: %dHz (preserving sample rate)", orig_sr)
 
         # Rolling buffer for original audio (float32 mono)
         original_buffer: list[float] = []
@@ -525,7 +528,7 @@ def split_by_vad(
                 channels=1,
                 output_format=output_format,
             )
-            print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
+            logger.info("[VAD] Saved: %s (duration=%.2fs)", path, segment.duration_seconds)
 
             # Trim buffer - keep only look-back audio for next segment
             look_back_samples = int(look_back_seconds * orig_sr)
@@ -570,9 +573,9 @@ def split_by_vad(
                 current_ts += window_size / TARGET_SAMPLE_RATE
 
             if chunks_read % 1000 == 0:
-                print(f"Progress: {current_ts:.2f}s", file=sys.stderr)
+                logger.info("Progress: %.2fs", current_ts)
 
-        print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+        logger.info("End of stream: %d chunks, %.2fs", chunks_read, current_ts)
         speech_detector.flush()
 
     else:
@@ -580,7 +583,7 @@ def split_by_vad(
         def on_segment_complete_default(segment: AudioSegment) -> None:
             nonlocal segment_count
             path = save_audio_segment(segment, output_dir, segment_count, output_format=output_format)
-            print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
+            logger.info("[VAD] Saved: %s (duration=%.2fs)", path, segment.duration_seconds)
             segment_count += 1
 
         speech_detector = SpeechDetector(
@@ -610,9 +613,9 @@ def split_by_vad(
                 current_ts += window_size / TARGET_SAMPLE_RATE
 
             if chunks_read % 1000 == 0:
-                print(f"Progress: {current_ts:.2f}s", file=sys.stderr)
+                logger.info("Progress: %.2fs", current_ts)
 
-        print(f"End of stream: {chunks_read} chunks, {current_ts:.2f}s", file=sys.stderr)
+        logger.info("End of stream: %d chunks, %.2fs", chunks_read, current_ts)
         speech_detector.flush()
 
     return segment_count
@@ -620,6 +623,7 @@ def split_by_vad(
 
 def main():
     """Main entry point for the CLI."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
     load_dotenv()
     parser = argparse.ArgumentParser(
         description='Whisper transcription tool with streaming audio processing'
@@ -674,7 +678,7 @@ def main():
                         hard_limit_seconds=transcriber.hard_limit_seconds,
                         soft_limit_seconds=transcriber.soft_limit_seconds,
                     )
-                    print(f"Transcribed {segment_count} segments from stdin", file=sys.stderr)
+                    logger.info("Transcribed %d segments from stdin", segment_count)
                 else:
                     # File mode
                     audio_source = args.file
@@ -702,7 +706,7 @@ def main():
                         )
 
                         if args.output:
-                            print(f"Transcript written to {args.output} ({segment_count} segments)", file=sys.stderr)
+                            logger.info("Transcript written to %s (%d segments)", args.output, segment_count)
                     finally:
                         if args.output:
                             output_file.close()
@@ -720,13 +724,13 @@ def main():
                 )
                 base_name = os.path.splitext(os.path.basename(audio_source))[0]
                 output_dir = os.path.join("tmp", base_name)
-                print(f"Saved {segment_count} segments to {output_dir}", file=sys.stderr)
+                logger.info("Saved %d segments to %s", segment_count, output_dir)
 
     except LockError as e:
-        print(str(e), file=sys.stderr)
+        logger.error("%s", e)
         sys.exit(1)
     except (ValueError, RuntimeError) as e:
-        print(f"Error: {e}", file=sys.stderr)
+        logger.error("Error: %s", e)
         sys.exit(1)
 
 

@@ -1,6 +1,6 @@
 """Moonshine backend using ONNX Runtime."""
 
-import sys
+import logging
 from typing import Any
 
 import numpy as np
@@ -12,6 +12,9 @@ from vad_transcribe_py._types import (
     TranscribedSegment,
     TranscriberBase,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class MoonshineBackend(TranscriberBase):
@@ -50,7 +53,7 @@ class MoonshineBackend(TranscriberBase):
         self._hard_limit_seconds = hard_limit
         self._soft_limit_seconds = soft_limit
 
-        print(f"Loading {name} model...", file=sys.stderr)
+        logger.info("Loading %s model...", name)
         model_dir = download_model(language, arch, url)
 
         # Max tokens = audio_samples * token_limit_factor. Streaming models produce
@@ -67,7 +70,7 @@ class MoonshineBackend(TranscriberBase):
             token_limit_factor=token_limit_factor,
         )
 
-        print(f"Moonshine model loaded: {name}", file=sys.stderr)
+        logger.info("Moonshine model loaded: %s", name)
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return a single segment."""

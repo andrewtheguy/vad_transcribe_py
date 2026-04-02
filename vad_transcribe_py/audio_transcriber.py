@@ -1,3 +1,4 @@
+import logging
 import struct
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from vad_transcribe_py._types import (
     format_timestamp as format_timestamp,
     process_text as process_text,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_wav_header(stream: BinaryIO) -> tuple[int, int, int, int, int]:
@@ -123,7 +126,7 @@ def stream_stdin_wav(
     Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV (mono, 16kHz).
     """
     audio_format, bits_per_sample, *_ = _validate_wav_header(sys.stdin.buffer)
-    print("Reading WAV from stdin", file=sys.stderr)
+    logger.info("Reading WAV from stdin")
     yield from _stream_wav_as_float32(sys.stdin.buffer, audio_format, bits_per_sample, chunk_bytes)
 
 
@@ -149,7 +152,7 @@ def ffmpeg_stream_float32(
         try:
             with open(full_audio_path, 'rb') as f:
                 audio_format, bits_per_sample, *_ = _validate_wav_header(f)
-                print(f"Direct WAV read: {full_audio_path}", file=sys.stderr)
+                logger.info("Direct WAV read: %s", full_audio_path)
                 yield from _stream_wav_as_float32(f, audio_format, bits_per_sample, chunk_bytes)
                 return
         except (OSError, ValueError):
