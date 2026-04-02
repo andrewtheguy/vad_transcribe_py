@@ -208,6 +208,7 @@ def create_transcriber(
     model: str | None = None,
     backend: str = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
+    num_threads: int | None = None,
 ) -> AudioTranscriber:
     """Factory function to create a transcriber backend instance."""
     if backend == 'whisper':
@@ -217,6 +218,7 @@ def create_transcriber(
             language=language,
             model=model if model is not None else WHISPER_DEFAULT_MODEL,
             chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
         )
     elif backend == 'moonshine':
         from vad_transcribe_py.backends.moonshine import MoonshineBackend
@@ -225,6 +227,7 @@ def create_transcriber(
             language=language,
             model=model,
             chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
         )
     elif backend == 'qwen-asr':
         from vad_transcribe_py.backends.qwen import QWEN_ASR_DEFAULT_MODEL, QwenASRBackend
@@ -233,6 +236,7 @@ def create_transcriber(
             language=language,
             model=model if model is not None else QWEN_ASR_DEFAULT_MODEL,
             chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
         )
     else:
         raise ValueError(f"Unsupported backend: {backend}")

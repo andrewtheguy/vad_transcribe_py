@@ -708,16 +708,15 @@ def main():
 
         with acquire_lock(args.action):
             if args.action == 'transcribe':
-                import torch
                 num_threads = args.threads if args.threads is not None else min(2, os.cpu_count() or 1)
-                torch.set_num_threads(num_threads)
                 logger.info("Using %d thread(s)", num_threads)
 
                 # Handle stdin mode separately (no validation, always VAD, always stdout)
                 if getattr(args, 'stdin', False):
                     transcriber = create_transcriber(
                         args.language, args.model, args.backend,
-                        args.chinese_conversion
+                        args.chinese_conversion,
+                        num_threads=num_threads,
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
                         transcriber,
@@ -732,7 +731,8 @@ def main():
 
                     transcriber = create_transcriber(
                         args.language, args.model, args.backend,
-                        args.chinese_conversion
+                        args.chinese_conversion,
+                        num_threads=num_threads,
                     )
 
                     # Determine output destination
