@@ -91,7 +91,7 @@ class FileLock:
             return "file transcription"
         return self.lock_name
 
-    def acquire(self):
+    def acquire(self) -> None:
         """
         Acquire the lock.
 
@@ -154,7 +154,7 @@ class FileLock:
                 self.lock_file = None
                 self.acquired = False
 
-    def __enter__(self):
+    def __enter__(self) -> "FileLock":
         """Context manager entry."""
         self.acquire()
         return self
