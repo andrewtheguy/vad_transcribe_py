@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 WHISPER_DEFAULT_MODEL = "large-v3-turbo"
 
+# Models that need language code remapping (e.g. yue → zh)
+_MODEL_LANGUAGE_OVERRIDES: dict[str, dict[str, str]] = {
+    "alvanlii/whisper-small-cantonese": {"yue": "zh"},
+}
+
 
 def _get_device_and_dtype() -> tuple[str, torch.dtype]:
     """Auto-detect best device and dtype."""
@@ -101,7 +106,7 @@ class WhisperBackend(TranscriberBase):
         result = self.pipe(
             audio.copy(),
             return_timestamps=True,
-            generate_kwargs={"language": self.language},
+            generate_kwargs={"language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language)},
         )
 
         return [
