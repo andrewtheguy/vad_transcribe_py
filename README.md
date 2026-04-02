@@ -73,10 +73,10 @@ To install globally and run `vad-transcribe-py` directly:
 
 ```bash
 # Full installation from GitHub (recommended)
-uv tool install "vad-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@ref(tag or branch)"
+uv tool install "vad-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@(ref, tag or branch)"
 
 # VAD split only (no transcription)
-uv tool install "vad-transcribe-py @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@ref(tag or branch)"
+uv tool install "vad-transcribe-py @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@(ref, tag or branch)"
 
 # Or from local clone
 uv tool install ".[transcribe]"  # with transcription
