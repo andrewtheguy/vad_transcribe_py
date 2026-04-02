@@ -117,11 +117,15 @@ class QwenASRBackend(TranscriberBase):
         """Transcribe audio and return a single segment."""
         qwen_language = _LANGUAGE_MAP.get(self.language)
 
-        results = self._qwen_model.transcribe(
-            audio=(audio, TARGET_SAMPLE_RATE),
-            language=qwen_language,
-        )
+        try:
+            results = self._qwen_model.transcribe(
+                audio=(audio, TARGET_SAMPLE_RATE),
+                language=qwen_language,
+            )
 
-        text: str = results[0].text
-        end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-        return [self._make_segment(text, start_offset, end_time)]
+            text: str = results[0].text
+            end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
+            return [self._make_segment(text, start_offset, end_time)]
+        finally:
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
