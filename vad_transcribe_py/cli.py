@@ -643,7 +643,7 @@ def main():
                                    help='Language code for transcription (default: en)')
     parser_transcribe.add_argument('--model', type=str, default=None,
                                    help='Model name (default: large-v3-turbo for whisper, auto-selected for moonshine)')
-    parser_transcribe.add_argument('--backend', type=str, choices=['whisper', 'moonshine'],
+    parser_transcribe.add_argument('--backend', type=str, choices=['whisper', 'moonshine', 'qwen-asr'],
                                    default='whisper', help='Transcription backend (default: whisper)')
     parser_transcribe.add_argument('--chinese-conversion', type=str,
                                    choices=['none', 'simplified', 'traditional'],

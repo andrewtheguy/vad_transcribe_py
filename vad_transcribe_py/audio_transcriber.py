@@ -226,5 +226,13 @@ def create_transcriber(
             model=model,
             chinese_conversion=chinese_conversion,
         )
+    elif backend == 'qwen-asr':
+        from vad_transcribe_py.backends.qwen import QWEN_ASR_DEFAULT_MODEL, QwenASRBackend
+
+        return QwenASRBackend(
+            language=language,
+            model=model if model is not None else QWEN_ASR_DEFAULT_MODEL,
+            chinese_conversion=chinese_conversion,
+        )
     else:
         raise ValueError(f"Unsupported backend: {backend}")

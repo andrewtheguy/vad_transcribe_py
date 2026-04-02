@@ -26,6 +26,7 @@ transcribe = [
     "tqdm",
     "filelock",
     "httpx",
+    "qwen-asr>=0.0.6",
 ]
 
 [tool.hatch.metadata]
