@@ -244,9 +244,9 @@ def create_transcriber(
     model: str | None = None,
     backend: Literal['whisper', 'moonshine'] = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
-) -> 'WhisperTranscriber':
-    """Factory function to create a WhisperTranscriber instance."""
-    return WhisperTranscriber(
+) -> 'AudioTranscriber':
+    """Factory function to create a AudioTranscriber instance."""
+    return AudioTranscriber(
         language=language,
         model=model,
         backend=backend,
@@ -254,7 +254,7 @@ def create_transcriber(
     )
 
 
-class WhisperTranscriber:
+class AudioTranscriber:
     """Transcriber supporting Whisper (HF Transformers) and Moonshine (ONNX) backends."""
 
     def __init__(

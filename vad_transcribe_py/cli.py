@@ -17,7 +17,7 @@ from vad_transcribe_py.audio_transcriber import (
     get_window_size_samples,
     create_transcriber,
     TranscribedSegment,
-    WhisperTranscriber,
+    AudioTranscriber,
 )
 from vad_transcribe_py.vad_processor import (
     SpeechDetector,
@@ -293,7 +293,7 @@ def write_jsonl_boundary(event: str, timestamp: float, output_file: IO[str]) -> 
 
 def stream_transcribe_with_vad(
     audio_file: str,
-    transcriber: WhisperTranscriber,
+    transcriber: AudioTranscriber,
     output_file: IO[str],
     min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
     soft_limit_seconds: float | None = DEFAULT_SOFT_LIMIT_SECONDS,
@@ -307,7 +307,7 @@ def stream_transcribe_with_vad(
 
     Args:
         audio_file: Path to audio file
-        transcriber: Pre-loaded WhisperTranscriber instance
+        transcriber: Pre-loaded AudioTranscriber instance
         output_file: File object to write JSONL output
         min_speech_seconds: Minimum speech duration in seconds
         soft_limit_seconds: Soft limit on speech segment duration in seconds
@@ -376,7 +376,7 @@ def stream_transcribe_with_vad(
 
 
 def stream_transcribe_stdin_with_vad(
-    transcriber: WhisperTranscriber,
+    transcriber: AudioTranscriber,
     min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
     soft_limit_seconds: float | None = DEFAULT_SOFT_LIMIT_SECONDS,
     speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
@@ -389,7 +389,7 @@ def stream_transcribe_stdin_with_vad(
     Output is always JSONL to stdout.
 
     Args:
-        transcriber: Pre-loaded WhisperTranscriber instance
+        transcriber: Pre-loaded AudioTranscriber instance
         min_speech_seconds: Minimum speech duration in seconds
         soft_limit_seconds: Soft limit on speech segment duration in seconds
         speech_threshold: VAD speech detection threshold (0.0-1.0)
