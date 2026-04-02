@@ -21,7 +21,7 @@
 
 - Python 3.14+
 - [uv](https://docs.astral.sh/uv/) - Fast Python package manager
-- ffmpeg - For audio format conversion
+- ffmpeg - Only needed for file-based operations (not required for stdin WAV input)
 
 ```bash
 # Install uv (if not already installed)
@@ -265,7 +265,13 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 
 ```bash
 # Install dev dependencies
-uv sync --extra dev
+uv sync --group dev --extra transcribe
+
+# Lint
+uv run ruff check
+
+# Type check
+uv run basedpyright
 
 # Run tests
 uv run pytest

@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.2.1). Leave empty to auto-bump patch."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+
+      - name: Determine version
+        id: version
+        run: |
+          current=$(grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml)
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "new=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            IFS='.' read -r major minor patch <<< "$current"
+            echo "new=${major}.${minor}.$((patch + 1))" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update version in pyproject.toml
+        run: |
+          sed -i "s/^version = \".*\"/version = \"${{ steps.version.outputs.new }}\"/" pyproject.toml
+
+      - name: Update lock file
+        run: uv lock
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
+          git tag "${{ steps.version.outputs.new }}"
+          git push origin main --tags
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ steps.version.outputs.new }}" --generate-notes
