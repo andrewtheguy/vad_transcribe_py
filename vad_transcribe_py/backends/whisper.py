@@ -22,6 +22,21 @@ logger = logging.getLogger(__name__)
 
 WHISPER_DEFAULT_MODEL = "large-v3-turbo"
 
+# Language-specific default models (used when --model is not specified)
+_WHISPER_DEFAULT_MODELS: dict[str, str] = {
+    "yue": "alvanlii/whisper-small-cantonese",
+}
+
+# Map language codes to the language token the model expects
+_WHISPER_LANGUAGE_MAP: dict[str, str] = {
+    "yue": "zh",
+}
+
+
+def get_whisper_default_model(language: str) -> str:
+    """Return the default Whisper model for a given language."""
+    return _WHISPER_DEFAULT_MODELS.get(language, WHISPER_DEFAULT_MODEL)
+
 
 def _get_device_and_dtype() -> tuple[str, torch.dtype]:
     """Auto-detect best device and dtype."""
@@ -101,7 +116,7 @@ class WhisperBackend(TranscriberBase):
         result = self.pipe(
             audio.copy(),
             return_timestamps=True,
-            generate_kwargs={"language": self.language},
+            generate_kwargs={"language": _WHISPER_LANGUAGE_MAP.get(self.language, self.language)},
         )
 
         return [

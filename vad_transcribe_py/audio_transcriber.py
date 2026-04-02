@@ -211,11 +211,11 @@ def create_transcriber(
 ) -> AudioTranscriber:
     """Factory function to create a transcriber backend instance."""
     if backend == 'whisper':
-        from vad_transcribe_py.backends.whisper import WHISPER_DEFAULT_MODEL, WhisperBackend
+        from vad_transcribe_py.backends.whisper import WhisperBackend, get_whisper_default_model
 
         return WhisperBackend(
             language=language,
-            model=model if model is not None else WHISPER_DEFAULT_MODEL,
+            model=model if model is not None else get_whisper_default_model(language),
             chinese_conversion=chinese_conversion,
         )
     elif backend == 'moonshine':
