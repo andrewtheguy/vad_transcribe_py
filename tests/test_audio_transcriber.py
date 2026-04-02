@@ -1,29 +1,29 @@
 import pytest
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
+from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
 from vad_transcribe_py.vad_processor import (
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
     MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,
+    WHISPER_HARD_LIMIT_SECONDS,
 )
 
 
 @pytest.fixture(autouse=True)
 def stub_whisper(monkeypatch):
     """Stub out Whisper model loading."""
-    monkeypatch.setattr(audio_transcriber.AudioTranscriber, "_load_whisper", lambda _self: None)
+    monkeypatch.setattr(WhisperBackend, "_load_whisper", lambda _self: None)
 
 
 def test_transcriber_initialization():
     """Test that transcriber initializes with correct parameters."""
-    transcriber = audio_transcriber.AudioTranscriber(
+    transcriber = WhisperBackend(
         language="en",
         model="large-v3-turbo",
-        backend="whisper",
     )
 
     assert transcriber.language == "en"
     assert transcriber.model == "large-v3-turbo"
-    assert transcriber.backend == "whisper"
 
 
 def test_create_transcriber_factory():
@@ -34,9 +34,7 @@ def test_create_transcriber_factory():
         backend="whisper",
     )
 
-    assert transcriber.language == "zh"
-    assert transcriber.model == "large-v3"
-    assert transcriber.backend == "whisper"
+    assert isinstance(transcriber, audio_transcriber.AudioTranscriber)
 
 
 def test_get_window_size_samples():
@@ -60,85 +58,44 @@ def test_transcribed_segment_dataclass():
 
 def test_process_text_chinese_no_conversion():
     """Test that Chinese text is not converted by default."""
-    transcriber = audio_transcriber.AudioTranscriber(
-        language="zh",
-        model="large-v3-turbo",
-        backend="whisper",
-    )
-
-    # Default: no conversion
-    result = transcriber._process_text("简体中文")
+    result = audio_transcriber.process_text("简体中文", "zh", "none")
     assert result == "简体中文"
 
 
 def test_process_text_chinese_to_traditional():
     """Test that Chinese text is converted to Traditional Chinese."""
-    transcriber = audio_transcriber.AudioTranscriber(
-        language="zh",
-        model="large-v3-turbo",
-        backend="whisper",
-        chinese_conversion="traditional",
-    )
-
-    result = transcriber._process_text("简体中文")
+    result = audio_transcriber.process_text("简体中文", "zh", "traditional")
     assert result == "簡體中文"
 
 
 def test_process_text_chinese_to_simplified():
     """Test that Chinese text is converted to Simplified Chinese."""
-    transcriber = audio_transcriber.AudioTranscriber(
-        language="zh",
-        model="large-v3-turbo",
-        backend="whisper",
-        chinese_conversion="simplified",
-    )
-
-    result = transcriber._process_text("簡體中文")
+    result = audio_transcriber.process_text("簡體中文", "zh", "simplified")
     assert result == "简体中文"
 
 
 def test_process_text_cantonese_no_conversion():
     """Test that Cantonese text is not converted by default."""
-    transcriber = audio_transcriber.AudioTranscriber(
-        language="yue",
-        model="large-v3-turbo",
-        backend="whisper",
-    )
-
-    # Default: no conversion
-    result = transcriber._process_text("简体中文")
+    result = audio_transcriber.process_text("简体中文", "yue", "none")
     assert result == "简体中文"
 
 
 def test_process_text_cantonese_to_traditional():
     """Test that Cantonese text is converted to Traditional Chinese."""
-    transcriber = audio_transcriber.AudioTranscriber(
-        language="yue",
-        model="large-v3-turbo",
-        backend="whisper",
-        chinese_conversion="traditional",
-    )
-
-    result = transcriber._process_text("简体中文")
+    result = audio_transcriber.process_text("简体中文", "yue", "traditional")
     assert result == "簡體中文"
 
 
 def test_process_text_english():
     """Test that English text is not modified."""
-    transcriber = audio_transcriber.AudioTranscriber(
-        language="en",
-        model="large-v3-turbo",
-        backend="whisper",
-    )
-
-    result = transcriber._process_text("Hello world")
+    result = audio_transcriber.process_text("Hello world", "en", "none")
     assert result == "Hello world"
 
 
 def test_unsupported_backend():
     """Test that unsupported backend raises ValueError."""
     with pytest.raises(ValueError, match="Unsupported backend"):
-        audio_transcriber.AudioTranscriber(
+        audio_transcriber.create_transcriber(
             language="en",
             model="large-v3-turbo",
             backend="unsupported_backend",
@@ -147,11 +104,11 @@ def test_unsupported_backend():
 
 def test_hard_limit_seconds_whisper():
     """Test that whisper backend reports correct hard limit."""
-    transcriber = audio_transcriber.AudioTranscriber(
+    transcriber = WhisperBackend(
         language="en",
-        backend="whisper",
+        model="large-v3-turbo",
     )
-    assert transcriber.hard_limit_seconds == audio_transcriber.WHISPER_HARD_LIMIT_SECONDS
+    assert transcriber.hard_limit_seconds == WHISPER_HARD_LIMIT_SECONDS
 
 
 def test_moonshine_hard_limits_from_model_config():
@@ -162,8 +119,8 @@ def test_moonshine_hard_limits_from_model_config():
 
 def test_resolve_whisper_model_id():
     """Test whisper model ID resolution."""
-    assert audio_transcriber._resolve_whisper_model_id("large-v3-turbo") == "openai/whisper-large-v3-turbo"
-    assert audio_transcriber._resolve_whisper_model_id("openai/whisper-large-v3") == "openai/whisper-large-v3"
+    assert _resolve_whisper_model_id("large-v3-turbo") == "openai/whisper-large-v3-turbo"
+    assert _resolve_whisper_model_id("openai/whisper-large-v3") == "openai/whisper-large-v3"
 
 
 def test_moonshine_resolve_model():

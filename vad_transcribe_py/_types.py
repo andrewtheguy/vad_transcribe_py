@@ -1,0 +1,69 @@
+"""Shared types and utilities for transcriber backends."""
+
+import sys
+from dataclasses import dataclass
+from typing import Literal, Protocol, runtime_checkable
+
+import numpy as np
+import numpy.typing as npt
+
+from zhconv_rs import zhconv
+
+TARGET_SAMPLE_RATE = 16000
+ChineseConversion = Literal['none', 'simplified', 'traditional']
+
+
+def format_timestamp(seconds: float) -> str:
+    """Format seconds to hh:mm:ss.ms format."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
+
+
+@dataclass
+class TranscribedSegment:
+    """Represents a transcribed audio segment."""
+    text: str
+    start: float
+    end: float
+
+
+def process_text(text: str, language: str, chinese_conversion: ChineseConversion) -> str:
+    """Process text for storage (e.g., convert Chinese variants)."""
+    if language in ['yue', 'zh'] and chinese_conversion != 'none':
+        if chinese_conversion == 'traditional':
+            return zhconv(text, 'zh-Hant')
+        elif chinese_conversion == 'simplified':
+            return zhconv(text, 'zh-Hans')
+    return text
+
+
+@runtime_checkable
+class AudioTranscriber(Protocol):
+    """Protocol that all transcriber backends must satisfy."""
+
+    @property
+    def hard_limit_seconds(self) -> int: ...
+
+    @property
+    def soft_limit_seconds(self) -> float | None: ...
+
+    def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]: ...
+
+
+class TranscriberBase:
+    """Shared functionality for transcriber backends."""
+
+    def __init__(self, language: str, chinese_conversion: ChineseConversion = 'none'):
+        self.language = language
+        self.chinese_conversion: ChineseConversion = chinese_conversion
+
+    def _make_segment(self, text: str, start: float, end: float) -> TranscribedSegment:
+        """Format timestamps, print to stderr, process text, and return a TranscribedSegment."""
+        start_fmt = format_timestamp(start)
+        end_fmt = format_timestamp(end)
+        print("[%s -> %s] %s" % (start_fmt, end_fmt, text), file=sys.stderr)
+        text = process_text(text, self.language, self.chinese_conversion)
+        return TranscribedSegment(text=text, start=start, end=end)
