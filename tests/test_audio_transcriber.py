@@ -1,6 +1,13 @@
+import sys
+from types import ModuleType
+from types import SimpleNamespace
+
+import numpy as np
 import pytest
+import torch
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
+from vad_transcribe_py.backends.qwen import QwenASRBackend
 from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
 from vad_transcribe_py.vad_processor import (
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
@@ -152,3 +159,108 @@ def test_moonshine_resolve_model_invalid_language():
 
     with pytest.raises(ValueError, match="Unknown language"):
         resolve_model("fr")
+
+
+def test_qwen_uses_non_streaming_transformers_backend(monkeypatch):
+    """Test qwen-asr is initialized in non-streaming transformers mode."""
+
+    class StubInputs(dict):
+        def to(self, *args, **kwargs):
+            return self
+
+    class StubProcessor:
+        def __call__(self, text, audio, return_tensors, padding):
+            assert text == ["prompt:English"]
+            assert len(audio) == 1
+            assert return_tensors == "pt"
+            assert padding is True
+            return StubInputs({
+                "input_ids": torch.tensor([[1, 2]], dtype=torch.long),
+                "attention_mask": torch.tensor([[1, 1]], dtype=torch.long),
+                "input_features": torch.zeros((1, 1, 1), dtype=torch.float32),
+                "feature_attention_mask": torch.ones((1, 1), dtype=torch.long),
+            })
+
+        def batch_decode(self, sequences, **_kwargs):
+            assert tuple(sequences.shape) == (1, 1)
+            return ["hello"]
+
+    class StubQwen3ASRModel:
+        llm_called = False
+        from_pretrained_calls = []
+        generate_calls = []
+
+        def __init__(self):
+            self.backend = "transformers"
+            self.device = torch.device("cpu")
+            self.dtype = torch.float32
+            self.max_new_tokens = 64
+
+            def generate(**kwargs):
+                type(self).generate_calls.append(kwargs)
+                return torch.tensor([[11, 22, 33]], dtype=torch.long)
+
+            self.model = SimpleNamespace(
+                thinker=SimpleNamespace(
+                    rope_deltas=torch.tensor([[1.0]], dtype=torch.float32),
+                    generate=generate,
+                ),
+            )
+            self.processor = StubProcessor()
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            cls.from_pretrained_calls.append((args, kwargs))
+            return cls()
+
+        @classmethod
+        def LLM(cls, *args, **kwargs):
+            cls.llm_called = True
+            raise AssertionError("streaming/vLLM path should not be used")
+
+        def _build_text_prompt(self, context, force_language):
+            assert context == ""
+            return f"prompt:{force_language}"
+
+    qwen_module = ModuleType("qwen_asr")
+    qwen_module.Qwen3ASRModel = StubQwen3ASRModel
+    inference_module = ModuleType("qwen_asr.inference")
+    utils_module = ModuleType("qwen_asr.inference.utils")
+    utils_module.parse_asr_output = lambda raw, user_language=None: (user_language or "", raw)
+
+    monkeypatch.setitem(sys.modules, "qwen_asr", qwen_module)
+    monkeypatch.setitem(sys.modules, "qwen_asr.inference", inference_module)
+    monkeypatch.setitem(sys.modules, "qwen_asr.inference.utils", utils_module)
+
+    backend = QwenASRBackend(language="en")
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert StubQwen3ASRModel.from_pretrained_calls
+    assert StubQwen3ASRModel.llm_called is False
+    assert StubQwen3ASRModel.generate_calls
+    assert StubQwen3ASRModel.generate_calls[0]["return_dict_in_generate"] is False
+    assert backend._qwen_model.backend == "transformers"
+    assert backend._qwen_model.model.thinker.rope_deltas is None
+    assert segments[0].text == "hello"
+
+
+def test_qwen_rejects_streaming_or_vllm_backend(monkeypatch):
+    """Test qwen-asr fails fast if it is not using the transformers backend."""
+
+    class StubQwen3ASRModel:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return SimpleNamespace(backend="vllm")
+
+    qwen_module = ModuleType("qwen_asr")
+    qwen_module.Qwen3ASRModel = StubQwen3ASRModel
+    inference_module = ModuleType("qwen_asr.inference")
+    utils_module = ModuleType("qwen_asr.inference.utils")
+    utils_module.parse_asr_output = lambda raw, user_language=None: (user_language or "", raw)
+
+    monkeypatch.setitem(sys.modules, "qwen_asr", qwen_module)
+    monkeypatch.setitem(sys.modules, "qwen_asr.inference", inference_module)
+    monkeypatch.setitem(sys.modules, "qwen_asr.inference.utils", utils_module)
+
+    with pytest.raises(RuntimeError, match="non-streaming transformers backend"):
+        QwenASRBackend(language="en")

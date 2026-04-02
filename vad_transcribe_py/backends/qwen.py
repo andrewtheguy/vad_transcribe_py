@@ -1,5 +1,6 @@
 """Qwen3-ASR backend using the qwen-asr package."""
 
+import gc
 import logging
 from typing import Any
 
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 QWEN_ASR_DEFAULT_MODEL = "Qwen/Qwen3-ASR-0.6B"
 QWEN_ASR_HARD_LIMIT_SECONDS = 30
 QWEN_ASR_SOFT_LIMIT_SECONDS = 6.0
+QWEN_ASR_EOS_TOKEN_IDS = [151645, 151643]
 
 _LANGUAGE_MAP: dict[str, str] = {
     "en": "English",
@@ -37,6 +39,13 @@ def _get_device_and_dtype() -> tuple[str, torch.dtype]:
         return "cpu", torch.float32
 
 
+def _is_cuda_device(device: Any) -> bool:
+    """Return True when the model is running on CUDA."""
+    if isinstance(device, torch.device):
+        return device.type == "cuda"
+    return str(device).startswith("cuda")
+
+
 class QwenASRBackend(TranscriberBase):
     """Transcriber backend using Qwen3-ASR."""
 
@@ -49,6 +58,7 @@ class QwenASRBackend(TranscriberBase):
         super().__init__(language, chinese_conversion)
         self.model = model
         self._qwen_model: Any = None
+        self._parse_asr_output: Any = None
 
         logger.info("Loading %s model...", self.model)
         self._load_model()
@@ -62,9 +72,10 @@ class QwenASRBackend(TranscriberBase):
         return QWEN_ASR_SOFT_LIMIT_SECONDS
 
     def _load_model(self) -> None:
-        """Load Qwen3-ASR model via qwen-asr package."""
+        """Load Qwen3-ASR model via the non-streaming Transformers backend."""
         try:
             from qwen_asr import Qwen3ASRModel
+            from qwen_asr.inference.utils import parse_asr_output
         except ImportError:
             raise ImportError(
                 "qwen-asr is not installed. "
@@ -81,27 +92,62 @@ class QwenASRBackend(TranscriberBase):
             dtype=torch_dtype,
             device_map=device,
         )
+        self._parse_asr_output = parse_asr_output
 
-        logger.info("Qwen3-ASR model loaded: %s on %s", self.model, device)
+        backend = getattr(self._qwen_model, "backend", None)
+        if backend != "transformers":
+            raise RuntimeError(
+                "Qwen3-ASR must use the non-streaming transformers backend; "
+                f"got {backend!r}"
+            )
+
+        logger.info(
+            "Qwen3-ASR model loaded: %s on %s (mode=non-streaming)",
+            self.model,
+            device,
+        )
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return a single segment."""
         qwen_language = _LANGUAGE_MAP.get(self.language)
-
-        results = self._qwen_model.transcribe(
-            audio=(audio, TARGET_SAMPLE_RATE),
-            language=qwen_language,
-        )
-
-        text: str = results[0].text
-        end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-        result = [self._make_segment(text, start_offset, end_time)]
-
-        # Clear retained rope_deltas to prevent memory growth across segments.
-        # The model stores this tensor as instance state during generate() and
-        # never clears it, which keeps old attention mask tensors alive.
         thinker = self._qwen_model.model.thinker
-        if hasattr(thinker, 'rope_deltas'):
-            thinker.rope_deltas = None
 
-        return result
+        try:
+            prompt = self._qwen_model._build_text_prompt(context="", force_language=qwen_language)
+            inputs = self._qwen_model.processor(
+                text=[prompt],
+                audio=[audio],
+                return_tensors="pt",
+                padding=True,
+            )
+            inputs = inputs.to(self._qwen_model.device).to(self._qwen_model.dtype)
+
+            sequences = thinker.generate(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                input_features=inputs["input_features"],
+                feature_attention_mask=inputs["feature_attention_mask"],
+                max_new_tokens=self._qwen_model.max_new_tokens,
+                eos_token_id=QWEN_ASR_EOS_TOKEN_IDS,
+                return_dict_in_generate=False,
+            )
+
+            decoded = self._qwen_model.processor.batch_decode(
+                sequences[:, inputs["input_ids"].shape[1]:],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+            _, text = self._parse_asr_output(decoded[0], user_language=qwen_language)
+
+            end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
+            return [self._make_segment(text, start_offset, end_time)]
+        finally:
+            # qwen-asr stores per-request rope state on the thinker module.
+            if hasattr(thinker, 'rope_deltas'):
+                thinker.rope_deltas = None
+
+            # On CUDA, qwen's temporary KV cache is large enough that the allocator
+            # can look like a leak across many segments unless we force release.
+            if _is_cuda_device(self._qwen_model.device):
+                gc.collect()
+                torch.cuda.empty_cache()
