@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.2.1). Leave empty to auto-bump patch."
+        description: "Version to release (e.g. 0.0.1). Leave empty to auto-bump patch."
         required: false
         type: string
 
