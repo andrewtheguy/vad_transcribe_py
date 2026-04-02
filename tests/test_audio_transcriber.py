@@ -178,6 +178,7 @@ def test_qwen_uses_non_streaming_transformers_backend(monkeypatch):
         def __init__(self):
             self.backend = "transformers"
             self.processor = StubProcessor()
+            self.model = SimpleNamespace(thinker=SimpleNamespace())
 
         def transcribe(self, audio, language):
             type(self).transcribe_calls.append({"audio": audio, "language": language})
