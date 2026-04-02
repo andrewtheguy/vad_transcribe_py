@@ -53,10 +53,14 @@ class WhisperBackend(TranscriberBase):
         language: str,
         model: str,
         chinese_conversion: ChineseConversion = 'none',
+        num_threads: int | None = None,
     ):
-        super().__init__(language, chinese_conversion)
+        super().__init__(language, chinese_conversion, num_threads)
         self.model = model
         self.pipe: Any = None
+
+        if num_threads is not None:
+            torch.set_num_threads(num_threads)
 
         logger.info("Loading %s model...", self.model)
         self._load_whisper()

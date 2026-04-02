@@ -63,12 +63,17 @@ class QwenASRBackend(TranscriberBase):
         language: str,
         model: str = QWEN_ASR_DEFAULT_MODEL,
         chinese_conversion: ChineseConversion = 'none',
+        num_threads: int | None = None,
     ):
-        super().__init__(language, chinese_conversion)
+        super().__init__(language, chinese_conversion, num_threads)
         self.model = model
         self._qwen_model: Any = None
         self._parse_asr_output: Any = None
         self._eos_token_ids: list[int] = []
+
+        if num_threads is not None:
+            import torch
+            torch.set_num_threads(num_threads)
 
         logger.info("Loading %s model...", self.model)
         self._load_model()

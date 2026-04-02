@@ -25,14 +25,15 @@ class MoonshineBackend(TranscriberBase):
         language: str,
         model: str | None = None,
         chinese_conversion: ChineseConversion = 'none',
+        num_threads: int | None = None,
     ):
-        super().__init__(language, chinese_conversion)
+        super().__init__(language, chinese_conversion, num_threads)
         self._moonshine_transcriber: Any = None
 
         self._hard_limit_seconds: int = 0
         self._soft_limit_seconds: float | None = None
 
-        self._load_moonshine(model)
+        self._load_moonshine(model, num_threads)
 
     @property
     def hard_limit_seconds(self) -> int:
@@ -42,7 +43,7 @@ class MoonshineBackend(TranscriberBase):
     def soft_limit_seconds(self) -> float | None:
         return self._soft_limit_seconds
 
-    def _load_moonshine(self, model: str | None) -> None:
+    def _load_moonshine(self, model: str | None, num_threads: int | None) -> None:
         """Load Moonshine model via ONNX runtime."""
         from vad_transcribe_py.moonshine import resolve_model, download_model, Transcriber, SAMPLE_RATE
 
@@ -68,6 +69,7 @@ class MoonshineBackend(TranscriberBase):
             is_streaming=is_streaming,
             strip_cjk_spaces=strip_cjk_spaces,
             token_limit_factor=token_limit_factor,
+            num_threads=num_threads,
         )
 
         logger.info("Moonshine model loaded: %s", name)

@@ -58,9 +58,10 @@ class AudioTranscriber(Protocol):
 class TranscriberBase:
     """Shared functionality for transcriber backends."""
 
-    def __init__(self, language: str, chinese_conversion: ChineseConversion = 'none'):
+    def __init__(self, language: str, chinese_conversion: ChineseConversion = 'none', num_threads: int | None = None):
         self.language = language
         self.chinese_conversion: ChineseConversion = chinese_conversion
+        self.num_threads = num_threads
 
     def _make_segment(self, text: str, start: float, end: float) -> TranscribedSegment:
         """Format timestamps, print to stderr, process text, and return a TranscribedSegment."""

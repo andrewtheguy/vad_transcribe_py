@@ -35,7 +35,10 @@ def _run_session(session: ort.InferenceSession, feeds: dict[str, Any]) -> list[n
     return results
 
 
-def _make_session(path: str) -> ort.InferenceSession:
+def _make_session(path: str, num_threads: int | None = None) -> ort.InferenceSession:
+    opts = ort.SessionOptions()
+    if num_threads is not None:
+        opts.intra_op_num_threads = num_threads
     preferred = ["CUDAExecutionProvider", "CPUExecutionProvider"]
     providers = [
         provider
@@ -43,8 +46,8 @@ def _make_session(path: str) -> ort.InferenceSession:
         if provider in ort.get_available_providers()
     ]
     if providers:
-        return ort.InferenceSession(path, providers=providers)
-    return ort.InferenceSession(path)
+        return ort.InferenceSession(path, sess_options=opts, providers=providers)
+    return ort.InferenceSession(path, sess_options=opts)
 
 
 # ---------------------------------------------------------------------------
@@ -55,14 +58,14 @@ def _make_session(path: str) -> ort.InferenceSession:
 class _NonStreamingEngine:
     """Loads encoder + merged decoder ONNX and runs auto-regressive decoding."""
 
-    def __init__(self, model_dir: str, token_limit_factor: float):
+    def __init__(self, model_dir: str, token_limit_factor: float, num_threads: int | None = None):
         self.token_limit_factor = token_limit_factor
         self.vocab = load_tokenizer(os.path.join(model_dir, "tokenizer.bin"))
 
         enc_path = os.path.join(model_dir, "encoder_model.ort")
         dec_path = os.path.join(model_dir, "decoder_model_merged.ort")
-        self.encoder = _make_session(enc_path)
-        self.decoder = _make_session(dec_path)
+        self.encoder = _make_session(enc_path, num_threads)
+        self.decoder = _make_session(dec_path, num_threads)
 
         # Discover decoder architecture from input metadata
         dec_inputs = {inp.name: inp for inp in self.decoder.get_inputs()}
@@ -207,7 +210,7 @@ class _NonStreamingEngine:
 class _StreamingEngine:
     """Loads streaming ONNX models and runs the full pipeline on a segment."""
 
-    def __init__(self, model_dir: str, token_limit_factor: float):
+    def __init__(self, model_dir: str, token_limit_factor: float, num_threads: int | None = None):
         self.token_limit_factor = token_limit_factor
         self.vocab = load_tokenizer(os.path.join(model_dir, "tokenizer.bin"))
 
@@ -215,11 +218,11 @@ class _StreamingEngine:
         with open(config_path) as f:
             self.cfg = json.load(f)
 
-        self.frontend = _make_session(os.path.join(model_dir, "frontend.ort"))
-        self.encoder = _make_session(os.path.join(model_dir, "encoder.ort"))
-        self.adapter = _make_session(os.path.join(model_dir, "adapter.ort"))
-        self.cross_kv = _make_session(os.path.join(model_dir, "cross_kv.ort"))
-        self.decoder_kv = _make_session(os.path.join(model_dir, "decoder_kv.ort"))
+        self.frontend = _make_session(os.path.join(model_dir, "frontend.ort"), num_threads)
+        self.encoder = _make_session(os.path.join(model_dir, "encoder.ort"), num_threads)
+        self.adapter = _make_session(os.path.join(model_dir, "adapter.ort"), num_threads)
+        self.cross_kv = _make_session(os.path.join(model_dir, "cross_kv.ort"), num_threads)
+        self.decoder_kv = _make_session(os.path.join(model_dir, "decoder_kv.ort"), num_threads)
 
         self.depth = self.cfg["depth"]
         self.nheads = self.cfg["nheads"]
@@ -414,13 +417,14 @@ class Transcriber:
         is_streaming: bool,
         strip_cjk_spaces: bool,
         token_limit_factor: float,
+        num_threads: int | None = None,
     ):
         self.strip_cjk_spaces = strip_cjk_spaces
 
         if is_streaming:
-            self._engine = _StreamingEngine(model_dir, token_limit_factor)
+            self._engine = _StreamingEngine(model_dir, token_limit_factor, num_threads)
         else:
-            self._engine = _NonStreamingEngine(model_dir, token_limit_factor)
+            self._engine = _NonStreamingEngine(model_dir, token_limit_factor, num_threads)
 
     def transcribe_chunk(self, audio: npt.NDArray[np.float32]) -> str:
         """Transcribe a single audio chunk (float32, 16kHz) to text."""
