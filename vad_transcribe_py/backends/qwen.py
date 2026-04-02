@@ -1,6 +1,5 @@
 """Qwen3-ASR backend using the qwen-asr package."""
 
-import gc
 import logging
 from typing import Any
 
@@ -32,18 +31,8 @@ def _get_device_and_dtype() -> tuple[str, torch.dtype]:
     """Auto-detect best device and dtype for Qwen3-ASR."""
     if torch.cuda.is_available():
         return "cuda:0", torch.bfloat16
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps", torch.float16
     else:
         return "cpu", torch.float32
-
-
-def _is_cuda_device(device: Any) -> bool:
-    """Return True when the model is running on CUDA."""
-    if isinstance(device, torch.device):
-        return device.type == "cuda"
-    return str(device).startswith("cuda")
-
 
 def _resolve_eos_token_ids(processor: Any) -> list[int]:
     """Resolve Qwen EOS token ids from the runtime tokenizer."""
@@ -127,44 +116,12 @@ class QwenASRBackend(TranscriberBase):
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return a single segment."""
         qwen_language = _LANGUAGE_MAP.get(self.language)
-        thinker = self._qwen_model.model.thinker
 
-        try:
-            prompt = self._qwen_model._build_text_prompt(context="", force_language=qwen_language)
-            inputs = self._qwen_model.processor(
-                text=[prompt],
-                audio=[audio],
-                return_tensors="pt",
-                padding=True,
-            )
-            inputs = inputs.to(device=self._qwen_model.device, dtype=self._qwen_model.dtype)
+        results = self._qwen_model.transcribe(
+            audio=(audio, TARGET_SAMPLE_RATE),
+            language=qwen_language,
+        )
 
-            sequences = thinker.generate(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                input_features=inputs["input_features"],
-                feature_attention_mask=inputs["feature_attention_mask"],
-                max_new_tokens=self._qwen_model.max_new_tokens,
-                eos_token_id=self._eos_token_ids,
-                return_dict_in_generate=False,
-            )
-
-            decoded = self._qwen_model.processor.batch_decode(
-                sequences[:, inputs["input_ids"].shape[1]:],
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False,
-            )
-            _, text = self._parse_asr_output(decoded[0], user_language=qwen_language)
-
-            end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-            return [self._make_segment(text, start_offset, end_time)]
-        finally:
-            # qwen-asr stores per-request rope state on the thinker module.
-            if hasattr(thinker, 'rope_deltas'):
-                thinker.rope_deltas = None
-
-            # On CUDA, qwen's temporary KV cache is large enough that the allocator
-            # can look like a leak across many segments unless we force release.
-            if _is_cuda_device(self._qwen_model.device):
-                gc.collect()
-                torch.cuda.empty_cache()
+        text: str = results[0].text
+        end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
+        return [self._make_segment(text, start_offset, end_time)]
