@@ -3,7 +3,7 @@ import json
 import os
 import subprocess
 import sys
-from typing import Optional
+from typing import IO
 
 from dotenv import load_dotenv
 
@@ -22,6 +22,7 @@ from vad_transcribe_py.audio_transcriber import (
 from vad_transcribe_py.vad_processor import (
     SpeechDetector,
     AudioSegment,
+    DEFAULT_HARD_LIMIT_SECONDS,
     DEFAULT_MIN_SPEECH_SECONDS,
     DEFAULT_SOFT_LIMIT_SECONDS,
     DEFAULT_SPEECH_THRESHOLD,
@@ -31,7 +32,7 @@ from vad_transcribe_py.vad_processor import (
 from vad_transcribe_py.file_lock import acquire_lock, LockError
 
 
-def add_vad_arguments(parser):
+def add_vad_arguments(parser: argparse.ArgumentParser) -> None:
     """Add common VAD arguments to a parser."""
     parser.add_argument('--min-speech-seconds', type=float, default=DEFAULT_MIN_SPEECH_SECONDS,
                         help=f'Minimum speech duration in seconds (default: {DEFAULT_MIN_SPEECH_SECONDS})')
@@ -45,7 +46,7 @@ def add_vad_arguments(parser):
                         help=f'Look-back buffer in seconds for segment start (default: {DEFAULT_LOOK_BACK_SECONDS})')
 
 
-def get_vad_params(args) -> dict:
+def get_vad_params(args: argparse.Namespace) -> dict[str, float | int]:
     """Extract VAD parameters from parsed arguments."""
     return {
         "min_speech_seconds": args.min_speech_seconds,
@@ -56,7 +57,7 @@ def get_vad_params(args) -> dict:
     }
 
 
-def format_timestamp(seconds: float, include_decimals=True) -> str:
+def format_timestamp(seconds: float, include_decimals: bool = True) -> str:
     if include_decimals:
         milliseconds = round(seconds * 1000)
         minutes_remaining, remaining_milliseconds = divmod(milliseconds, 60000)
@@ -65,8 +66,8 @@ def format_timestamp(seconds: float, include_decimals=True) -> str:
         remaining_seconds = remaining_seconds[:-3] + '.' + remaining_seconds[-3:]
         return f"{hours:02d}:{minutes:02d}:{remaining_seconds}"
     else:
-        seconds = round(seconds)
-        minutes_remaining, remaining_seconds = divmod(seconds, 60)
+        rounded_seconds = round(seconds)
+        minutes_remaining, remaining_seconds = divmod(rounded_seconds, 60)
         hours, minutes = divmod(minutes_remaining, 60)
         return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
 
@@ -97,7 +98,7 @@ def get_audio_duration(audio_source: str) -> float | None:
     return float(duration_str)
 
 
-def get_audio_properties(audio_source: str) -> dict:
+def get_audio_properties(audio_source: str) -> dict[str, int]:
     """
     Get audio properties (sample rate and channels) using ffprobe.
 
@@ -141,7 +142,7 @@ def resample_to_16k(audio: np.ndarray, orig_sr: int) -> np.ndarray:
 
     # Resample to 16kHz using scipy
     num_output_samples = int(len(audio) * TARGET_SAMPLE_RATE / orig_sr)
-    resampled = signal.resample(audio, num_output_samples)
+    resampled = np.asarray(signal.resample(audio, num_output_samples))
     return resampled.astype(np.float32)
 
 
@@ -171,7 +172,7 @@ def save_audio_segment(
     segment: AudioSegment,
     output_dir: str,
     index: int,
-    original_audio: Optional[np.ndarray] = None,
+    original_audio: np.ndarray | None = None,
     sample_rate: int = TARGET_SAMPLE_RATE,
     channels: int = 1,
     output_format: str = "opus",
@@ -194,6 +195,7 @@ def save_audio_segment(
     os.makedirs(output_dir, exist_ok=True)
 
     # Create filename with start and end in milliseconds
+    assert segment.duration_seconds is not None
     start_ms = int(segment.start * 1000)
     end_ms = int((segment.start + segment.duration_seconds) * 1000)
     filename = f"segment_{index:04d}_{start_ms}ms_{end_ms}ms.{output_format}"
@@ -251,7 +253,7 @@ def save_audio_segment(
     return output_path
 
 
-def write_jsonl_segment(segment: TranscribedSegment, output_file):
+def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> None:
     """Write a single transcription segment as JSONL to the output file."""
     line = json.dumps({
         "type": "transcription",
@@ -265,14 +267,14 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file):
     output_file.flush()
 
 
-def write_jsonl_marker(event: str, output_file):
+def write_jsonl_marker(event: str, output_file: IO[str]) -> None:
     """Write a stream marker (stream_start or stream_end) as JSONL."""
     line = json.dumps({"type": event}, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()
 
 
-def write_jsonl_boundary(event: str, timestamp: float, output_file):
+def write_jsonl_boundary(event: str, timestamp: float, output_file: IO[str]) -> None:
     """Write a segment boundary event as JSONL.
 
     Args:
@@ -292,13 +294,13 @@ def write_jsonl_boundary(event: str, timestamp: float, output_file):
 def stream_transcribe_with_vad(
     audio_file: str,
     transcriber: WhisperTranscriber,
-    output_file,
+    output_file: IO[str],
     min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
-    soft_limit_seconds: float = DEFAULT_SOFT_LIMIT_SECONDS,
+    soft_limit_seconds: float | None = DEFAULT_SOFT_LIMIT_SECONDS,
     speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
     min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
     look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
-    hard_limit_seconds: Optional[float] = None,
+    hard_limit_seconds: float | None = None,
 ) -> int:
     """
     Stream audio through VAD and transcribe each segment immediately.
@@ -320,8 +322,9 @@ def stream_transcribe_with_vad(
     write_jsonl_marker("stream_start", output_file)
     segment_count = 0
 
-    def on_segment_complete(segment: AudioSegment):
+    def on_segment_complete(segment: AudioSegment) -> None:
         nonlocal segment_count
+        assert segment.duration_seconds is not None
         start_fmt = format_timestamp(segment.start)
         print(f"[VAD] Segment {segment_count}: {start_fmt} ({segment.start:.2f}s), duration={segment.duration_seconds:.2f}s", file=sys.stderr)
 
@@ -336,21 +339,19 @@ def stream_transcribe_with_vad(
 
         segment_count += 1
 
-    detector_kwargs = {
-        "sample_rate": TARGET_SAMPLE_RATE,
-        "on_segment_complete": on_segment_complete,
-        "min_speech_seconds": min_speech_seconds,
-        "soft_limit_seconds": soft_limit_seconds,
-        "speech_threshold": speech_threshold,
-        "min_silence_duration_ms": min_silence_duration_ms,
-        "look_back_seconds": look_back_seconds,
-    }
-    if hard_limit_seconds is not None:
-        detector_kwargs["hard_limit_seconds"] = hard_limit_seconds
-    speech_detector = SpeechDetector(**detector_kwargs)
+    speech_detector = SpeechDetector(
+        sample_rate=TARGET_SAMPLE_RATE,
+        on_segment_complete=on_segment_complete,
+        min_speech_seconds=min_speech_seconds,
+        soft_limit_seconds=soft_limit_seconds,
+        speech_threshold=speech_threshold,
+        min_silence_duration_ms=min_silence_duration_ms,
+        look_back_seconds=look_back_seconds,
+        hard_limit_seconds=hard_limit_seconds if hard_limit_seconds is not None else DEFAULT_HARD_LIMIT_SECONDS,
+    )
 
     window_size = get_window_size_samples()
-    buffer = []
+    buffer: list[float] = []
     current_ts = 0.0
     chunks_read = 0
 
@@ -377,11 +378,11 @@ def stream_transcribe_with_vad(
 def stream_transcribe_stdin_with_vad(
     transcriber: WhisperTranscriber,
     min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
-    soft_limit_seconds: float = DEFAULT_SOFT_LIMIT_SECONDS,
+    soft_limit_seconds: float | None = DEFAULT_SOFT_LIMIT_SECONDS,
     speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
     min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
     look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
-    hard_limit_seconds: Optional[float] = None,
+    hard_limit_seconds: float | None = None,
 ) -> int:
     """
     Stream WAV audio from stdin through VAD and transcribe each segment immediately.
@@ -403,8 +404,9 @@ def stream_transcribe_stdin_with_vad(
     output_file = sys.stdout
     write_jsonl_marker("stream_start", output_file)
 
-    def on_segment_complete(segment: AudioSegment):
+    def on_segment_complete(segment: AudioSegment) -> None:
         nonlocal segment_count
+        assert segment.duration_seconds is not None
         start_fmt = format_timestamp(segment.start)
         print(f"[VAD] Segment {segment_count}: {start_fmt} ({segment.start:.2f}s), duration={segment.duration_seconds:.2f}s", file=sys.stderr)
 
@@ -419,21 +421,19 @@ def stream_transcribe_stdin_with_vad(
 
         segment_count += 1
 
-    detector_kwargs = {
-        "sample_rate": TARGET_SAMPLE_RATE,
-        "on_segment_complete": on_segment_complete,
-        "min_speech_seconds": min_speech_seconds,
-        "soft_limit_seconds": soft_limit_seconds,
-        "speech_threshold": speech_threshold,
-        "min_silence_duration_ms": min_silence_duration_ms,
-        "look_back_seconds": look_back_seconds,
-    }
-    if hard_limit_seconds is not None:
-        detector_kwargs["hard_limit_seconds"] = hard_limit_seconds
-    speech_detector = SpeechDetector(**detector_kwargs)
+    speech_detector = SpeechDetector(
+        sample_rate=TARGET_SAMPLE_RATE,
+        on_segment_complete=on_segment_complete,
+        min_speech_seconds=min_speech_seconds,
+        soft_limit_seconds=soft_limit_seconds,
+        speech_threshold=speech_threshold,
+        min_silence_duration_ms=min_silence_duration_ms,
+        look_back_seconds=look_back_seconds,
+        hard_limit_seconds=hard_limit_seconds if hard_limit_seconds is not None else DEFAULT_HARD_LIMIT_SECONDS,
+    )
 
     window_size = get_window_size_samples()
-    buffer = []
+    buffer: list[float] = []
     current_ts = 0.0
     chunks_read = 0
 
@@ -501,8 +501,9 @@ def split_by_vad(
         original_buffer: list[float] = []
         buffer_start_time = 0.0
 
-        def on_segment_complete(segment: AudioSegment):
+        def on_segment_complete(segment: AudioSegment) -> None:
             nonlocal segment_count, original_buffer, buffer_start_time
+            assert segment.duration_seconds is not None
 
             # Calculate sample range in original buffer (mono)
             seg_start_in_buffer = segment.start - buffer_start_time
@@ -576,7 +577,7 @@ def split_by_vad(
 
     else:
         # Default mode: downsample to 16kHz mono (simpler, less memory)
-        def on_segment_complete(segment: AudioSegment):
+        def on_segment_complete_default(segment: AudioSegment) -> None:
             nonlocal segment_count
             path = save_audio_segment(segment, output_dir, segment_count, output_format=output_format)
             print(f"[VAD] Saved: {path} (duration={segment.duration_seconds:.2f}s)", file=sys.stderr)
@@ -584,7 +585,7 @@ def split_by_vad(
 
         speech_detector = SpeechDetector(
             sample_rate=TARGET_SAMPLE_RATE,
-            on_segment_complete=on_segment_complete,
+            on_segment_complete=on_segment_complete_default,
             min_speech_seconds=min_speech_seconds,
             soft_limit_seconds=soft_limit_seconds,
             speech_threshold=speech_threshold,
@@ -711,7 +712,11 @@ def main():
                 validate_audio_source(audio_source)
                 segment_count = split_by_vad(
                     audio_source, args.preserve_sample_rate, args.format,
-                    **get_vad_params(args)
+                    min_speech_seconds=args.min_speech_seconds,
+                    soft_limit_seconds=args.soft_limit_seconds,
+                    speech_threshold=args.speech_threshold,
+                    min_silence_duration_ms=args.min_silence_duration_ms,
+                    look_back_seconds=args.look_back_seconds,
                 )
                 base_name = os.path.splitext(os.path.basename(audio_source))[0]
                 output_dir = os.path.join("tmp", base_name)

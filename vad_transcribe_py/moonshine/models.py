@@ -4,6 +4,7 @@ Trimmed to English (streaming) and Chinese (non-streaming) only.
 """
 
 from enum import IntEnum
+from typing import TypedDict
 
 from vad_transcribe_py.vad_processor import (
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
@@ -35,11 +36,24 @@ STREAMING_ARCHS = {
 }
 
 
+class _ModelEntry(TypedDict):
+    model_name: str
+    model_arch: ModelArch
+    download_url: str
+    hard_max_speech_seconds: int
+    soft_max_speech_seconds: float
+
+
+class _LanguageInfo(TypedDict):
+    english_name: str
+    models: list[_ModelEntry]
+
+
 def _moonshine_model(
     model_name: str,
     model_arch: ModelArch,
     download_url: str,
-) -> dict[str, object]:
+) -> _ModelEntry:
     is_streaming = model_arch in STREAMING_ARCHS
     return {
         "model_name": model_name,
@@ -50,7 +64,7 @@ def _moonshine_model(
     }
 
 
-MODEL_INFO = {
+MODEL_INFO: dict[str, _LanguageInfo] = {
     "en": {
         "english_name": "English",
         "models": [

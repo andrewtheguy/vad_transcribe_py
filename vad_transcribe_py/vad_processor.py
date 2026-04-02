@@ -6,7 +6,7 @@ and state machine for detecting speech segments in audio streams.
 """
 
 from collections import deque
-from typing import Callable, Optional, Deque
+from collections.abc import Callable
 
 import numpy as np
 import numpy.typing as npt
@@ -48,7 +48,7 @@ class AudioSegment:
         self,
         start: float,
         audio: npt.NDArray[np.float32],
-        duration_seconds: Optional[float] = None,
+        duration_seconds: float | None = None,
     ):
         self.start = start
         self.audio = audio
@@ -78,12 +78,12 @@ class SpeechDetector:
         self,
         sample_rate: int = TARGET_SAMPLE_RATE,
         min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
-        soft_limit_seconds: Optional[float] = DEFAULT_SOFT_LIMIT_SECONDS,
+        soft_limit_seconds: float | None = DEFAULT_SOFT_LIMIT_SECONDS,
         hard_limit_seconds: float = DEFAULT_HARD_LIMIT_SECONDS,
         speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
         min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
         look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
-        on_segment_complete: Optional[Callable[[AudioSegment], None]] = None,
+        on_segment_complete: Callable[[AudioSegment], None] | None = None,
     ):
         self.sample_rate = sample_rate
         self.min_speech_seconds = min_speech_seconds
@@ -103,12 +103,12 @@ class SpeechDetector:
 
         # State machine variables
         self._prev_has_speech = False
-        self._speech_section: list = []
-        self._has_speech_begin_timestamp: Optional[float] = None
-        self._look_back_buffer: Deque[npt.NDArray[np.float32]] = deque()
+        self._speech_section: list[float] = []
+        self._has_speech_begin_timestamp: float | None = None
+        self._look_back_buffer: deque[npt.NDArray[np.float32]] = deque()
         self._look_back_buffer_duration = 0.0
         self._pending_non_speech_seconds = 0.0
-        self._silence_buffer: list = []
+        self._silence_buffer: list[float] = []
         self._accumulated_silence_ms = 0.0
 
         # Window configuration
@@ -187,7 +187,7 @@ class SpeechDetector:
             self._look_back_buffer_duration = 0.0
             self._pending_non_speech_seconds = 0.0
 
-        if prepended_duration > 0 and self._has_speech_begin_timestamp is not None:
+        if prepended_duration > 0:
             self._has_speech_begin_timestamp = max(
                 0.0, self._has_speech_begin_timestamp - prepended_duration
             )

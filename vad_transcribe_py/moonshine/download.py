@@ -22,7 +22,7 @@ def get_cache_dir() -> Path:
     return Path(os.environ.get(env_var, user_cache_dir(APP_NAME)))
 
 
-def _write_stream(response, partial: Path, existing_size: int) -> None:
+def _write_stream(response: httpx.Response, partial: Path, existing_size: int) -> None:
     """Write an httpx streaming response to a partial file."""
     if response.status_code not in (200, 206):
         response.raise_for_status()
