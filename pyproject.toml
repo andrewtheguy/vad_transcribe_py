@@ -27,10 +27,6 @@ transcribe = [
     "filelock",
     "httpx",
 ]
-dev = [
-    "pytest>=9.0.0,<10",
-    "ruff>=0.14.6",
-]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -48,6 +44,12 @@ addopts = [
 filterwarnings = [
     # Ignore deprecation warnings from third-party libraries
     "ignore::DeprecationWarning:silero_vad.*",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0,<10",
+    "ruff>=0.14.6",
 ]
 
 [build-system]
