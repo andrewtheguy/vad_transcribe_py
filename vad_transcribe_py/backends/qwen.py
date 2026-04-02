@@ -31,8 +31,9 @@ def _get_device_and_dtype() -> tuple[str, torch.dtype]:
     """Auto-detect best device and dtype for Qwen3-ASR."""
     if torch.cuda.is_available():
         return "cuda:0", torch.bfloat16
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps", torch.float16
+    # disabling mps because it has unexpected memory leak issues in qwen-asr
+    # elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    #     return "mps", torch.float16
     else:
         return "cpu", torch.float32
 
