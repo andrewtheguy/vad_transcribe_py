@@ -654,6 +654,18 @@ def main():
                                    help='Number of CPU threads for inference '
                                         '(default: min(2, cpu_count))')
 
+    # DETECT-REPLAY subcommand
+    parser_replay = subparsers.add_parser('detect-replay', help='Detect repeated broadcast segments in transcription JSONL')
+    parser_replay.add_argument('file', help='Path to JSONL transcript file')
+    parser_replay.add_argument('--window-size', type=int, nargs='+', default=[3],
+                               help='Sliding window size(s) in segments (default: 3)')
+    parser_replay.add_argument('--threshold', type=float, default=0.75,
+                               help='Similarity threshold 0.0-1.0 (default: 0.75)')
+    parser_replay.add_argument('--min-chars', type=int, default=50,
+                               help='Minimum characters per window (default: 50)')
+    parser_replay.add_argument('--json', action='store_true',
+                               help='Output results as JSON instead of text report')
+
     # SPLIT subcommand
     parser_split = subparsers.add_parser('split', help='Split audio by VAD into Opus segments')
     split_input = parser_split.add_mutually_exclusive_group(required=True)
@@ -668,12 +680,38 @@ def main():
     args = parser.parse_args()
 
     try:
+        if args.action == 'detect-replay':
+            if not os.path.exists(args.file):
+                logger.error("File not found: %s", args.file)
+                sys.exit(1)
+            from vad_transcribe_py.replay_detector import detect_replays, format_report
+            matches = detect_replays(
+                args.file,
+                window_sizes=args.window_size,
+                threshold=args.threshold,
+                min_chars=args.min_chars,
+            )
+            if args.json:
+                output = []
+                for m in matches:
+                    output.append({
+                        "similarity": round(m.similarity, 4),
+                        "a": {"start": m.a_start, "end": m.a_end, "text": m.a_text},
+                        "b": {"start": m.b_start, "end": m.b_end, "text": m.b_text},
+                    })
+                json.dump(output, sys.stdout, ensure_ascii=False, indent=2)
+                sys.stdout.write("\n")
+            else:
+                report = format_report(matches)
+                sys.stdout.write(report)
+            sys.exit(0)
+
         with acquire_lock(args.action):
             if args.action == 'transcribe':
                 import torch
                 num_threads = args.threads if args.threads is not None else min(2, os.cpu_count() or 1)
                 torch.set_num_threads(num_threads)
-                logger.info("Using %d CPU thread(s) for inference", num_threads)
+                logger.info("Using %d thread(s)", num_threads)
 
                 # Handle stdin mode separately (no validation, always VAD, always stdout)
                 if getattr(args, 'stdin', False):
