@@ -22,6 +22,7 @@ from vad_transcribe_py.audio_transcriber import (
 from vad_transcribe_py.vad_processor import (
     SpeechDetector,
     AudioSegment,
+    DEFAULT_HARD_LIMIT_SECONDS,
     DEFAULT_MIN_SPEECH_SECONDS,
     DEFAULT_SOFT_LIMIT_SECONDS,
     DEFAULT_SPEECH_THRESHOLD,
@@ -346,7 +347,7 @@ def stream_transcribe_with_vad(
         speech_threshold=speech_threshold,
         min_silence_duration_ms=min_silence_duration_ms,
         look_back_seconds=look_back_seconds,
-        **({"hard_limit_seconds": hard_limit_seconds} if hard_limit_seconds is not None else {}),
+        hard_limit_seconds=hard_limit_seconds if hard_limit_seconds is not None else DEFAULT_HARD_LIMIT_SECONDS,
     )
 
     window_size = get_window_size_samples()
@@ -428,7 +429,7 @@ def stream_transcribe_stdin_with_vad(
         speech_threshold=speech_threshold,
         min_silence_duration_ms=min_silence_duration_ms,
         look_back_seconds=look_back_seconds,
-        **({"hard_limit_seconds": hard_limit_seconds} if hard_limit_seconds is not None else {}),
+        hard_limit_seconds=hard_limit_seconds if hard_limit_seconds is not None else DEFAULT_HARD_LIMIT_SECONDS,
     )
 
     window_size = get_window_size_samples()
