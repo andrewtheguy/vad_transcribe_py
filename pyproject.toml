@@ -50,7 +50,26 @@ filterwarnings = [
 dev = [
     "pytest>=9.0.0,<10",
     "ruff>=0.14.6",
+    "basedpyright>=1.29.0",
 ]
+
+[tool.pyright]
+exclude = [".venv", "build", "dist", ".git", "tests", "scripts"]
+reportUnknownParameterType = true
+reportUninitializedInstanceVariable = true
+reportMissingTypeStubs = false
+reportExplicitAny = false
+reportAny = false
+reportUnannotatedClassAttribute = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+reportImplicitStringConcatenation = false
+reportMissingImports = true
+reportMissingModuleSource = false
+reportUnusedCallResult = false
+reportImplicitOverride = false
 
 [build-system]
 requires = ["hatchling"]

@@ -1,8 +1,9 @@
 import struct
 import subprocess
 import sys
+from collections.abc import Generator
 from dataclasses import dataclass
-from typing import Generator, Literal
+from typing import Any, BinaryIO, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -28,7 +29,7 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
 
-def _validate_wav_header(stream):
+def _validate_wav_header(stream: BinaryIO) -> tuple[int, int, int, int, int]:
     """Read and validate a WAV header from a binary stream.
 
     Accepts mono WAV at target sample rate in 16-bit PCM, 32-bit PCM,
@@ -101,7 +102,7 @@ def _validate_wav_header(stream):
     return audio_format, bits_per_sample, sample_rate, channels, data_size
 
 
-def _stream_wav_as_float32(stream, audio_format, bits_per_sample, chunk_bytes=4096):
+def _stream_wav_as_float32(stream: BinaryIO, audio_format: int, bits_per_sample: int, chunk_bytes: int = 4096) -> Generator[npt.NDArray[np.float32], None, None]:
     """Stream WAV data as float32 arrays, converting from PCM if needed."""
     if audio_format == 3:
         dtype = np.float32
@@ -114,12 +115,13 @@ def _stream_wav_as_float32(stream, audio_format, bits_per_sample, chunk_bytes=40
         chunk = stream.read(chunk_bytes)
         if not chunk:
             break
-        samples = np.frombuffer(chunk, dtype=dtype)
+        raw = np.frombuffer(chunk, dtype=dtype)
         if dtype == np.int16:
-            samples = samples.astype(np.float32) / 32768.0
+            yield (raw.astype(np.float32) / np.float32(32768.0))
         elif dtype == np.int32:
-            samples = samples.astype(np.float32) / 2147483648.0
-        yield samples
+            yield (raw.astype(np.float32) / np.float32(2147483648.0))
+        else:
+            yield raw.astype(np.float32)
 
 
 
@@ -189,6 +191,7 @@ def ffmpeg_stream_float32(
         stderr=None,
     )
 
+    assert process.stdout is not None
     try:
         while True:
             chunk = process.stdout.read(chunk_bytes)
@@ -203,7 +206,7 @@ def ffmpeg_stream_float32(
         process.stdout.close()
 
 
-def get_window_size_samples():
+def get_window_size_samples() -> int:
     """Get window size for VAD processing."""
     return 512 if TARGET_SAMPLE_RATE == 16000 else 256
 
@@ -266,7 +269,9 @@ class WhisperTranscriber:
         self.backend = backend
         self.chinese_conversion = chinese_conversion
         self._hard_limit_seconds = WHISPER_HARD_LIMIT_SECONDS
-        self._soft_limit_seconds = WHISPER_SOFT_LIMIT_SECONDS
+        self._soft_limit_seconds: float | None = WHISPER_SOFT_LIMIT_SECONDS
+        self.pipe: Any = None
+        self._moonshine_transcriber: Any = None
 
         # Load backend-specific model
         if self.backend == 'whisper':
@@ -287,7 +292,7 @@ class WhisperTranscriber:
     def soft_limit_seconds(self) -> float | None:
         return self._soft_limit_seconds
 
-    def _load_whisper(self):
+    def _load_whisper(self) -> None:
         """Load Whisper model via HuggingFace Transformers pipeline."""
         try:
             from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
@@ -298,6 +303,7 @@ class WhisperTranscriber:
                 "For VAD-only mode without transcription, use the 'split' command instead."
             )
 
+        assert self.model is not None
         model_id = _resolve_whisper_model_id(self.model)
         device, torch_dtype = _get_device_and_dtype()
 
@@ -319,7 +325,7 @@ class WhisperTranscriber:
 
         print(f"Whisper model loaded: {model_id} on {device}", file=sys.stderr)
 
-    def _load_moonshine(self):
+    def _load_moonshine(self) -> None:
         """Load Moonshine model via ONNX runtime."""
         from vad_transcribe_py.moonshine import resolve_model, download_model, Transcriber, SAMPLE_RATE
 

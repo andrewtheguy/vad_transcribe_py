@@ -8,13 +8,8 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
-
-# Platform-specific imports
-if sys.platform == 'win32':
-    import msvcrt
-else:
-    import fcntl
+from types import TracebackType
+from typing import IO
 
 
 class LockError(Exception):
@@ -32,7 +27,7 @@ class FileLock:
             pass
     """
 
-    def __init__(self, lock_name: str, show_name: Optional[str] = None):
+    def __init__(self, lock_name: str, show_name: str | None = None):
         """
         Initialize file lock.
 
@@ -43,7 +38,7 @@ class FileLock:
         self.lock_name = lock_name
         self.show_name = show_name
         self.lock_file_path = self._get_lock_file_path()
-        self.lock_file = None
+        self.lock_file: IO[str] | None = None
         self.acquired = False
 
     def _get_lock_file_path(self) -> Path:
@@ -54,7 +49,7 @@ class FileLock:
         filename = f"vad_transcribe_{self.lock_name}.lock"
         return Path(temp_dir) / filename
 
-    def _read_lock_pid(self) -> Optional[int]:
+    def _read_lock_pid(self) -> int | None:
         """Read PID from lock file if it exists and is currently held."""
         try:
             if self.lock_file_path.exists():
@@ -66,8 +61,11 @@ class FileLock:
             pass
         return None
 
-    def _acquire_lock_unix(self):
+    def _acquire_lock_unix(self) -> None:
         """Acquire lock using fcntl (Unix/Linux/macOS)."""
+        import fcntl
+
+        assert self.lock_file is not None
         try:
             # Try to acquire exclusive non-blocking lock
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -75,8 +73,11 @@ class FileLock:
         except (IOError, OSError):
             raise LockError("Lock already held by another process")
 
-    def _acquire_lock_windows(self):
+    def _acquire_lock_windows(self) -> None:
         """Acquire lock using msvcrt (Windows)."""
+        import msvcrt
+
+        assert self.lock_file is not None
         try:
             # Try to lock the first byte of the file
             msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_NBLCK, 1)
@@ -129,11 +130,13 @@ class FileLock:
 
             raise LockError(error_msg)
 
-    def release(self):
+    def release(self) -> None:
         """Release the lock."""
         if self.lock_file:
             try:
                 if sys.platform == 'win32' and self.acquired:
+                    import msvcrt
+
                     # Unlock on Windows
                     try:
                         msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_UNLCK, 1)
@@ -156,13 +159,13 @@ class FileLock:
         self.acquire()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> bool:
         """Context manager exit."""
         self.release()
         return False
 
 
-def acquire_lock(lock_type: str, show_name: Optional[str] = None) -> FileLock:
+def acquire_lock(lock_type: str, show_name: str | None = None) -> FileLock:
     """
     Convenience function to create and return a FileLock.
 

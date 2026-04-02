@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -26,6 +27,12 @@ _RE_CJK_SPACE = re.compile(f"(?<={_CJK})\\s+(?={_CJK})")
 
 BOS_TOKEN = 1
 EOS_TOKEN = 2
+
+
+def _run_session(session: ort.InferenceSession, feeds: dict[str, Any]) -> list[np.ndarray]:
+    """Run an ONNX inference session and return results as numpy arrays."""
+    results: list[np.ndarray] = session.run(None, feeds)  # pyright: ignore[reportAssignmentType]
+    return results
 
 
 def _make_session(path: str) -> ort.InferenceSession:
@@ -122,13 +129,13 @@ class _NonStreamingEngine:
         """Transcribe an audio array (1-D float32, 16kHz) to text."""
         audio_input = audio[np.newaxis, :].astype(np.float32)
 
-        enc_feeds = {self._enc_input_name: audio_input}
+        enc_feeds: dict[str, Any] = {self._enc_input_name: audio_input}
         enc_input_names = {inp.name for inp in self.encoder.get_inputs()}
         if "attention_mask" in enc_input_names:
             enc_feeds["attention_mask"] = np.ones(
                 audio_input.shape, dtype=np.int64
             )
-        enc_out = self.encoder.run(None, enc_feeds)
+        enc_out = _run_session(self.encoder, enc_feeds)
         hidden_states = enc_out[0]
 
         enc_frames = hidden_states.shape[1]
@@ -170,7 +177,7 @@ class _NonStreamingEngine:
                     (1, enc_frames), dtype=np.int64
                 )
 
-            dec_out = self.decoder.run(None, feeds)
+            dec_out = _run_session(self.decoder, feeds)
             logits = dec_out[0]
             next_token = int(np.argmax(logits[0, -1]))
 
@@ -311,28 +318,29 @@ class _StreamingEngine:
             elif "frame_count" in nl and "out" not in nl:
                 feeds[name] = frame_count
 
-        out = self.frontend.run(None, feeds)
+        out = _run_session(self.frontend, feeds)
         features = out[0]
         return features[0]
 
     def _run_encoder(self, features: np.ndarray) -> np.ndarray:
         enc_input = features[np.newaxis, :]
         enc_input_name = self.encoder.get_inputs()[0].name
-        out = self.encoder.run(None, {enc_input_name: enc_input})
+        out = _run_session(self.encoder, {enc_input_name: enc_input})
         encoded = out[0]
         return encoded[0]
 
     def _run_adapter(self, encoded: np.ndarray) -> np.ndarray:
-        adapter_inputs = {inp.name: None for inp in self.adapter.get_inputs()}
+        adapter_inputs: dict[str, Any] = {}
 
-        for name in adapter_inputs:
+        for inp in self.adapter.get_inputs():
+            name = inp.name
             nl = name.lower()
             if "encoded" in nl or "input" in nl:
                 adapter_inputs[name] = encoded[np.newaxis, :]
             elif "pos" in nl or "offset" in nl:
                 adapter_inputs[name] = np.array([0], dtype=np.int64)
 
-        out = self.adapter.run(None, adapter_inputs)
+        out = _run_session(self.adapter, adapter_inputs)
         memory = out[0]
         return memory[0]
 
@@ -341,7 +349,7 @@ class _StreamingEngine:
     ) -> tuple[np.ndarray, np.ndarray]:
         mem_input = memory[np.newaxis, :]
         input_name = self.cross_kv.get_inputs()[0].name
-        out = self.cross_kv.run(None, {input_name: mem_input})
+        out = _run_session(self.cross_kv, {input_name: mem_input})
         k_cross = out[0]
         v_cross = out[1]
         return k_cross, v_cross
@@ -374,7 +382,7 @@ class _StreamingEngine:
                 im["v_cross"]: v_cross,
             }
 
-            dec_out = self.decoder_kv.run(None, feeds)
+            dec_out = _run_session(self.decoder_kv, feeds)
 
             logits = dec_out[om["logits"]]
             next_token = int(np.argmax(logits[0, -1]))
