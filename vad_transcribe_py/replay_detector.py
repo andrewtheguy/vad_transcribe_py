@@ -136,7 +136,7 @@ def cluster_matches(matches: list[ReplayMatch], window_size: int) -> list[Replay
         # Collect all occurrences that overlap with this match
         occurrence_indices: set[int] = {match.a_seg_idx, match.b_seg_idx}
         best_sim = match.similarity
-        best_text = match.a_text if match.similarity > 0.5 else match.b_text
+        best_text = match.a_text
 
         # Find other matches that share a segment index (within window overlap)
         for other in matches:
@@ -198,12 +198,14 @@ def detect_replays(
 
     Args:
         jsonl_path: Path to the JSONL transcript file.
-        window_sizes: List of window sizes to try (default: [3, 5]).
+        window_sizes: List of window sizes to try
+            (default: [DEFAULT_WINDOW_SIZE]).
         threshold: Minimum similarity ratio (0.0-1.0) to flag as replay.
         min_chars: Minimum combined character count for a window.
 
     Returns:
-        List of ReplayMatch objects, sorted by similarity descending.
+        List of ReplayMatch objects, deduplicated and sorted by similarity
+        descending.
     """
     if window_sizes is None:
         window_sizes = [DEFAULT_WINDOW_SIZE]
@@ -218,10 +220,28 @@ def detect_replays(
         matches = find_replay_matches(windows, ws, threshold)
         all_matches.extend(matches)
 
-    # Deduplicate: if a smaller window match is fully contained in a larger
-    # window match, keep only the larger one (higher confidence)
+    # Sort by similarity descending so higher-confidence matches are kept first
     all_matches.sort(key=lambda m: m.similarity, reverse=True)
-    return all_matches
+
+    # Deduplicate: drop matches whose A and B spans are both fully contained
+    # within a previously kept (higher-confidence) match
+    deduped: list[ReplayMatch] = []
+    for m in all_matches:
+        m_a_end = m.a_seg_idx + m.window_size
+        m_b_end = m.b_seg_idx + m.window_size
+        contained = False
+        for kept in deduped:
+            k_a_end = kept.a_seg_idx + kept.window_size
+            k_b_end = kept.b_seg_idx + kept.window_size
+            a_contained = kept.a_seg_idx <= m.a_seg_idx and m_a_end <= k_a_end
+            b_contained = kept.b_seg_idx <= m.b_seg_idx and m_b_end <= k_b_end
+            if a_contained and b_contained:
+                contained = True
+                break
+        if not contained:
+            deduped.append(m)
+
+    return deduped
 
 
 def format_report(

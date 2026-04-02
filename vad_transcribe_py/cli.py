@@ -681,6 +681,9 @@ def main():
 
     try:
         if args.action == 'detect-replay':
+            if not os.path.exists(args.file):
+                logger.error("File not found: %s", args.file)
+                sys.exit(1)
             from vad_transcribe_py.replay_detector import detect_replays, format_report
             matches = detect_replays(
                 args.file,
