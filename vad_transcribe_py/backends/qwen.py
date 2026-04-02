@@ -71,6 +71,9 @@ class QwenASRBackend(TranscriberBase):
                 "Install with: uv pip install qwen-asr"
             )
 
+        #import transformers
+        #transformers.logging.set_verbosity_error()
+
         device, torch_dtype = _get_device_and_dtype()
 
         self._qwen_model = Qwen3ASRModel.from_pretrained(
