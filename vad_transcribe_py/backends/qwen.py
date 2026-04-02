@@ -95,4 +95,13 @@ class QwenASRBackend(TranscriberBase):
 
         text: str = results[0].text
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-        return [self._make_segment(text, start_offset, end_time)]
+        result = [self._make_segment(text, start_offset, end_time)]
+
+        # Clear retained rope_deltas to prevent memory growth across segments.
+        # The model stores this tensor as instance state during generate() and
+        # never clears it, which keeps old attention mask tensors alive.
+        thinker = self._qwen_model.model.thinker
+        if hasattr(thinker, 'rope_deltas'):
+            thinker.rope_deltas = None
+
+        return result
