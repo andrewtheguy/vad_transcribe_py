@@ -31,6 +31,8 @@ def _get_device_and_dtype() -> tuple[str, torch.dtype]:
     """Auto-detect best device and dtype for Qwen3-ASR."""
     if torch.cuda.is_available():
         return "cuda:0", torch.bfloat16
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps", torch.float16
     else:
         return "cpu", torch.float32
 
@@ -117,11 +119,15 @@ class QwenASRBackend(TranscriberBase):
         """Transcribe audio and return a single segment."""
         qwen_language = _LANGUAGE_MAP.get(self.language)
 
-        results = self._qwen_model.transcribe(
-            audio=(audio, TARGET_SAMPLE_RATE),
-            language=qwen_language,
-        )
+        try:
+            results = self._qwen_model.transcribe(
+                audio=(audio, TARGET_SAMPLE_RATE),
+                language=qwen_language,
+            )
 
-        text: str = results[0].text
-        end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-        return [self._make_segment(text, start_offset, end_time)]
+            text: str = results[0].text
+            end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
+            return [self._make_segment(text, start_offset, end_time)]
+        finally:
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
