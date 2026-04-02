@@ -1,32 +1,24 @@
+import logging
 import struct
 import subprocess
 import sys
 from collections.abc import Generator
-from dataclasses import dataclass
-from typing import Any, BinaryIO, Literal
+from typing import BinaryIO
 
 import numpy as np
 import numpy.typing as npt
-import torch
 
-from zhconv_rs import zhconv
-
-from vad_transcribe_py.vad_processor import (
-    WHISPER_HARD_LIMIT_SECONDS,
-    WHISPER_SOFT_LIMIT_SECONDS,
+from vad_transcribe_py._types import (
+    TARGET_SAMPLE_RATE as TARGET_SAMPLE_RATE,
+    AudioTranscriber as AudioTranscriber,
+    ChineseConversion as ChineseConversion,
+    TranscribedSegment as TranscribedSegment,
+    TranscriberBase as TranscriberBase,
+    format_timestamp as format_timestamp,
+    process_text as process_text,
 )
 
-TARGET_SAMPLE_RATE = 16000
-ChineseConversion = Literal['none', 'simplified', 'traditional']
-
-
-def format_timestamp(seconds: float) -> str:
-    """Format seconds to hh:mm:ss.ms format."""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    ms = int((seconds % 1) * 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
+logger = logging.getLogger(__name__)
 
 
 def _validate_wav_header(stream: BinaryIO) -> tuple[int, int, int, int, int]:
@@ -134,7 +126,7 @@ def stream_stdin_wav(
     Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV (mono, 16kHz).
     """
     audio_format, bits_per_sample, *_ = _validate_wav_header(sys.stdin.buffer)
-    print("Reading WAV from stdin", file=sys.stderr)
+    logger.info("Reading WAV from stdin")
     yield from _stream_wav_as_float32(sys.stdin.buffer, audio_format, bits_per_sample, chunk_bytes)
 
 
@@ -160,7 +152,7 @@ def ffmpeg_stream_float32(
         try:
             with open(full_audio_path, 'rb') as f:
                 audio_format, bits_per_sample, *_ = _validate_wav_header(f)
-                print(f"Direct WAV read: {full_audio_path}", file=sys.stderr)
+                logger.info("Direct WAV read: %s", full_audio_path)
                 yield from _stream_wav_as_float32(f, audio_format, bits_per_sample, chunk_bytes)
                 return
         except (OSError, ValueError):
@@ -211,205 +203,28 @@ def get_window_size_samples() -> int:
     return 512 if TARGET_SAMPLE_RATE == 16000 else 256
 
 
-@dataclass
-class TranscribedSegment:
-    """Represents a transcribed audio segment."""
-    text: str
-    start: float
-    end: float
-
-
-def _get_device_and_dtype():
-    """Auto-detect best device and dtype."""
-    if torch.cuda.is_available():
-        return "cuda:0", torch.float16
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps", torch.float16
-    else:
-        return "cpu", torch.float32
-
-
-def _resolve_whisper_model_id(model: str) -> str:
-    """Resolve short whisper model name to full HuggingFace model ID."""
-    if '/' in model:
-        return model
-    return f"openai/whisper-{model}"
-
-
-WHISPER_DEFAULT_MODEL = "large-v3-turbo"
-
-
 def create_transcriber(
     language: str,
     model: str | None = None,
-    backend: Literal['whisper', 'moonshine'] = 'whisper',
+    backend: str = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
-) -> 'AudioTranscriber':
-    """Factory function to create a AudioTranscriber instance."""
-    return AudioTranscriber(
-        language=language,
-        model=model,
-        backend=backend,
-        chinese_conversion=chinese_conversion,
-    )
+) -> AudioTranscriber:
+    """Factory function to create a transcriber backend instance."""
+    if backend == 'whisper':
+        from vad_transcribe_py.backends.whisper import WHISPER_DEFAULT_MODEL, WhisperBackend
 
-
-class AudioTranscriber:
-    """Transcriber supporting Whisper (HF Transformers) and Moonshine (ONNX) backends."""
-
-    def __init__(
-        self,
-        language: str,
-        model: str | None = None,
-        backend: Literal['whisper', 'moonshine'] = 'whisper',
-        chinese_conversion: ChineseConversion = 'none',
-    ):
-        self.language = language
-        self.model = model
-        self.backend = backend
-        self.chinese_conversion = chinese_conversion
-        self._hard_limit_seconds = WHISPER_HARD_LIMIT_SECONDS
-        self._soft_limit_seconds: float | None = WHISPER_SOFT_LIMIT_SECONDS
-        self.pipe: Any = None
-        self._moonshine_transcriber: Any = None
-
-        # Load backend-specific model
-        if self.backend == 'whisper':
-            if self.model is None:
-                self.model = WHISPER_DEFAULT_MODEL
-            print(f"Loading {self.model} model...", file=sys.stderr)
-            self._load_whisper()
-        elif self.backend == 'moonshine':
-            self._load_moonshine()  # handles model=None via resolve_model
-        else:
-            raise ValueError(f"Unsupported backend: {self.backend}")
-
-    @property
-    def hard_limit_seconds(self) -> int:
-        return self._hard_limit_seconds
-
-    @property
-    def soft_limit_seconds(self) -> float | None:
-        return self._soft_limit_seconds
-
-    def _load_whisper(self) -> None:
-        """Load Whisper model via HuggingFace Transformers pipeline."""
-        try:
-            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
-        except ImportError:
-            raise ImportError(
-                "transformers is not installed. "
-                "To use transcription, install with: uv pip install -e '.[transcribe]'. "
-                "For VAD-only mode without transcription, use the 'split' command instead."
-            )
-
-        assert self.model is not None
-        model_id = _resolve_whisper_model_id(self.model)
-        device, torch_dtype = _get_device_and_dtype()
-
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            model_id, dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
+        return WhisperBackend(
+            language=language,
+            model=model if model is not None else WHISPER_DEFAULT_MODEL,
+            chinese_conversion=chinese_conversion,
         )
-        model.to(device)
+    elif backend == 'moonshine':
+        from vad_transcribe_py.backends.moonshine import MoonshineBackend
 
-        processor = AutoProcessor.from_pretrained(model_id)
-
-        self.pipe = pipeline(
-            "automatic-speech-recognition",
+        return MoonshineBackend(
+            language=language,
             model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            dtype=torch_dtype,
-            device=device,
+            chinese_conversion=chinese_conversion,
         )
-
-        print(f"Whisper model loaded: {model_id} on {device}", file=sys.stderr)
-
-    def _load_moonshine(self) -> None:
-        """Load Moonshine model via ONNX runtime."""
-        from vad_transcribe_py.moonshine import resolve_model, download_model, Transcriber, SAMPLE_RATE
-
-        # resolve_model handles default model selection per language when model is None
-        name, language, arch, is_streaming, url, hard_limit, soft_limit = resolve_model(
-            self.language, self.model
-        )
-        self.model = name
-        self._hard_limit_seconds = hard_limit
-        self._soft_limit_seconds = soft_limit
-
-        print(f"Loading {name} model...", file=sys.stderr)
-        model_dir = download_model(language, arch, url)
-
-        # Max tokens = audio_samples * token_limit_factor. Streaming models produce
-        # ~6.5 tokens/sec, non-streaming ~13 tokens/sec. Dividing by SAMPLE_RATE
-        # converts from per-second to per-sample. (Source: moonshine-ai/moonshine)
-        token_limit_factor = 6.5 / SAMPLE_RATE if is_streaming else 13 / SAMPLE_RATE
-        strip_cjk_spaces = self.language in ('zh', 'ja', 'ko')
-
-        self._moonshine_transcriber = Transcriber(
-            model_dir=model_dir,
-            model_arch=arch,
-            is_streaming=is_streaming,
-            strip_cjk_spaces=strip_cjk_spaces,
-            token_limit_factor=token_limit_factor,
-        )
-
-        print(f"Moonshine model loaded: {name}", file=sys.stderr)
-
-    def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
-        """
-        Transcribe audio and return segments.
-
-        Args:
-            audio: Float32 numpy array normalized to [-1.0, 1.0]
-            start_offset: Start time offset for the audio segment
-
-        Returns:
-            List of TranscribedSegment objects
-        """
-        results: list[TranscribedSegment] = []
-
-        if self.backend == 'whisper':
-            result = self.pipe(
-                audio.copy(),
-                return_timestamps=True,
-                generate_kwargs={"language": self.language},
-            )
-
-            for chunk in result["chunks"]:
-                chunk_start = start_offset + chunk["timestamp"][0]
-                chunk_end = start_offset + (chunk["timestamp"][1] if chunk["timestamp"][1] is not None else len(audio) / TARGET_SAMPLE_RATE)
-                start_fmt = format_timestamp(chunk_start)
-                end_fmt = format_timestamp(chunk_end)
-                print("[%s -> %s] %s" % (start_fmt, end_fmt, chunk["text"]), file=sys.stderr)
-                text = self._process_text(chunk["text"])
-                results.append(TranscribedSegment(
-                    text=text,
-                    start=chunk_start,
-                    end=chunk_end,
-                ))
-
-        elif self.backend == 'moonshine':
-            text = self._moonshine_transcriber.transcribe_chunk(audio)
-
-            end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-            start_fmt = format_timestamp(start_offset)
-            end_fmt = format_timestamp(end_time)
-            print("[%s -> %s] %s" % (start_fmt, end_fmt, text), file=sys.stderr)
-            text = self._process_text(text)
-            results.append(TranscribedSegment(
-                text=text,
-                start=start_offset,
-                end=end_time,
-            ))
-
-        return results
-
-    def _process_text(self, text: str) -> str:
-        """Process text for storage (e.g., convert Chinese variants)."""
-        if self.language in ['yue', 'zh'] and self.chinese_conversion != 'none':
-            if self.chinese_conversion == 'traditional':
-                return zhconv(text, 'zh-Hant')
-            elif self.chinese_conversion == 'simplified':
-                return zhconv(text, 'zh-Hans')
-        return text
+    else:
+        raise ValueError(f"Unsupported backend: {backend}")
