@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 WHISPER_DEFAULT_MODEL = "large-v3-turbo"
 
-# Map language codes to the language token the model expects
-_WHISPER_LANGUAGE_MAP: dict[str, str] = {
-    "yue": "zh",
+# Models that need language code remapping (e.g. yue → zh)
+_MODEL_LANGUAGE_OVERRIDES: dict[str, dict[str, str]] = {
+    "alvanlii/whisper-small-cantonese": {"yue": "zh"},
 }
 
 
@@ -106,7 +106,7 @@ class WhisperBackend(TranscriberBase):
         result = self.pipe(
             audio.copy(),
             return_timestamps=True,
-            generate_kwargs={"language": _WHISPER_LANGUAGE_MAP.get(self.language, self.language)},
+            generate_kwargs={"language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language)},
         )
 
         return [
