@@ -129,5 +129,6 @@ class QwenASRBackend(TranscriberBase):
             end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
             return [self._make_segment(text, start_offset, end_time)]
         finally:
+            # qwen-asr doesn't release KV-cache after generate(), causing MPS memory leak
             if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 torch.mps.empty_cache()
