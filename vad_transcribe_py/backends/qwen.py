@@ -13,12 +13,14 @@ from vad_transcribe_py._types import (
     TranscribedSegment,
     TranscriberBase,
 )
+from vad_transcribe_py.vad_processor import (
+    QWEN_ASR_HARD_LIMIT_SECONDS,
+    QWEN_ASR_SOFT_LIMIT_SECONDS,
+)
 
 logger = logging.getLogger(__name__)
 
 QWEN_ASR_DEFAULT_MODEL = "Qwen/Qwen3-ASR-0.6B"
-QWEN_ASR_HARD_LIMIT_SECONDS = 30
-QWEN_ASR_SOFT_LIMIT_SECONDS = 6.0
 
 _LANGUAGE_MAP: dict[str, str] = {
     "en": "English",
@@ -131,10 +133,9 @@ class QwenASRBackend(TranscriberBase):
             return [self._make_segment(text, start_offset, end_time)]
         finally:
             # qwen-asr doesn't clean up after generate(), causing MPS memory leak:
-            # - rope_deltas persists on the thinker module between calls
             # - KV-cache isn't released from the MPS allocator
-            thinker = self._qwen_model.model.thinker
-            if hasattr(thinker, "rope_deltas"):
-                thinker.rope_deltas = None
+            #thinker = self._qwen_model.model.thinker
+            #if hasattr(thinker, "rope_deltas"):
+            #    thinker.rope_deltas = None
             if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 torch.mps.empty_cache()
