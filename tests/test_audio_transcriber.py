@@ -169,6 +169,12 @@ def test_qwen_uses_non_streaming_transformers_backend(monkeypatch):
             return self
 
     class StubProcessor:
+        def __init__(self):
+            self.tokenizer = SimpleNamespace(
+                eos_token_id=101,
+                pad_token_id=102,
+            )
+
         def __call__(self, text, audio, return_tensors, padding):
             assert text == ["prompt:English"]
             assert len(audio) == 1
@@ -238,7 +244,9 @@ def test_qwen_uses_non_streaming_transformers_backend(monkeypatch):
     assert StubQwen3ASRModel.from_pretrained_calls
     assert StubQwen3ASRModel.llm_called is False
     assert StubQwen3ASRModel.generate_calls
+    assert StubQwen3ASRModel.generate_calls[0]["eos_token_id"] == [101, 102]
     assert StubQwen3ASRModel.generate_calls[0]["return_dict_in_generate"] is False
+    assert backend._eos_token_ids == [101, 102]
     assert backend._qwen_model.backend == "transformers"
     assert backend._qwen_model.model.thinker.rope_deltas is None
     assert segments[0].text == "hello"

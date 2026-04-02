@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 QWEN_ASR_DEFAULT_MODEL = "Qwen/Qwen3-ASR-0.6B"
 QWEN_ASR_HARD_LIMIT_SECONDS = 30
 QWEN_ASR_SOFT_LIMIT_SECONDS = 6.0
-QWEN_ASR_EOS_TOKEN_IDS = [151645, 151643]
 
 _LANGUAGE_MAP: dict[str, str] = {
     "en": "English",
@@ -46,6 +45,22 @@ def _is_cuda_device(device: Any) -> bool:
     return str(device).startswith("cuda")
 
 
+def _resolve_eos_token_ids(processor: Any) -> list[int]:
+    """Resolve Qwen EOS token ids from the runtime tokenizer."""
+    tokenizer = processor.tokenizer
+    token_ids: list[int] = []
+
+    for attr in ("eos_token_id", "pad_token_id"):
+        token_id = getattr(tokenizer, attr, None)
+        if isinstance(token_id, int) and token_id not in token_ids:
+            token_ids.append(token_id)
+
+    if not token_ids:
+        raise RuntimeError("Qwen3-ASR tokenizer does not expose EOS token ids")
+
+    return token_ids
+
+
 class QwenASRBackend(TranscriberBase):
     """Transcriber backend using Qwen3-ASR."""
 
@@ -59,6 +74,7 @@ class QwenASRBackend(TranscriberBase):
         self.model = model
         self._qwen_model: Any = None
         self._parse_asr_output: Any = None
+        self._eos_token_ids: list[int] = []
 
         logger.info("Loading %s model...", self.model)
         self._load_model()
@@ -100,6 +116,7 @@ class QwenASRBackend(TranscriberBase):
                 "Qwen3-ASR must use the non-streaming transformers backend; "
                 f"got {backend!r}"
             )
+        self._eos_token_ids = _resolve_eos_token_ids(self._qwen_model.processor)
 
         logger.info(
             "Qwen3-ASR model loaded: %s on %s (mode=non-streaming)",
@@ -120,7 +137,7 @@ class QwenASRBackend(TranscriberBase):
                 return_tensors="pt",
                 padding=True,
             )
-            inputs = inputs.to(self._qwen_model.device).to(self._qwen_model.dtype)
+            inputs = inputs.to(device=self._qwen_model.device, dtype=self._qwen_model.dtype)
 
             sequences = thinker.generate(
                 input_ids=inputs["input_ids"],
@@ -128,7 +145,7 @@ class QwenASRBackend(TranscriberBase):
                 input_features=inputs["input_features"],
                 feature_attention_mask=inputs["feature_attention_mask"],
                 max_new_tokens=self._qwen_model.max_new_tokens,
-                eos_token_id=QWEN_ASR_EOS_TOKEN_IDS,
+                eos_token_id=self._eos_token_ids,
                 return_dict_in_generate=False,
             )
 
