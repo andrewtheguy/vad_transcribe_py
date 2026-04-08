@@ -653,6 +653,10 @@ def main():
     parser_transcribe.add_argument('--threads', type=int, default=None,
                                    help='Number of CPU threads for inference '
                                         '(default: min(2, cpu_count))')
+    parser_transcribe.add_argument('--no-condition', action='store_true',
+                                   help='Disable conditioning on previous segment output '
+                                        '(whisper backend only). By default, each segment '
+                                        'is conditioned on the prior transcript for consistency.')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
@@ -687,6 +691,7 @@ def main():
                         args.language, args.model, args.backend,
                         args.chinese_conversion,
                         num_threads=num_threads,
+                        condition=not args.no_condition,
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
                         transcriber,
@@ -703,6 +708,7 @@ def main():
                         args.language, args.model, args.backend,
                         args.chinese_conversion,
                         num_threads=num_threads,
+                        condition=not args.no_condition,
                     )
 
                     # Determine output destination
