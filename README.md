@@ -3,7 +3,7 @@
 **VAD Transcribe** is a file-based audio transcription tool that combines voice activity detection (VAD) with AI-powered transcription. It uses [silero-vad](https://github.com/snakers4/silero-vad) to intelligently detect speech segments and offers two transcription backends:
 
 - [Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) (default) - OpenAI's Whisper large-v3-turbo via HuggingFace Transformers, multilingual ASR
-- [Moonshine](https://github.com/usefulsensors/moonshine) - Fast ONNX-based ASR models (English: streaming, Chinese: non-streaming). Auto-downloaded on first use.
+- [Moonshine](https://github.com/usefulsensors/moonshine) - Fast ONNX-based ASR models (English: streaming, Chinese/Spanish: non-streaming). Auto-downloaded on first use.
 
 ## Features
 
@@ -112,7 +112,7 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--stdin`: Read WAV audio (mono, 16kHz) from stdin (mutually exclusive with --file). Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV. Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (default: `en`)
-- `--model MODEL`: Model name (auto-selected if omitted). For whisper: HuggingFace short name or full ID (default: `large-v3-turbo` → `openai/whisper-large-v3-turbo`). For moonshine: use short names like `small-streaming`, `base`, `tiny` — these map to language-specific variants (e.g., `small-streaming` → `small-streaming-en`). Defaults: `small-streaming` (English), `base` (Chinese).
+- `--model MODEL`: Model name (auto-selected if omitted). For whisper: HuggingFace short name or full ID (default: `large-v3-turbo` → `openai/whisper-large-v3-turbo`). For moonshine: use short names like `small-streaming`, `base`, `tiny` — these map to language-specific variants (e.g., `small-streaming` → `small-streaming-en`). Defaults: `small-streaming` (English), `base` (Chinese/Spanish).
 - `--backend {whisper, moonshine, qwen-asr}`: Transcription backend (default: `whisper`)
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 
@@ -149,6 +149,9 @@ uv run vad-transcribe-py transcribe --file audio.wav --backend moonshine --langu
 
 # Chinese — uses base by default
 uv run vad-transcribe-py transcribe --file audio.wav --backend moonshine --language zh
+
+# Spanish — uses base by default
+uv run vad-transcribe-py transcribe --file audio.wav --backend moonshine --language es
 
 # Or specify model explicitly
 uv run vad-transcribe-py transcribe --file audio.wav --backend moonshine --model tiny --language en
@@ -260,10 +263,10 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 ## Performance Notes
 
 - **Whisper** backend: Best for multilingual transcription, 30-second hard limit per segment
-- **Moonshine** backend: Fast ONNX inference. English (streaming, 60s hard limit), Chinese (non-streaming, 9s hard limit)
+- **Moonshine** backend: Fast ONNX inference. English (streaming, 60s hard limit), Chinese/Spanish (non-streaming, 9s hard limit)
 - Whisper device auto-detected: CUDA > MPS > CPU. Moonshine uses ONNX runtime (CUDA or CPU)
 - Larger Whisper models (e.g., `large-v3`) provide better accuracy but require more memory
-- Moonshine supports English and Chinese only
+- Moonshine supports English, Chinese, and Spanish only
 
 ## Development
 

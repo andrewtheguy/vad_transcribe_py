@@ -147,6 +147,13 @@ def test_moonshine_resolve_model():
     assert hard_limit == MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS
     assert soft_limit == 6.0
 
+    # Spanish defaults to base (non-streaming)
+    name, lang, arch, is_streaming, url, hard_limit, soft_limit = resolve_model("es")
+    assert name == "base-es"
+    assert is_streaming is False
+    assert hard_limit == MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS
+    assert soft_limit == 6.0
+
     # Explicit model
     name, *_ = resolve_model("en", "tiny")
     assert name == "tiny-en"
