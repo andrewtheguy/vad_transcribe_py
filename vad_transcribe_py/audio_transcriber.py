@@ -210,7 +210,7 @@ def create_transcriber(
     chinese_conversion: ChineseConversion = 'none',
     num_threads: int | None = None,
     condition: bool = True,
-    sub_timestamps: bool = False,
+    sub_timestamps: bool = True,
 ) -> AudioTranscriber:
     """Factory function to create a transcriber backend instance."""
     if backend == 'whisper':

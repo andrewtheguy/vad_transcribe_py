@@ -55,7 +55,7 @@ class WhisperBackend(TranscriberBase):
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
         condition: bool = True,
-        sub_timestamps: bool = False,
+        sub_timestamps: bool = True,
     ):
         super().__init__(language, chinese_conversion, num_threads)
         self.model = model
