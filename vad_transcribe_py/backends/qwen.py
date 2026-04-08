@@ -26,6 +26,7 @@ _LANGUAGE_MAP: dict[str, str] = {
     "en": "English",
     "zh": "Chinese",
     "yue": "Cantonese",
+    "es": "Spanish",
 }
 
 

@@ -1,6 +1,6 @@
 """Model registry and constants for Moonshine ONNX models.
 
-Trimmed to English (streaming) and Chinese (non-streaming) only.
+Trimmed to English (streaming), Chinese and Spanish (non-streaming).
 """
 
 from enum import IntEnum
@@ -107,6 +107,16 @@ MODEL_INFO: dict[str, _LanguageInfo] = {
                 "tiny-zh",
                 ModelArch.TINY,
                 "https://download.moonshine.ai/model/tiny-zh/quantized/tiny-zh",
+            ),
+        ],
+    },
+    "es": {
+        "english_name": "Spanish",
+        "models": [
+            _moonshine_model(
+                "base-es",
+                ModelArch.BASE,
+                "https://download.moonshine.ai/model/base-es/quantized/base-es",
             ),
         ],
     },
