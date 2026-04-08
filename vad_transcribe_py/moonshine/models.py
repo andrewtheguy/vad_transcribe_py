@@ -63,7 +63,7 @@ def _moonshine_model(
         "soft_max_speech_seconds": MOONSHINE_STREAMING_SOFT_LIMIT_SECONDS if is_streaming else MOONSHINE_NON_STREAMING_SOFT_LIMIT_SECONDS,
     }
 
-# https://github.com/moonshine-ai/moonshine/blob/main/python/src/moonshine_voice/download.py
+# https://github.com/moonshine-ai/moonshine/blob/main/python/src/moonshine_voice/download.py for more
 MODEL_INFO: dict[str, _LanguageInfo] = {
     "en": {
         "english_name": "English",
