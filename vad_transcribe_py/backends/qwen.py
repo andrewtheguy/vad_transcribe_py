@@ -12,6 +12,7 @@ from vad_transcribe_py._types import (
     ChineseConversion,
     TranscribedSegment,
     TranscriberBase,
+    is_repetitive,
 )
 from vad_transcribe_py.vad_processor import (
     QWEN_ASR_HARD_LIMIT_SECONDS,
@@ -140,8 +141,10 @@ class QwenASRBackend(TranscriberBase):
             )
 
             text: str = results[0].text
-            if self._condition and text.strip():
+            if self._condition and text.strip() and not is_repetitive(text.strip()):
                 self._previous_text = text.strip()
+            elif self._condition and is_repetitive(text.strip()):
+                self._previous_text = ""
             end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
             return [self._make_segment(text, start_offset, end_time)]
         finally:

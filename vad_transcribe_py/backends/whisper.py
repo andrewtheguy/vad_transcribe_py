@@ -12,6 +12,7 @@ from vad_transcribe_py._types import (
     ChineseConversion,
     TranscribedSegment,
     TranscriberBase,
+    is_repetitive,
 )
 from vad_transcribe_py.vad_processor import (
     WHISPER_HARD_LIMIT_SECONDS,
@@ -142,7 +143,9 @@ class WhisperBackend(TranscriberBase):
         # Update prompt with this segment's output for next-segment conditioning
         if self._condition and segments:
             output_text = " ".join(seg.text for seg in segments).strip()
-            if output_text:
+            if output_text and not is_repetitive(output_text):
                 self._prompt_ids = self._processor.get_prompt_ids(output_text, return_tensors="pt").to(self._device)
+            elif is_repetitive(output_text):
+                self._prompt_ids = None
 
         return segments

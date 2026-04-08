@@ -32,6 +32,27 @@ class TranscribedSegment:
     end: float
 
 
+_REPETITION_THRESHOLD = 0.3
+
+
+def is_repetitive(text: str) -> bool:
+    """Detect repetitive text that would degrade conditioning quality."""
+    if not text:
+        return False
+
+    # Word-level repetition (covers space-separated languages)
+    words = text.lower().split()
+    if len(words) >= 4 and len(set(words)) / len(words) < _REPETITION_THRESHOLD:
+        return True
+
+    # CJK character-level repetition
+    cjk_chars = [c for c in text if '\u4e00' <= c <= '\u9fff' or '\u3400' <= c <= '\u4dbf']
+    if len(cjk_chars) >= 4 and len(set(cjk_chars)) / len(cjk_chars) < _REPETITION_THRESHOLD:
+        return True
+
+    return False
+
+
 def process_text(text: str, language: str, chinese_conversion: ChineseConversion) -> str:
     """Process text for storage (e.g., convert Chinese variants)."""
     if language in ['yue', 'zh'] and chinese_conversion != 'none':
