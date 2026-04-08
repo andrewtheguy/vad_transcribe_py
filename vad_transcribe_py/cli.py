@@ -260,10 +260,10 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> No
     """Write a single transcription segment as JSONL to the output file."""
     line = json.dumps({
         "type": "transcription",
-        "start": segment.start,
+        "start_ms": round(segment.start * 1000),
         "start_formatted": format_timestamp(segment.start),
         "text": segment.text,
-        "end": segment.end,
+        "end_ms": round(segment.end * 1000),
         "end_formatted": format_timestamp(segment.end),
     }, ensure_ascii=False)
     output_file.write(line + "\n")
@@ -287,7 +287,7 @@ def write_jsonl_boundary(event: str, timestamp: float, output_file: IO[str]) -> 
     """
     line = json.dumps({
         "type": event,
-        "timestamp": timestamp,
+        "timestamp_ms": round(timestamp * 1000),
         "timestamp_formatted": format_timestamp(timestamp),
     }, ensure_ascii=False)
     output_file.write(line + "\n")
