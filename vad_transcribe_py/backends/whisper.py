@@ -55,11 +55,13 @@ class WhisperBackend(TranscriberBase):
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
         condition: bool = True,
+        sub_timestamps: bool = False,
     ):
         super().__init__(language, chinese_conversion, num_threads)
         self.model = model
         self.pipe: Any = None
         self._condition = condition
+        self._sub_timestamps = sub_timestamps
         self._prompt_ids: Any = None
         self._processor: Any = None
         self._device: str = "cpu"
@@ -120,18 +122,22 @@ class WhisperBackend(TranscriberBase):
 
         result = self.pipe(
             audio.copy(),
-            return_timestamps=True,
+            return_timestamps=self._sub_timestamps,
             generate_kwargs=generate_kwargs,
         )
 
-        segments = [
-            self._make_segment(
-                chunk["text"],
-                start_offset + chunk["timestamp"][0],
-                start_offset + (chunk["timestamp"][1] if chunk["timestamp"][1] is not None else len(audio) / TARGET_SAMPLE_RATE),
-            )
-            for chunk in result["chunks"]
-        ]
+        if self._sub_timestamps:
+            segments = [
+                self._make_segment(
+                    chunk["text"],
+                    start_offset + chunk["timestamp"][0],
+                    start_offset + (chunk["timestamp"][1] if chunk["timestamp"][1] is not None else len(audio) / TARGET_SAMPLE_RATE),
+                )
+                for chunk in result["chunks"]
+            ]
+        else:
+            text = result["text"].strip()
+            segments = [self._make_segment(text, start_offset, start_offset + len(audio) / TARGET_SAMPLE_RATE)] if text else []
 
         # Update prompt with this segment's output for next-segment conditioning
         if self._condition and segments:

@@ -659,6 +659,10 @@ def main():
                                    help='Disable conditioning on previous segment output '
                                         '(whisper backend only). By default, each segment '
                                         'is conditioned on the prior transcript for consistency.')
+    parser_transcribe.add_argument('--sub-timestamps', action='store_true',
+                                   help='Enable sub-sentence timestamp splitting '
+                                        '(whisper backend only). Splits each VAD segment '
+                                        'into multiple timestamped chunks.')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
@@ -694,6 +698,7 @@ def main():
                         args.chinese_conversion,
                         num_threads=num_threads,
                         condition=not args.no_condition,
+                        sub_timestamps=args.sub_timestamps,
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
                         transcriber,
@@ -711,6 +716,7 @@ def main():
                         args.chinese_conversion,
                         num_threads=num_threads,
                         condition=not args.no_condition,
+                        sub_timestamps=args.sub_timestamps,
                     )
 
                     # Determine output destination
