@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import uuid
 from typing import IO
 
 from dotenv import load_dotenv
@@ -260,6 +261,7 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> No
     """Write a single transcription segment as JSONL to the output file."""
     line = json.dumps({
         "type": "transcript",
+        "id": str(uuid.uuid7()),
         "start_ms": round(segment.start * 1000),
         "start_formatted": format_timestamp(segment.start),
         "text": segment.text,
