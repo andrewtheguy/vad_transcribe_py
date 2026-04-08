@@ -241,6 +241,7 @@ def create_transcriber(
             model=model if model is not None else QWEN_ASR_DEFAULT_MODEL,
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
+            condition=condition,
         )
     else:
         raise ValueError(f"Unsupported backend: {backend}")

@@ -657,7 +657,7 @@ def main():
                                         '(default: min(2, cpu_count))')
     parser_transcribe.add_argument('--no-condition', action='store_true',
                                    help='Disable conditioning on previous segment output '
-                                        '(whisper backend only). By default, each segment '
+                                        '(whisper and qwen-asr backends). By default, each segment '
                                         'is conditioned on the prior transcript for consistency.')
     parser_transcribe.add_argument('--no-sub-timestamps', action='store_true',
                                    help='Disable sub-sentence timestamp splitting '

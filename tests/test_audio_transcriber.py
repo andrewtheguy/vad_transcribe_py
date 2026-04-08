@@ -139,6 +139,35 @@ def test_create_transcriber_with_no_condition():
     assert transcriber._condition is False
 
 
+@pytest.fixture()
+def stub_qwen(monkeypatch):
+    """Stub out Qwen model loading."""
+    monkeypatch.setattr(QwenASRBackend, "_load_model", lambda _self: None)
+
+
+def test_qwen_conditioning_enabled_by_default(stub_qwen):
+    """Test that conditioning is enabled by default for qwen-asr."""
+    transcriber = QwenASRBackend(language="en")
+    assert transcriber._condition is True
+    assert transcriber._previous_text == ""
+
+
+def test_qwen_conditioning_disabled(stub_qwen):
+    """Test that conditioning can be disabled for qwen-asr."""
+    transcriber = QwenASRBackend(language="en", condition=False)
+    assert transcriber._condition is False
+
+
+def test_create_transcriber_qwen_with_condition(stub_qwen):
+    """Test that factory passes condition to qwen-asr backend."""
+    transcriber = audio_transcriber.create_transcriber(
+        language="en",
+        backend="qwen-asr",
+        condition=False,
+    )
+    assert transcriber._condition is False
+
+
 def test_hard_limit_seconds_whisper():
     """Test that whisper backend reports correct hard limit."""
     transcriber = WhisperBackend(
@@ -218,8 +247,8 @@ def test_qwen_uses_non_streaming_transformers_backend(monkeypatch):
             self.processor = StubProcessor()
             self.model = SimpleNamespace(thinker=SimpleNamespace())
 
-        def transcribe(self, audio, language):
-            type(self).transcribe_calls.append({"audio": audio, "language": language})
+        def transcribe(self, audio, language, context=""):
+            type(self).transcribe_calls.append({"audio": audio, "language": language, "context": context})
             return [SimpleNamespace(text="hello")]
 
         @classmethod

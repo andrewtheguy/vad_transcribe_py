@@ -65,9 +65,12 @@ class QwenASRBackend(TranscriberBase):
         model: str = QWEN_ASR_DEFAULT_MODEL,
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
+        condition: bool = True,
     ):
         super().__init__(language, chinese_conversion, num_threads)
         self.model = model
+        self._condition = condition
+        self._previous_text: str = ""
         self._qwen_model: Any = None
         self._parse_asr_output: Any = None
         self._eos_token_ids: list[int] = []
@@ -129,12 +132,16 @@ class QwenASRBackend(TranscriberBase):
         qwen_language = _LANGUAGE_MAP.get(self.language)
 
         try:
+            context = self._previous_text if self._condition else ""
             results = self._qwen_model.transcribe(
                 audio=(audio, TARGET_SAMPLE_RATE),
                 language=qwen_language,
+                context=context,
             )
 
             text: str = results[0].text
+            if self._condition and text.strip():
+                self._previous_text = text.strip()
             end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
             return [self._make_segment(text, start_offset, end_time)]
         finally:
