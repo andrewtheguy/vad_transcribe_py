@@ -72,11 +72,14 @@ uv run vad-transcribe-py split --file audio.wav
 To install globally and run `vad-transcribe-py` directly:
 
 ```bash
-# Full installation from GitHub (recommended)
-uv tool install "vad-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@(ref, tag or branch)"
+# From GitHub Pages index (recommended)
+uv tool install --extra-index-url https://andrewtheguy.github.io/vad_transcribe_py/simple/ 'vad-transcribe-py[transcribe]==VERSION'
 
 # VAD split only (no transcription)
-uv tool install "vad-transcribe-py @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@(ref, tag or branch)"
+uv tool install --extra-index-url https://andrewtheguy.github.io/vad_transcribe_py/simple/ 'vad-transcribe-py==VERSION'
+
+# Or from GitHub source directly
+uv tool install "vad-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@(ref, tag or branch)"
 
 # Or from local clone
 uv tool install ".[transcribe]"  # with transcription

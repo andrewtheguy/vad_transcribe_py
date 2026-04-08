@@ -10,6 +10,12 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -58,7 +64,50 @@ jobs:
           git tag "${{ steps.version.outputs.new }}"
           git push origin main --tags
 
+      - name: Build wheel
+        run: uv build
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ steps.version.outputs.new }}" --generate-notes
+        run: |
+          gh release create "${{ steps.version.outputs.new }}" \
+            --generate-notes \
+            dist/*.whl dist/*.tar.gz
+
+  deploy-pages:
+    needs: release
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate PEP 503 package index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p "_pages/simple/vad-transcribe-py"
+          {
+            echo '<!DOCTYPE html><html><body>'
+            gh release list --limit 100 --exclude-drafts --json tagName --jq '.[].tagName' | while read -r tag; do
+              gh release view "$tag" --json assets --jq '.assets[] | select(.name | endswith(".whl") or endswith(".tar.gz")) | .name' | while read -r name; do
+                echo "<a href=\"https://github.com/${GH_REPO}/releases/download/${tag}/${name}\">${name}</a><br>"
+              done
+            done
+            echo '</body></html>'
+          } > "_pages/simple/vad-transcribe-py/index.html"
+
+          cat > _pages/simple/index.html <<'HTML'
+          <!DOCTYPE html><html><body>
+          <a href="vad-transcribe-py/">vad-transcribe-py</a>
+          </body></html>
+          HTML
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_pages'
+      - id: deployment
+        uses: actions/deploy-pages@v4
