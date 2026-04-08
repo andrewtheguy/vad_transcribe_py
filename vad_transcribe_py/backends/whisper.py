@@ -54,10 +54,15 @@ class WhisperBackend(TranscriberBase):
         model: str,
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
+        condition: bool = True,
     ):
         super().__init__(language, chinese_conversion, num_threads)
         self.model = model
         self.pipe: Any = None
+        self._condition = condition
+        self._prompt_ids: Any = None
+        self._processor: Any = None
+        self._device: str = "cpu"
 
         if num_threads is not None:
             torch.set_num_threads(num_threads)
@@ -85,35 +90,41 @@ class WhisperBackend(TranscriberBase):
             )
 
         model_id = _resolve_whisper_model_id(self.model)
-        device, torch_dtype = _get_device_and_dtype()
+        self._device, torch_dtype = _get_device_and_dtype()
 
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             model_id, dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True
         )
-        model.to(device)
+        model.to(self._device)
 
-        processor = AutoProcessor.from_pretrained(model_id)
+        self._processor = AutoProcessor.from_pretrained(model_id)
 
         self.pipe = pipeline(
             "automatic-speech-recognition",
             model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
+            tokenizer=self._processor.tokenizer,
+            feature_extractor=self._processor.feature_extractor,
             dtype=torch_dtype,
-            device=device,
+            device=self._device,
         )
 
-        logger.info("Whisper model loaded: %s on %s", model_id, device)
+        logger.info("Whisper model loaded: %s on %s", model_id, self._device)
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return segments with sub-sentence timestamps."""
+        generate_kwargs: dict[str, Any] = {
+            "language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language),
+        }
+        if self._prompt_ids is not None:
+            generate_kwargs["prompt_ids"] = self._prompt_ids
+
         result = self.pipe(
             audio.copy(),
             return_timestamps=True,
-            generate_kwargs={"language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language)},
+            generate_kwargs=generate_kwargs,
         )
 
-        return [
+        segments = [
             self._make_segment(
                 chunk["text"],
                 start_offset + chunk["timestamp"][0],
@@ -121,3 +132,11 @@ class WhisperBackend(TranscriberBase):
             )
             for chunk in result["chunks"]
         ]
+
+        # Update prompt with this segment's output for next-segment conditioning
+        if self._condition and segments:
+            output_text = " ".join(seg.text for seg in segments).strip()
+            if output_text:
+                self._prompt_ids = self._processor.get_prompt_ids(output_text, return_tensors="pt").to(self._device)
+
+        return segments

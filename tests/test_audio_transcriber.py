@@ -108,6 +108,37 @@ def test_unsupported_backend():
         )
 
 
+def test_whisper_conditioning_enabled_by_default():
+    """Test that conditioning is enabled by default."""
+    transcriber = WhisperBackend(
+        language="en",
+        model="large-v3-turbo",
+    )
+    assert transcriber._condition is True
+    assert transcriber._prompt_ids is None
+
+
+def test_whisper_conditioning_disabled():
+    """Test that conditioning can be disabled."""
+    transcriber = WhisperBackend(
+        language="en",
+        model="large-v3-turbo",
+        condition=False,
+    )
+    assert transcriber._condition is False
+
+
+def test_create_transcriber_with_no_condition():
+    """Test that factory passes condition=False to whisper backend."""
+    transcriber = audio_transcriber.create_transcriber(
+        language="en",
+        model="large-v3-turbo",
+        backend="whisper",
+        condition=False,
+    )
+    assert transcriber._condition is False
+
+
 def test_hard_limit_seconds_whisper():
     """Test that whisper backend reports correct hard limit."""
     transcriber = WhisperBackend(

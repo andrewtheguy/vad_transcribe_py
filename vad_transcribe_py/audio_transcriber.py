@@ -209,6 +209,7 @@ def create_transcriber(
     backend: str = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
     num_threads: int | None = None,
+    condition: bool = True,
 ) -> AudioTranscriber:
     """Factory function to create a transcriber backend instance."""
     if backend == 'whisper':
@@ -219,6 +220,7 @@ def create_transcriber(
             model=model if model is not None else WHISPER_DEFAULT_MODEL,
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
+            condition=condition,
         )
     elif backend == 'moonshine':
         from vad_transcribe_py.backends.moonshine import MoonshineBackend

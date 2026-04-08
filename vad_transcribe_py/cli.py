@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import uuid
 from typing import IO
 
 from dotenv import load_dotenv
@@ -260,6 +261,7 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> No
     """Write a single transcription segment as JSONL to the output file."""
     line = json.dumps({
         "type": "transcript",
+        "id": str(uuid.uuid7()),
         "start_ms": round(segment.start * 1000),
         "start_formatted": format_timestamp(segment.start),
         "text": segment.text,
@@ -653,6 +655,10 @@ def main():
     parser_transcribe.add_argument('--threads', type=int, default=None,
                                    help='Number of CPU threads for inference '
                                         '(default: min(2, cpu_count))')
+    parser_transcribe.add_argument('--no-condition', action='store_true',
+                                   help='Disable conditioning on previous segment output '
+                                        '(whisper backend only). By default, each segment '
+                                        'is conditioned on the prior transcript for consistency.')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
@@ -687,6 +693,7 @@ def main():
                         args.language, args.model, args.backend,
                         args.chinese_conversion,
                         num_threads=num_threads,
+                        condition=not args.no_condition,
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
                         transcriber,
@@ -703,6 +710,7 @@ def main():
                         args.language, args.model, args.backend,
                         args.chinese_conversion,
                         num_threads=num_threads,
+                        condition=not args.no_condition,
                     )
 
                     # Determine output destination
