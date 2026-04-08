@@ -78,6 +78,9 @@ uv tool install --extra-index-url https://andrewtheguy.github.io/vad_transcribe_
 # VAD split only (no transcription)
 uv tool install --extra-index-url https://andrewtheguy.github.io/vad_transcribe_py/simple/ 'vad-transcribe-py==VERSION'
 
+# From GitHub release wheel directly
+uv tool install "vad-transcribe-py[transcribe] @ https://github.com/andrewtheguy/vad_transcribe_py/releases/download/VERSION/vad_transcribe_py-VERSION-py3-none-any.whl"
+
 # Or from GitHub source directly
 uv tool install "vad-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@(ref, tag or branch)"
 
