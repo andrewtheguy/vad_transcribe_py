@@ -653,6 +653,8 @@ def main():
     parser_transcribe.add_argument('--threads', type=int, default=None,
                                    help='Number of CPU threads for inference '
                                         '(default: min(2, cpu_count))')
+    parser_transcribe.add_argument('--single-instance', action='store_true',
+                                   help='Prevent multiple instances from running simultaneously')
 
     # SPLIT subcommand
     parser_split = subparsers.add_parser('split', help='Split audio by VAD into Opus segments')
@@ -663,12 +665,18 @@ def main():
                               help='Preserve original sample rate (default: downsample to 16kHz)')
     parser_split.add_argument('--format', type=str, choices=['opus', 'wav'], default='opus',
                               help='Output format: opus (16kbps, default) or wav')
+    parser_split.add_argument('--single-instance', action='store_true',
+                              help='Prevent multiple instances from running simultaneously')
     add_vad_arguments(parser_split)
 
     args = parser.parse_args()
 
     try:
-        with acquire_lock(args.action):
+        lock = acquire_lock(args.action) if args.single_instance else None
+        try:
+            if lock:
+                lock.acquire()
+
             if args.action == 'transcribe':
                 num_threads = args.threads if args.threads is not None else min(2, os.cpu_count() or 1)
                 logger.info("Using %d thread(s)", num_threads)
@@ -733,6 +741,9 @@ def main():
                 base_name = os.path.splitext(os.path.basename(audio_source))[0]
                 output_dir = os.path.join("tmp", base_name)
                 logger.info("Saved %d segments to %s", segment_count, output_dir)
+        finally:
+            if lock:
+                lock.release()
 
     except LockError as e:
         logger.error("%s", e)
