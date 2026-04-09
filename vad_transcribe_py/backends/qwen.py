@@ -159,7 +159,7 @@ class QwenASRBackend(TranscriberBase):
         """Transcribe audio and return a single segment."""
         qwen_language = _LANGUAGE_MAP.get(self.language) if self.language else None
         if self.language and qwen_language is None:
-            logger.warning("Unrecognized language code '%s', falling back to auto-detection", self.language)
+            raise ValueError(f"Unrecognized language code '{self.language}'. Available: {', '.join(_LANGUAGE_MAP)}")
 
         try:
             context = self._previous_text if self._condition else ""
