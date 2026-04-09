@@ -1955,7 +1955,7 @@ wheels = [
 
 [[package]]
 name = "vad-transcribe-py"
-version = "0.2.20"
+version = "0.2.21a2"
 source = { editable = "." }
 dependencies = [
     { name = "argparse" },
