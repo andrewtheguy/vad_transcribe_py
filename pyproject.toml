@@ -20,7 +20,7 @@ dependencies = [
     "filelock>=3.25.2",
     "requests>=2.32",
     "qwen-asr>=0.0.6",
-    "qwencandle==0.0.2",
+    "qwencandle==0.0.3",
 ]
 
 [project.scripts]
