@@ -645,7 +645,7 @@ def main():
                                    help='Language code for transcription (default: en)')
     parser_transcribe.add_argument('--model', type=str, default=None,
                                    help='Model name (default: large-v3-turbo for whisper, auto-selected for moonshine)')
-    parser_transcribe.add_argument('--backend', type=str, choices=['whisper', 'moonshine', 'qwen-asr'],
+    parser_transcribe.add_argument('--backend', type=str, choices=['whisper', 'moonshine', 'qwen-asr', 'qwen-asr-rs'],
                                    default='whisper', help='Transcription backend (default: whisper)')
     parser_transcribe.add_argument('--chinese-conversion', type=str,
                                    choices=['none', 'simplified', 'traditional'],
@@ -654,10 +654,11 @@ def main():
                                         'none (default), simplified (zh-Hans), traditional (zh-Hant)')
     parser_transcribe.add_argument('--threads', type=int, default=None,
                                    help='Number of CPU threads for inference '
-                                        '(default: min(2, cpu_count))')
+                                        '(default: min(2, cpu_count) for moonshine, '
+                                        'none for other backends)')
     parser_transcribe.add_argument('--no-condition', action='store_true',
                                    help='Disable conditioning on previous segment output '
-                                        '(whisper and qwen-asr backends). By default, each segment '
+                                        '(whisper, qwen-asr, and qwen-asr-rs backends). By default, each segment '
                                         'is conditioned on the prior transcript for consistency.')
     parser_transcribe.add_argument('--no-sub-timestamps', action='store_true',
                                    help='Disable sub-sentence timestamp splitting '
@@ -667,6 +668,9 @@ def main():
                                    help='Enable MPS (Apple Silicon GPU) detection for qwen-asr backend. '
                                         'WARNING: MPS has known memory leak issues with qwen-asr '
                                         'and may cause increasing memory usage over long transcriptions.')
+    parser_transcribe.add_argument('--device', type=str, default='cpu',
+                                   help='Device for qwen-asr-rs backend: cpu, metal, or cuda '
+                                        '(default: cpu)')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
@@ -692,8 +696,17 @@ def main():
                 lock.acquire()
 
             if args.action == 'transcribe':
-                num_threads = args.threads if args.threads is not None else min(2, os.cpu_count() or 1)
-                logger.info("Using %d thread(s)", num_threads)
+                if args.device != 'cpu' and args.backend != 'qwen-asr-rs':
+                    parser.error('--device is only supported by the qwen-asr-rs backend')
+
+                if args.threads is not None:
+                    num_threads = args.threads
+                elif args.backend == 'moonshine':
+                    num_threads = min(2, os.cpu_count() or 1)
+                else:
+                    num_threads = None
+                if num_threads is not None:
+                    logger.info("Using %d thread(s)", num_threads)
 
                 # Handle stdin mode separately (no validation, always VAD, always stdout)
                 if getattr(args, 'stdin', False):
@@ -704,6 +717,7 @@ def main():
                         condition=not args.no_condition,
                         sub_timestamps=not args.no_sub_timestamps,
                         enable_mps=args.enable_mps_detection,
+                        device=args.device,
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
                         transcriber,
@@ -723,6 +737,7 @@ def main():
                         condition=not args.no_condition,
                         sub_timestamps=not args.no_sub_timestamps,
                         enable_mps=args.enable_mps_detection,
+                        device=args.device,
                     )
 
                     # Determine output destination

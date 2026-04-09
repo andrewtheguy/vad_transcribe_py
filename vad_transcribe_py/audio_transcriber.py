@@ -212,6 +212,7 @@ def create_transcriber(
     condition: bool = True,
     sub_timestamps: bool = True,
     enable_mps: bool = False,
+    device: str = 'cpu',
 ) -> AudioTranscriber:
     """Factory function to create a transcriber backend instance."""
     if backend == 'whisper':
@@ -244,6 +245,17 @@ def create_transcriber(
             num_threads=num_threads,
             condition=condition,
             enable_mps=enable_mps,
+        )
+    elif backend == 'qwen-asr-rs':
+        from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
+
+        return QwenASRRsBackend(
+            language=language,
+            model=model,
+            chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
+            device=device,
+            condition=condition,
         )
     else:
         raise ValueError(f"Unsupported backend: {backend}")

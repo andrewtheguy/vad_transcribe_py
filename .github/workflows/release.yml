@@ -44,25 +44,10 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update version in pyproject.toml
+      - name: Tag and push
         run: |
-          sed -i "s/^version = \".*\"/version = \"${{ steps.version.outputs.new }}\"/" pyproject.toml
-
-      - name: Update lock file
-        run: uv lock
-
-      - name: Commit and tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml uv.lock
-          if git diff --cached --quiet; then
-            echo "Version already up to date, skipping commit"
-          else
-            git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
-          fi
           git tag "${{ steps.version.outputs.new }}"
-          git push origin "${{ steps.version.outputs.branch }}" --tags
+          git push origin --tags
 
       - name: Build wheel
         run: uv build
