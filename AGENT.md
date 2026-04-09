@@ -1,2 +1,2 @@
-- do `uv run ruff check` after changes to make sure code style is correct, then `uv run basedpyright`, and then `uv run pytest`.
+- do `uv run ruff check` after changes to make sure code style is correct, then `uv run basedpyright` with all optional packages installed first, and then `uv run pytest`.
 - no backward compatibility
