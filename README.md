@@ -38,22 +38,12 @@ sudo apt install ffmpeg
 
 ### Installation
 
-The tool has two installation modes:
-
-| Installation | Commands Available | Use Case |
-|-------------|-------------------|----------|
-| Base | `split` only | VAD-based audio splitting without transcription |
-| With `[transcribe]` | `split` + `transcribe` | Full transcription with Whisper models |
-
 ```bash
 # Clone the repository
 git clone https://github.com/andrewtheguy/vad_transcribe_py.git
 cd vad_transcribe_py
 
-# Full installation with transcription support (recommended)
-uv sync --extra transcribe
-
-# Or minimal installation (split command only, no transcription)
+# Install all dependencies
 uv sync
 ```
 
@@ -62,10 +52,8 @@ uv sync
 For development, run commands with `uv run`:
 
 ```bash
-# Requires [transcribe] extra
 uv run vad-transcribe-py transcribe --file audio.wav --language en
 
-# Works with base installation
 uv run vad-transcribe-py split --file audio.wav
 ```
 
@@ -75,27 +63,23 @@ To install globally and run `vad-transcribe-py` directly:
 
 ```bash
 # From GitHub Pages index (recommended)
-uv tool install --extra-index-url https://andrewtheguy.github.io/vad_transcribe_py/simple/ 'vad-transcribe-py[transcribe]==VERSION'
-
-# VAD split only (no transcription)
 uv tool install --extra-index-url https://andrewtheguy.github.io/vad_transcribe_py/simple/ 'vad-transcribe-py==VERSION'
 
 # From GitHub release wheel directly
-uv tool install "vad-transcribe-py[transcribe] @ https://github.com/andrewtheguy/vad_transcribe_py/releases/download/VERSION/vad_transcribe_py-VERSION-py3-none-any.whl"
+uv tool install "vad-transcribe-py @ https://github.com/andrewtheguy/vad_transcribe_py/releases/download/VERSION/vad_transcribe_py-VERSION-py3-none-any.whl"
 
 # Or from GitHub source directly
-uv tool install "vad-transcribe-py[transcribe] @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@(ref, tag or branch)"
+uv tool install "vad-transcribe-py @ git+https://github.com/andrewtheguy/vad_transcribe_py.git@(ref, tag or branch)"
 
 # Or from local clone
-uv tool install ".[transcribe]"  # with transcription
-uv tool install "."              # split only
+uv tool install "."
 ```
 
 After installation:
 
 ```bash
-vad-transcribe-py transcribe --file audio.wav --language en  # requires [transcribe]
-vad-transcribe-py split --file audio.wav                 # always available
+vad-transcribe-py transcribe --file audio.wav --language en
+vad-transcribe-py split --file audio.wav
 ```
 
 ---
@@ -287,7 +271,7 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 
 ```bash
 # Install dev dependencies
-uv sync --group dev --extra transcribe
+uv sync --group dev
 
 # Lint
 uv run ruff check

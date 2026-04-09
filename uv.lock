@@ -1463,16 +1463,16 @@ wheels = [
 
 [[package]]
 name = "qwencandle"
-version = "0.0.1"
+version = "0.0.2"
 source = { registry = "https://andrewtheguy.github.io/qwencandle/simple/" }
 dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1/qwencandle-0.0.1-cp39-abi3-macosx_11_0_arm64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1/qwencandle-0.0.1-cp39-abi3-manylinux_2_39_aarch64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1/qwencandle-0.0.1-cp39-abi3-manylinux_2_39_x86_64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1/qwencandle-0.0.1-cp39-abi3-win_amd64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.2/qwencandle-0.0.2-cp39-abi3-macosx_11_0_arm64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.2/qwencandle-0.0.2-cp39-abi3-manylinux_2_39_aarch64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.2/qwencandle-0.0.2-cp39-abi3-manylinux_2_39_x86_64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.2/qwencandle-0.0.2-cp39-abi3-win_amd64.whl" },
 ]
 
 [[package]]
@@ -2035,28 +2035,24 @@ wheels = [
 
 [[package]]
 name = "vad-transcribe-py"
-version = "0.2.23"
+version = "0.2.24"
 source = { editable = "." }
 dependencies = [
-    { name = "argparse" },
-    { name = "numpy" },
-    { name = "python-dotenv" },
-    { name = "scipy" },
-    { name = "silero-vad" },
-    { name = "zhconv-rs" },
-]
-
-[package.optional-dependencies]
-transcribe = [
     { name = "accelerate" },
+    { name = "argparse" },
     { name = "filelock" },
+    { name = "numpy" },
     { name = "onnxruntime" },
     { name = "platformdirs" },
+    { name = "python-dotenv" },
     { name = "qwen-asr" },
     { name = "qwencandle" },
     { name = "requests" },
+    { name = "scipy" },
+    { name = "silero-vad" },
     { name = "tqdm" },
     { name = "transformers" },
+    { name = "zhconv-rs" },
 ]
 
 [package.dev-dependencies]
@@ -2068,20 +2064,20 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", marker = "extra == 'transcribe'", specifier = ">=1.0" },
+    { name = "accelerate", specifier = ">=1.0" },
     { name = "argparse", specifier = ">=1.4.0,<2" },
-    { name = "filelock", marker = "extra == 'transcribe'", specifier = ">=3.25.2" },
+    { name = "filelock", specifier = ">=3.25.2" },
     { name = "numpy", specifier = ">=2.2.1,<3" },
-    { name = "onnxruntime", marker = "extra == 'transcribe'", specifier = ">=1.24.4" },
-    { name = "platformdirs", marker = "extra == 'transcribe'", specifier = ">=4.9.6" },
+    { name = "onnxruntime", specifier = ">=1.24.4" },
+    { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
-    { name = "qwen-asr", marker = "extra == 'transcribe'", specifier = ">=0.0.6" },
-    { name = "qwencandle", marker = "extra == 'transcribe'", specifier = "==0.0.1", index = "https://andrewtheguy.github.io/qwencandle/simple/" },
-    { name = "requests", marker = "extra == 'transcribe'", specifier = ">=2.32" },
+    { name = "qwen-asr", specifier = ">=0.0.6" },
+    { name = "qwencandle", specifier = "==0.0.2", index = "https://andrewtheguy.github.io/qwencandle/simple/" },
+    { name = "requests", specifier = ">=2.32" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
-    { name = "tqdm", marker = "extra == 'transcribe'", specifier = ">=4.67.3" },
-    { name = "transformers", marker = "extra == 'transcribe'", specifier = ">=4.52" },
+    { name = "tqdm", specifier = ">=4.67.3" },
+    { name = "transformers", specifier = ">=4.52" },
     { name = "zhconv-rs", specifier = ">=0.3.2.post2,<0.4" },
 ]
 

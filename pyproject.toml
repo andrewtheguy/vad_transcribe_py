@@ -1,6 +1,6 @@
 [project]
 name = "vad-transcribe-py"
-version = "0.2.23"
+version = "0.2.24"
 description = ""
 authors = [{ name = "Andrew Chen", email = "andrew@jaanuu.com" }]
 requires-python = "~=3.14.0"
@@ -12,13 +12,6 @@ dependencies = [
     "python-dotenv>=1.0.1,<2",
     "numpy>=2.2.1,<3",
     "zhconv-rs>=0.3.2.post2,<0.4",
-]
-
-[project.scripts]
-vad-transcribe-py = "vad_transcribe_py.cli:main"
-
-[project.optional-dependencies]
-transcribe = [
     "transformers>=4.52",
     "accelerate>=1.0",
     "onnxruntime>=1.24.4",
@@ -27,8 +20,11 @@ transcribe = [
     "filelock>=3.25.2",
     "requests>=2.32",
     "qwen-asr>=0.0.6",
-    "qwencandle==0.0.1",
+    "qwencandle==0.0.2",
 ]
+
+[project.scripts]
+vad-transcribe-py = "vad_transcribe_py.cli:main"
 
 [[tool.uv.index]]
 name = "qwencandle"
