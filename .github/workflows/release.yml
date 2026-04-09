@@ -87,9 +87,22 @@ jobs:
             echo '</body></html>'
           } > "_pages/simple/vad-transcribe-py/index.html"
 
+          QWENCANDLE_REPO="andrewtheguy/qwencandle"
+          mkdir -p "_pages/simple/qwencandle"
+          {
+            echo '<!DOCTYPE html><html><body>'
+            gh release list --repo "$QWENCANDLE_REPO" --limit 100 --exclude-drafts --json tagName --jq '.[].tagName' | while read -r tag; do
+              gh release view "$tag" --repo "$QWENCANDLE_REPO" --json assets --jq '.assets[] | select(.name | endswith(".whl") or endswith(".tar.gz")) | .name' | while read -r name; do
+                echo "<a href=\"https://github.com/${QWENCANDLE_REPO}/releases/download/${tag}/${name}\">${name}</a><br>"
+              done
+            done
+            echo '</body></html>'
+          } > "_pages/simple/qwencandle/index.html"
+
           cat > _pages/simple/index.html <<'HTML'
           <!DOCTYPE html><html><body>
           <a href="vad-transcribe-py/">vad-transcribe-py</a>
+          <a href="qwencandle/">qwencandle</a>
           </body></html>
           HTML
 

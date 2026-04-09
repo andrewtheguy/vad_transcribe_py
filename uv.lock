@@ -1463,16 +1463,16 @@ wheels = [
 
 [[package]]
 name = "qwencandle"
-version = "0.0.1a5"
+version = "0.0.1"
 source = { registry = "https://andrewtheguy.github.io/qwencandle/simple/" }
 dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1a5/qwencandle-0.0.1a5-cp39-abi3-macosx_11_0_arm64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1a5/qwencandle-0.0.1a5-cp39-abi3-manylinux_2_39_aarch64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1a5/qwencandle-0.0.1a5-cp39-abi3-manylinux_2_39_x86_64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1a5/qwencandle-0.0.1a5-cp39-abi3-win_amd64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1/qwencandle-0.0.1-cp39-abi3-macosx_11_0_arm64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1/qwencandle-0.0.1-cp39-abi3-manylinux_2_39_aarch64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1/qwencandle-0.0.1-cp39-abi3-manylinux_2_39_x86_64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.1/qwencandle-0.0.1-cp39-abi3-win_amd64.whl" },
 ]
 
 [[package]]
@@ -2076,7 +2076,7 @@ requires-dist = [
     { name = "platformdirs", marker = "extra == 'transcribe'", specifier = ">=4.9.6" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
     { name = "qwen-asr", marker = "extra == 'transcribe'", specifier = ">=0.0.6" },
-    { name = "qwencandle", marker = "extra == 'transcribe'", specifier = "==0.0.1a5", index = "https://andrewtheguy.github.io/qwencandle/simple/" },
+    { name = "qwencandle", marker = "extra == 'transcribe'", specifier = "==0.0.1", index = "https://andrewtheguy.github.io/qwencandle/simple/" },
     { name = "requests", marker = "extra == 'transcribe'", specifier = ">=2.32" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
