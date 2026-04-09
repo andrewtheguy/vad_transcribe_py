@@ -654,7 +654,8 @@ def main():
                                         'none (default), simplified (zh-Hans), traditional (zh-Hant)')
     parser_transcribe.add_argument('--threads', type=int, default=None,
                                    help='Number of CPU threads for inference '
-                                        '(default: min(2, cpu_count))')
+                                        '(default: min(2, cpu_count) for moonshine, '
+                                        'none for other backends)')
     parser_transcribe.add_argument('--no-condition', action='store_true',
                                    help='Disable conditioning on previous segment output '
                                         '(whisper, qwen-asr, and qwen-asr-rs backends). By default, each segment '
@@ -695,8 +696,14 @@ def main():
                 lock.acquire()
 
             if args.action == 'transcribe':
-                num_threads = args.threads if args.threads is not None else min(2, os.cpu_count() or 1)
-                logger.info("Using %d thread(s)", num_threads)
+                if args.threads is not None:
+                    num_threads = args.threads
+                elif args.backend == 'moonshine':
+                    num_threads = min(2, os.cpu_count() or 1)
+                else:
+                    num_threads = None
+                if num_threads is not None:
+                    logger.info("Using %d thread(s)", num_threads)
 
                 # Handle stdin mode separately (no validation, always VAD, always stdout)
                 if getattr(args, 'stdin', False):

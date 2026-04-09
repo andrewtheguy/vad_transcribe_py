@@ -1,6 +1,7 @@
 """Qwen3-ASR backend using the qwencandle Rust package (PyO3 bindings)."""
 
 import logging
+import os
 
 import numpy as np
 import numpy.typing as npt
@@ -35,10 +36,13 @@ class QwenASRRsBackend(TranscriberBase):
         language: str,
         model: str | None = None,
         chinese_conversion: ChineseConversion = 'none',
+        num_threads: int | None = None,
         device: str = 'cpu',
         condition: bool = True,
     ):
-        super().__init__(language, chinese_conversion)
+        super().__init__(language, chinese_conversion, num_threads)
+        if num_threads is not None:
+            os.environ["RAYON_NUM_THREADS"] = str(num_threads)
         self._device = device
         self._condition = condition
         self._previous_text: str = ""

@@ -253,6 +253,7 @@ def create_transcriber(
             language=language,
             model=model,
             chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
             device=device,
             condition=condition,
         )
