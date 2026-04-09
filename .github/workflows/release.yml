@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.0.1). Leave empty to auto-bump patch."
-        required: false
+        description: "Version to release (e.g. 0.0.1)"
+        required: true
         type: string
 
 permissions:
@@ -35,23 +35,14 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          current=$(grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml)
-          echo "current=$current" >> "$GITHUB_OUTPUT"
           branch="${GITHUB_REF#refs/heads/}"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          if [ -n "${{ inputs.version }}" ]; then
-            new="${{ inputs.version }}"
-          else
-            IFS='.' read -r major minor patch <<< "$current"
-            new="${major}.${minor}.$((patch + 1))"
-          fi
+          echo "new=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           if [ "$branch" != "main" ]; then
-            new="${new}a${GITHUB_RUN_NUMBER}"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "new=$new" >> "$GITHUB_OUTPUT"
 
       - name: Update version in pyproject.toml
         run: |
