@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-import httpx
+import requests
 from filelock import FileLock
 from platformdirs import user_cache_dir
 from tqdm import tqdm
@@ -22,8 +22,8 @@ def get_cache_dir() -> Path:
     return Path(os.environ.get(env_var, user_cache_dir(APP_NAME)))
 
 
-def _write_stream(response: httpx.Response, partial: Path, existing_size: int) -> None:
-    """Write an httpx streaming response to a partial file."""
+def _write_stream(response: requests.Response, partial: Path, existing_size: int) -> None:
+    """Write a streaming response to a partial file."""
     if response.status_code not in (200, 206):
         response.raise_for_status()
 
@@ -50,7 +50,7 @@ def _write_stream(response: httpx.Response, partial: Path, existing_size: int) -
         file=sys.stderr,
         disable=not sys.stderr.isatty(),
     ) as bar:
-        for chunk in response.iter_bytes(chunk_size=8192):
+        for chunk in response.iter_content(chunk_size=8192):
             f.write(chunk)
             bar.update(len(chunk))
 
@@ -71,7 +71,7 @@ def _download_file(url: str, dest: Path, timeout: int = 30) -> Path:
             headers["Range"] = f"bytes={existing_size}-"
 
         # Try with Range header first; on 416 retry from scratch
-        with httpx.stream("GET", url, headers=headers, timeout=timeout, follow_redirects=True) as response:
+        with requests.get(url, headers=headers, timeout=timeout, stream=True) as response:
             if response.status_code == 416:
                 existing_size = 0
                 partial.unlink(missing_ok=True)
@@ -82,7 +82,7 @@ def _download_file(url: str, dest: Path, timeout: int = 30) -> Path:
                 return dest
 
         # Retry without Range header
-        with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as response:
+        with requests.get(url, timeout=timeout, stream=True) as response:
             _write_stream(response, partial, 0)
 
         partial.rename(dest)
