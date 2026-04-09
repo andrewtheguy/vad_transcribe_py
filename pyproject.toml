@@ -1,6 +1,6 @@
 [project]
 name = "vad-transcribe-py"
-version = "0.2.19"
+version = "0.2.20"
 description = ""
 authors = [{ name = "Andrew Chen", email = "andrew@jaanuu.com" }]
 requires-python = "~=3.14.0"
