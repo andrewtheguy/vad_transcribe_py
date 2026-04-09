@@ -37,12 +37,21 @@ jobs:
         run: |
           current=$(grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml)
           echo "current=$current" >> "$GITHUB_OUTPUT"
+          branch="${GITHUB_REF#refs/heads/}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
           if [ -n "${{ inputs.version }}" ]; then
-            echo "new=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            new="${{ inputs.version }}"
           else
             IFS='.' read -r major minor patch <<< "$current"
-            echo "new=${major}.${minor}.$((patch + 1))" >> "$GITHUB_OUTPUT"
+            new="${major}.${minor}.$((patch + 1))"
           fi
+          if [ "$branch" != "main" ]; then
+            new="${new}a${GITHUB_RUN_NUMBER}"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "new=$new" >> "$GITHUB_OUTPUT"
 
       - name: Update version in pyproject.toml
         run: |
@@ -62,7 +71,7 @@ jobs:
             git commit -m "chore: bump version to ${{ steps.version.outputs.new }}"
           fi
           git tag "${{ steps.version.outputs.new }}"
-          git push origin main --tags
+          git push origin "${{ steps.version.outputs.branch }}" --tags
 
       - name: Build wheel
         run: uv build
@@ -73,10 +82,12 @@ jobs:
         run: |
           gh release create "${{ steps.version.outputs.new }}" \
             --generate-notes \
+            ${{ steps.version.outputs.prerelease == 'true' && '--prerelease' || '' }} \
             dist/*.whl dist/*.tar.gz
 
   deploy-pages:
     needs: release
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
