@@ -158,6 +158,8 @@ class QwenASRBackend(TranscriberBase):
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return a single segment."""
         qwen_language = _LANGUAGE_MAP.get(self.language) if self.language else None
+        if self.language and qwen_language is None:
+            logger.warning("Unrecognized language code '%s', falling back to auto-detection", self.language)
 
         try:
             context = self._previous_text if self._condition else ""

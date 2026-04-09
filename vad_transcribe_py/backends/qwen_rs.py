@@ -102,6 +102,8 @@ class QwenASRRsBackend(TranscriberBase):
         """Transcribe audio and return a single segment."""
         assert self._model is not None
         qwen_language = _LANGUAGE_MAP.get(self.language) if self.language else None
+        if self.language and qwen_language is None:
+            logger.warning("Unrecognized language code '%s', falling back to auto-detection", self.language)
 
         context = self._previous_text if self._condition else None
 
