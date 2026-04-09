@@ -7,6 +7,7 @@ import pytest
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
 from vad_transcribe_py.backends.qwen import QwenASRBackend
+from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
 from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
 from vad_transcribe_py.vad_processor import (
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
@@ -303,3 +304,88 @@ def test_qwen_rejects_streaming_or_vllm_backend(monkeypatch):
 
     with pytest.raises(RuntimeError, match="non-streaming transformers backend"):
         QwenASRBackend(language="en")
+
+
+@pytest.fixture()
+def stub_qwen_rs(monkeypatch):
+    """Stub out QwenASRRsBackend model loading."""
+    monkeypatch.setattr(QwenASRRsBackend, "_load_model", lambda _self, _model: None)
+
+
+def test_qwen_rs_conditioning_enabled_by_default(stub_qwen_rs):
+    """Test that conditioning is enabled by default for qwen-asr-rs."""
+    transcriber = QwenASRRsBackend(language="en")
+    assert transcriber._condition is True
+    assert transcriber._previous_text == ""
+
+
+def test_qwen_rs_conditioning_disabled(stub_qwen_rs):
+    """Test that conditioning can be disabled for qwen-asr-rs."""
+    transcriber = QwenASRRsBackend(language="en", condition=False)
+    assert transcriber._condition is False
+
+
+def test_qwen_rs_device_default(stub_qwen_rs):
+    """Test that qwen-asr-rs defaults to cpu device."""
+    transcriber = QwenASRRsBackend(language="en")
+    assert transcriber._device == "cpu"
+
+
+def test_qwen_rs_device_custom(stub_qwen_rs):
+    """Test that qwen-asr-rs accepts a custom device."""
+    transcriber = QwenASRRsBackend(language="en", device="metal")
+    assert transcriber._device == "metal"
+
+
+def test_create_transcriber_qwen_rs_with_condition(stub_qwen_rs):
+    """Test that factory passes condition to qwen-asr-rs backend."""
+    transcriber = audio_transcriber.create_transcriber(
+        language="en",
+        backend="qwen-asr-rs",
+        condition=False,
+    )
+    assert transcriber._condition is False
+
+
+def test_create_transcriber_qwen_rs_with_device(stub_qwen_rs):
+    """Test that factory passes device to qwen-asr-rs backend."""
+    transcriber = audio_transcriber.create_transcriber(
+        language="en",
+        backend="qwen-asr-rs",
+        device="metal",
+    )
+    assert transcriber._device == "metal"
+
+
+def test_qwen_rs_hard_limit(stub_qwen_rs):
+    """Test that qwen-asr-rs reports correct hard limit."""
+    from vad_transcribe_py.vad_processor import QWEN_ASR_HARD_LIMIT_SECONDS
+    transcriber = QwenASRRsBackend(language="en")
+    assert transcriber.hard_limit_seconds == QWEN_ASR_HARD_LIMIT_SECONDS
+
+
+def test_qwen_rs_transcribe_integration(monkeypatch):
+    """Test qwen-asr-rs transcribe via a stub qwencandle module."""
+
+    class StubQwenAsr:
+        def __init__(self, model_id=None, device="cpu"):
+            self.model_id = model_id
+            self.device = device
+            self.transcribe_calls: list[dict[str, object]] = []
+
+        def transcribe(self, samples, *, language=None, context=None):
+            self.transcribe_calls.append({"samples": samples, "language": language, "context": context})
+            return "hello world"
+
+    qwencandle_module = ModuleType("qwencandle")
+    qwencandle_module.QwenAsr = StubQwenAsr  # type: ignore[attr-defined]
+    qwencandle_module.DEFAULT_MODEL_ID = "Qwen/Qwen3-ASR-0.6B"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "qwencandle", qwencandle_module)
+
+    backend = QwenASRRsBackend(language="en")
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert isinstance(backend._model, StubQwenAsr)
+    assert backend._model.transcribe_calls
+    assert backend._model.transcribe_calls[0]["language"] == "English"
+    assert segments[0].text == "hello world"

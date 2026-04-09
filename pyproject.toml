@@ -27,7 +27,16 @@ transcribe = [
     "filelock",
     "httpx",
     "qwen-asr>=0.0.6",
+    "qwencandle==0.0.1a3",
 ]
+
+[[tool.uv.index]]
+name = "qwencandle"
+url = "https://andrewtheguy.github.io/qwencandle/simple/"
+explicit = true
+
+[tool.uv.sources]
+qwencandle = { index = "qwencandle" }
 
 [tool.hatch.metadata]
 allow-direct-references = true
