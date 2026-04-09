@@ -641,8 +641,9 @@ def main():
     transcribe_input.add_argument('--stdin', action='store_true', help='Read WAV audio from stdin (always uses VAD, outputs to stdout)')
     parser_transcribe.add_argument('--output', type=str, default=None,
                                    help='Output path for JSONL transcript (default: stdout)')
-    parser_transcribe.add_argument('--language', type=str, default='en',
-                                   help='Language code for transcription (default: en)')
+    parser_transcribe.add_argument('--language', type=str, default=None,
+                                   help='Language code for transcription '
+                                        '(required for moonshine, optional for others)')
     parser_transcribe.add_argument('--model', type=str, default=None,
                                    help='Model name (default: large-v3-turbo for whisper, auto-selected for moonshine)')
     parser_transcribe.add_argument('--backend', type=str, choices=['whisper', 'moonshine', 'qwen-asr', 'qwen-asr-rs'],

@@ -21,10 +21,36 @@ from vad_transcribe_py.vad_processor import (
 logger = logging.getLogger(__name__)
 
 _LANGUAGE_MAP: dict[str, str] = {
-    "en": "English",
     "zh": "Chinese",
+    "en": "English",
     "yue": "Cantonese",
+    "ar": "Arabic",
+    "de": "German",
+    "fr": "French",
     "es": "Spanish",
+    "pt": "Portuguese",
+    "id": "Indonesian",
+    "it": "Italian",
+    "ko": "Korean",
+    "ru": "Russian",
+    "th": "Thai",
+    "vi": "Vietnamese",
+    "ja": "Japanese",
+    "tr": "Turkish",
+    "hi": "Hindi",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "sv": "Swedish",
+    "da": "Danish",
+    "fi": "Finnish",
+    "pl": "Polish",
+    "cs": "Czech",
+    "fil": "Filipino",
+    "fa": "Persian",
+    "el": "Greek",
+    "ro": "Romanian",
+    "hu": "Hungarian",
+    "mk": "Macedonian",
 }
 
 
@@ -33,7 +59,7 @@ class QwenASRRsBackend(TranscriberBase):
 
     def __init__(
         self,
-        language: str,
+        language: str | None,
         model: str | None = None,
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
@@ -75,7 +101,9 @@ class QwenASRRsBackend(TranscriberBase):
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return a single segment."""
         assert self._model is not None
-        qwen_language = _LANGUAGE_MAP.get(self.language)
+        qwen_language = _LANGUAGE_MAP.get(self.language) if self.language else None
+        if self.language and qwen_language is None:
+            raise ValueError(f"Unrecognized language code '{self.language}'. Available: {', '.join(_LANGUAGE_MAP)}")
 
         context = self._previous_text if self._condition else None
 

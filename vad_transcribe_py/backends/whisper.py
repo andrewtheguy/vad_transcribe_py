@@ -51,7 +51,7 @@ class WhisperBackend(TranscriberBase):
 
     def __init__(
         self,
-        language: str,
+        language: str | None,
         model: str,
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
@@ -116,7 +116,7 @@ class WhisperBackend(TranscriberBase):
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return segments with sub-sentence timestamps."""
         generate_kwargs: dict[str, Any] = {
-            "language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language),
+            "language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language) if self.language else None,
         }
         if self._prompt_ids is not None:
             generate_kwargs["prompt_ids"] = self._prompt_ids

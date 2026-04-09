@@ -53,7 +53,7 @@ def is_repetitive(text: str) -> bool:
     return False
 
 
-def process_text(text: str, language: str, chinese_conversion: ChineseConversion) -> str:
+def process_text(text: str, language: str | None, chinese_conversion: ChineseConversion) -> str:
     """Process text for storage (e.g., convert Chinese variants)."""
     if language in ['yue', 'zh'] and chinese_conversion != 'none':
         if chinese_conversion == 'traditional':
@@ -79,7 +79,7 @@ class AudioTranscriber(Protocol):
 class TranscriberBase:
     """Shared functionality for transcriber backends."""
 
-    def __init__(self, language: str, chinese_conversion: ChineseConversion = 'none', num_threads: int | None = None):
+    def __init__(self, language: str | None, chinese_conversion: ChineseConversion = 'none', num_threads: int | None = None):
         self.language = language
         self.chinese_conversion: ChineseConversion = chinese_conversion
         self.num_threads = num_threads

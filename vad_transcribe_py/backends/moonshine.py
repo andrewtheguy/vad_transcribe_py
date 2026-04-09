@@ -47,6 +47,7 @@ class MoonshineBackend(TranscriberBase):
         """Load Moonshine model via ONNX runtime."""
         from vad_transcribe_py.moonshine import resolve_model, download_model, Transcriber, SAMPLE_RATE
 
+        assert self.language is not None
         name, language, arch, is_streaming, url, hard_limit, soft_limit = resolve_model(
             self.language, model
         )
