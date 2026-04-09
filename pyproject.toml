@@ -1,6 +1,6 @@
 [project]
 name = "vad-transcribe-py"
-version = "0.2.21a1"
+version = "0.2.21a2"
 description = ""
 authors = [{ name = "Andrew Chen", email = "andrew@jaanuu.com" }]
 requires-python = "~=3.14.0"
@@ -27,7 +27,7 @@ transcribe = [
     "filelock",
     "httpx",
     "qwen-asr>=0.0.6",
-    "qwencandle==0.0.1a3",
+    "qwencandle==0.0.1a5",
 ]
 
 [[tool.uv.index]]
