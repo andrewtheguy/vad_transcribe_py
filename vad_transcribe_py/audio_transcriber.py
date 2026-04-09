@@ -211,6 +211,7 @@ def create_transcriber(
     num_threads: int | None = None,
     condition: bool = True,
     sub_timestamps: bool = True,
+    enable_mps: bool = False,
 ) -> AudioTranscriber:
     """Factory function to create a transcriber backend instance."""
     if backend == 'whisper':
@@ -242,6 +243,7 @@ def create_transcriber(
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
             condition=condition,
+            enable_mps=enable_mps,
         )
     else:
         raise ValueError(f"Unsupported backend: {backend}")

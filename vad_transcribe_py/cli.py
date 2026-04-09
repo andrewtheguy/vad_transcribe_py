@@ -663,6 +663,10 @@ def main():
                                    help='Disable sub-sentence timestamp splitting '
                                         '(whisper backend only). Returns one segment per '
                                         'VAD segment instead of multiple timestamped chunks.')
+    parser_transcribe.add_argument('--enable-mps-detection', action='store_true',
+                                   help='Enable MPS (Apple Silicon GPU) detection for qwen-asr backend. '
+                                        'WARNING: MPS has known memory leak issues with qwen-asr '
+                                        'and may cause increasing memory usage over long transcriptions.')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
@@ -699,6 +703,7 @@ def main():
                         num_threads=num_threads,
                         condition=not args.no_condition,
                         sub_timestamps=not args.no_sub_timestamps,
+                        enable_mps=args.enable_mps_detection,
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
                         transcriber,
@@ -717,6 +722,7 @@ def main():
                         num_threads=num_threads,
                         condition=not args.no_condition,
                         sub_timestamps=not args.no_sub_timestamps,
+                        enable_mps=args.enable_mps_detection,
                     )
 
                     # Determine output destination
