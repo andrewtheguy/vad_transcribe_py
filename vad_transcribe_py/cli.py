@@ -696,6 +696,9 @@ def main():
                 lock.acquire()
 
             if args.action == 'transcribe':
+                if args.device != 'cpu' and args.backend != 'qwen-asr-rs':
+                    parser.error('--device is only supported by the qwen-asr-rs backend')
+
                 if args.threads is not None:
                     num_threads = args.threads
                 elif args.backend == 'moonshine':

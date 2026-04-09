@@ -85,10 +85,12 @@ class QwenASRRsBackend(TranscriberBase):
             context=context,
         )
 
-        if self._condition and text.strip() and not is_repetitive(text.strip()):
-            self._previous_text = text.strip()
-        elif self._condition and is_repetitive(text.strip()):
-            self._previous_text = ""
+        if self._condition:
+            stripped = text.strip()
+            if stripped and not is_repetitive(stripped):
+                self._previous_text = stripped
+            elif is_repetitive(stripped):
+                self._previous_text = ""
 
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
         return [self._make_segment(text, start_offset, end_time)]
