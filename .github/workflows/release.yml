@@ -2,11 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to release (e.g. 0.0.1)"
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -35,19 +30,25 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          branch="${GITHUB_REF#refs/heads/}"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          echo "new=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          if [ "$branch" != "main" ]; then
+          version=$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "new=$version" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Abort if tag already exists
+        run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.version.outputs.new }}" | grep -q .; then
+            echo "::error::Tag ${{ steps.version.outputs.new }} already exists on remote"
+            exit 1
+          fi
+
       - name: Tag and push
         run: |
           git tag "${{ steps.version.outputs.new }}"
-          git push origin --tags
+          git push origin "${{ steps.version.outputs.new }}"
 
       - name: Build wheel
         run: uv build
