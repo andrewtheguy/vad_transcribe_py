@@ -204,7 +204,7 @@ def get_window_size_samples() -> int:
 
 
 def create_transcriber(
-    language: str,
+    language: str | None,
     model: str | None = None,
     backend: str = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
@@ -228,6 +228,9 @@ def create_transcriber(
         )
     elif backend == 'moonshine':
         from vad_transcribe_py.backends.moonshine import MoonshineBackend
+
+        if language is None:
+            raise ValueError("--language is required for the moonshine backend")
 
         return MoonshineBackend(
             language=language,
