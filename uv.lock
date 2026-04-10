@@ -1451,6 +1451,20 @@ wheels = [
 ]
 
 [[package]]
+name = "qwen-burn"
+version = "0.0.1a1"
+source = { path = "../qwen-burn/dist/qwen_burn-0.0.1a1-cp39-abi3-macosx_11_0_arm64.whl" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { filename = "qwen_burn-0.0.1a1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:eb37302f7e3be93b2190ce78c4a16958a1f3ef8413097bd6f64a11ee64183b01" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "numpy", specifier = ">=1.26" }]
+
+[[package]]
 name = "qwen-omni-utils"
 version = "0.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1465,76 +1479,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/27/81a51b10ef6d1a4f1
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/a8/dfc07e5b9005decbd2f08ac564250775fea9526473ae1bc90fbf45e8036f/qwen_omni_utils-0.0.9-py3-none-any.whl", hash = "sha256:f111db07af669c83333411c5177131e18e831fe666d6a55a1af263952ada8939", size = 9657 },
 ]
-
-[[package]]
-name = "qwencandle"
-version = "0.0.4b4"
-source = { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-macosx_11_0_arm64.whl" }
-resolution-markers = [
-    "platform_system != 'Linux' and sys_platform == 'darwin'",
-]
-dependencies = [
-    { name = "numpy", marker = "platform_system != 'Linux' and sys_platform == 'darwin'" },
-]
-wheels = [
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:4117ba876bdaf1ad7bc75948f3aa4af2e6ae9ff166369533d12f127b1f9bf07b" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=1.26" }]
-
-[[package]]
-name = "qwencandle"
-version = "0.0.4b4"
-source = { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-manylinux_2_38_aarch64.whl" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform == 'linux'",
-    "platform_machine == 'aarch64' and platform_system != 'Linux' and sys_platform == 'linux'",
-]
-dependencies = [
-    { name = "numpy", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-]
-wheels = [
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-manylinux_2_38_aarch64.whl", hash = "sha256:5916e01ddd593a662d2de2b6718b791370f69c84a3e8b692024ca55217c22785" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=1.26" }]
-
-[[package]]
-name = "qwencandle"
-version = "0.0.4b4"
-source = { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-manylinux_2_38_x86_64.whl" }
-resolution-markers = [
-    "platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform == 'linux'",
-    "platform_machine == 'x86_64' and platform_system != 'Linux' and sys_platform == 'linux'",
-]
-dependencies = [
-    { name = "numpy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-]
-wheels = [
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-manylinux_2_38_x86_64.whl", hash = "sha256:3878fd065dbe890e409c9cb82fa46eaef346eb1b4f87998aa501815dc0f05b39" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=1.26" }]
-
-[[package]]
-name = "qwencandle"
-version = "0.0.4b4"
-source = { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-win_amd64.whl" }
-resolution-markers = [
-    "platform_system != 'Linux' and sys_platform == 'win32'",
-]
-dependencies = [
-    { name = "numpy", marker = "platform_system != 'Linux' and sys_platform == 'win32'" },
-]
-wheels = [
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-win_amd64.whl", hash = "sha256:7e24f89629f4023f980b1661417b5a615fe5a00b27f668502e6b749bbaf7381f" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=1.26" }]
 
 [[package]]
 name = "regex"
@@ -2107,10 +2051,7 @@ dependencies = [
     { name = "platformdirs" },
     { name = "python-dotenv" },
     { name = "qwen-asr" },
-    { name = "qwencandle", version = "0.0.4b4", source = { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-macosx_11_0_arm64.whl" }, marker = "platform_system != 'Linux' and sys_platform == 'darwin'" },
-    { name = "qwencandle", version = "0.0.4b4", source = { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-manylinux_2_38_aarch64.whl" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "qwencandle", version = "0.0.4b4", source = { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-manylinux_2_38_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "qwencandle", version = "0.0.4b4", source = { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-win_amd64.whl" }, marker = "platform_system != 'Linux' and sys_platform == 'win32'" },
+    { name = "qwen-burn" },
     { name = "requests" },
     { name = "scipy" },
     { name = "silero-vad" },
@@ -2136,10 +2077,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
     { name = "qwen-asr", specifier = ">=0.0.6" },
-    { name = "qwencandle", marker = "sys_platform == 'darwin'", url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-macosx_11_0_arm64.whl" },
-    { name = "qwencandle", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-manylinux_2_38_aarch64.whl" },
-    { name = "qwencandle", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-manylinux_2_38_x86_64.whl" },
-    { name = "qwencandle", marker = "sys_platform == 'win32'", url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.4b4/qwencandle-0.0.4b4-cp39-abi3-win_amd64.whl" },
+    { name = "qwen-burn", path = "../qwen-burn/dist/qwen_burn-0.0.1a1-cp39-abi3-macosx_11_0_arm64.whl" },
     { name = "requests", specifier = ">=2.32" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },

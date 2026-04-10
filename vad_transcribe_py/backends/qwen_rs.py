@@ -1,4 +1,4 @@
-"""Qwen3-ASR backend using the qwencandle Rust package (PyO3 bindings)."""
+"""Qwen3-ASR backend using the qwen_burn Rust package (PyO3 bindings)."""
 
 import logging
 import os
@@ -55,7 +55,7 @@ _LANGUAGE_MAP: dict[str, str] = {
 
 
 class QwenASRRsBackend(TranscriberBase):
-    """Transcriber backend using Qwen3-ASR via the qwencandle Rust library."""
+    """Transcriber backend using Qwen3-ASR via the qwen_burn Rust library."""
 
     def __init__(
         self,
@@ -63,13 +63,11 @@ class QwenASRRsBackend(TranscriberBase):
         model: str | None = None,
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
-        device: str = 'cpu',
         condition: bool = True,
     ):
         super().__init__(language, chinese_conversion, num_threads)
         if num_threads is not None:
             os.environ["RAYON_NUM_THREADS"] = str(num_threads)
-        self._device = device
         self._condition = condition
         self._previous_text: str = ""
         self._model: object = None
@@ -85,18 +83,18 @@ class QwenASRRsBackend(TranscriberBase):
         return QWEN_ASR_SOFT_LIMIT_SECONDS
 
     def _load_model(self, model: str | None) -> None:
-        """Load Qwen3-ASR model via the qwencandle Rust bindings."""
+        """Load Qwen3-ASR model via the qwen_burn Rust bindings."""
         try:
-            from qwencandle import QwenAsr
+            from qwen_burn import QwenAsr
         except ImportError:
             raise ImportError(
-                "qwencandle is not installed. "
-                "Install with: uv pip install qwencandle"
+                "qwen-burn is not installed. "
+                "Install with: uv pip install qwen-burn"
             )
 
-        logger.info("Loading qwencandle model (device=%s)...", self._device)
-        self._model = QwenAsr(model_id=model, device=self._device)
-        logger.info("qwencandle model loaded on %s", self._device)
+        logger.info("Loading qwen_burn model...")
+        self._model = QwenAsr(model_id=model)
+        logger.info("qwen_burn model loaded")
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return a single segment."""

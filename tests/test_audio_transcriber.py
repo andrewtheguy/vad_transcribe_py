@@ -325,18 +325,6 @@ def test_qwen_rs_conditioning_disabled(stub_qwen_rs):
     assert transcriber._condition is False
 
 
-def test_qwen_rs_device_default(stub_qwen_rs):
-    """Test that qwen-asr-rs defaults to cpu device."""
-    transcriber = QwenASRRsBackend(language="en")
-    assert transcriber._device == "cpu"
-
-
-def test_qwen_rs_device_custom(stub_qwen_rs):
-    """Test that qwen-asr-rs accepts a custom device."""
-    transcriber = QwenASRRsBackend(language="en", device="metal")
-    assert transcriber._device == "metal"
-
-
 def test_create_transcriber_qwen_rs_with_condition(stub_qwen_rs):
     """Test that factory passes condition to qwen-asr-rs backend."""
     transcriber = audio_transcriber.create_transcriber(
@@ -347,16 +335,6 @@ def test_create_transcriber_qwen_rs_with_condition(stub_qwen_rs):
     assert transcriber._condition is False
 
 
-def test_create_transcriber_qwen_rs_with_device(stub_qwen_rs):
-    """Test that factory passes device to qwen-asr-rs backend."""
-    transcriber = audio_transcriber.create_transcriber(
-        language="en",
-        backend="qwen-asr-rs",
-        device="metal",
-    )
-    assert transcriber._device == "metal"
-
-
 def test_qwen_rs_hard_limit(stub_qwen_rs):
     """Test that qwen-asr-rs reports correct hard limit."""
     from vad_transcribe_py.vad_processor import QWEN_ASR_HARD_LIMIT_SECONDS
@@ -365,22 +343,21 @@ def test_qwen_rs_hard_limit(stub_qwen_rs):
 
 
 def test_qwen_rs_transcribe_integration(monkeypatch):
-    """Test qwen-asr-rs transcribe via a stub qwencandle module."""
+    """Test qwen-asr-rs transcribe via a stub qwen_burn module."""
 
     class StubQwenAsr:
-        def __init__(self, model_id=None, device="cpu"):
+        def __init__(self, model_id=None):
             self.model_id = model_id
-            self.device = device
             self.transcribe_calls: list[dict[str, object]] = []
 
         def transcribe(self, samples, *, language=None, context=None):
             self.transcribe_calls.append({"samples": samples, "language": language, "context": context})
             return "hello world"
 
-    qwencandle_module = ModuleType("qwencandle")
-    qwencandle_module.QwenAsr = StubQwenAsr  # type: ignore[attr-defined]
-    qwencandle_module.DEFAULT_MODEL_ID = "Qwen/Qwen3-ASR-0.6B"  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "qwencandle", qwencandle_module)
+    qwen_burn_module = ModuleType("qwen_burn")
+    qwen_burn_module.QwenAsr = StubQwenAsr  # type: ignore[attr-defined]
+    qwen_burn_module.DEFAULT_MODEL_ID = "Qwen/Qwen3-ASR-0.6B"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "qwen_burn", qwen_burn_module)
 
     backend = QwenASRRsBackend(language="en")
     segments = backend.transcribe(np.zeros(16000, dtype=np.float32))

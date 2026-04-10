@@ -212,7 +212,6 @@ def create_transcriber(
     condition: bool = True,
     sub_timestamps: bool = True,
     enable_mps: bool = False,
-    device: str = 'cpu',
 ) -> AudioTranscriber:
     """Factory function to create a transcriber backend instance."""
     if backend == 'whisper':
@@ -257,7 +256,6 @@ def create_transcriber(
             model=model,
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
-            device=device,
             condition=condition,
         )
     else:

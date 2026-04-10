@@ -669,9 +669,6 @@ def main():
                                    help='Enable MPS (Apple Silicon GPU) detection for qwen-asr backend. '
                                         'WARNING: MPS has known memory leak issues with qwen-asr '
                                         'and may cause increasing memory usage over long transcriptions.')
-    parser_transcribe.add_argument('--device', type=str, default='cpu',
-                                   help='Device for qwen-asr-rs backend: cpu, metal, or cuda '
-                                        '(default: cpu)')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
@@ -697,9 +694,6 @@ def main():
                 lock.acquire()
 
             if args.action == 'transcribe':
-                if args.device != 'cpu' and args.backend != 'qwen-asr-rs':
-                    parser.error('--device is only supported by the qwen-asr-rs backend')
-
                 if args.threads is not None:
                     num_threads = args.threads
                 elif args.backend == 'moonshine':
@@ -718,7 +712,6 @@ def main():
                         condition=not args.no_condition,
                         sub_timestamps=not args.no_sub_timestamps,
                         enable_mps=args.enable_mps_detection,
-                        device=args.device,
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
                         transcriber,
@@ -738,7 +731,6 @@ def main():
                         condition=not args.no_condition,
                         sub_timestamps=not args.no_sub_timestamps,
                         enable_mps=args.enable_mps_detection,
-                        device=args.device,
                     )
 
                     # Determine output destination

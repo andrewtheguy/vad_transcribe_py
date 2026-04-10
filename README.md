@@ -5,7 +5,7 @@
 - [Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) (default) - OpenAI's Whisper large-v3-turbo via HuggingFace Transformers, multilingual ASR
 - [Moonshine](https://github.com/usefulsensors/moonshine) - Fast ONNX-based ASR models (English: streaming, Chinese/Spanish: non-streaming). Auto-downloaded on first use.
 - [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) - Alibaba's Qwen3-ASR via HuggingFace Transformers, 30-language ASR
-- [Qwen3-ASR (Rust)](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) - Qwen3-ASR via qwencandle Rust bindings (PyO3), supports CPU/Metal/CUDA
+- [Qwen3-ASR (Rust)](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) - Qwen3-ASR via qwen-burn Rust bindings (PyO3)
 
 ## Features
 
@@ -102,7 +102,6 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--backend {whisper, moonshine, qwen-asr, qwen-asr-rs}`: Transcription backend (default: `whisper`)
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 - `--threads N`: Number of CPU threads for inference (default: `min(2, cpu_count)` for moonshine, none for other backends). For qwen-asr-rs, sets the `RAYON_NUM_THREADS` environment variable.
-- `--device {cpu, metal, cuda}`: Device for qwen-asr-rs backend only (default: `cpu`)
 - `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr, and qwen-asr-rs backends)
 - `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper backend only)
 
@@ -152,9 +151,8 @@ uv run vad-transcribe-py transcribe --file audio.wav --backend moonshine --model
 # Via HuggingFace Transformers
 uv run vad-transcribe-py transcribe --file audio.wav --backend qwen-asr
 
-# Via Rust bindings (faster, supports Metal/CUDA)
+# Via Rust bindings (faster)
 uv run vad-transcribe-py transcribe --file audio.wav --backend qwen-asr-rs
-uv run vad-transcribe-py transcribe --file audio.wav --backend qwen-asr-rs --device metal
 ```
 
 **Use a different Whisper model:**
@@ -260,7 +258,7 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 - **Whisper** backend: Best for multilingual transcription, 30-second hard limit per segment
 - **Moonshine** backend: Fast ONNX inference. English (streaming, 60s hard limit), Chinese/Spanish (non-streaming, 9s hard limit)
 - **Qwen3-ASR** backend: 30-language support, 30-second hard limit per segment
-- **Qwen3-ASR (Rust)** backend: Same model via Rust bindings, supports CPU/Metal/CUDA via `--device`
+- **Qwen3-ASR (Rust)** backend: Same model via Rust bindings
 - Whisper device auto-detected: CUDA > MPS > CPU. Moonshine uses ONNX runtime (CUDA or CPU)
 - Larger Whisper models (e.g., `large-v3`) provide better accuracy but require more memory
 - Moonshine supports English, Chinese, and Spanish only
