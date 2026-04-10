@@ -1,11 +1,12 @@
 """Whisper backend using HuggingFace Transformers."""
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
-import torch
 
 from vad_transcribe_py._types import (
     TARGET_SAMPLE_RATE,
@@ -18,6 +19,13 @@ from vad_transcribe_py.vad_processor import (
     WHISPER_HARD_LIMIT_SECONDS,
     WHISPER_SOFT_LIMIT_SECONDS,
 )
+from vad_transcribe_py.backends._torch_threads import (
+    configure_torch_cpu_threads,
+    prime_torch_cpu_thread_env,
+)
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +42,8 @@ def _get_device_and_dtype(device: str | None = None) -> tuple[str, torch.dtype]:
 
     When *device* is ``None``, auto-detect: cuda > mps > cpu.
     """
+    import torch
+
     if device is None:
         if torch.cuda.is_available():
             resolved = "cuda"
@@ -83,7 +93,7 @@ class WhisperBackend(TranscriberBase):
         self._device: str = "cpu"
 
         if num_threads is not None:
-            torch.set_num_threads(num_threads)
+            prime_torch_cpu_thread_env(num_threads)
 
         logger.info("Loading %s model...", self.model)
         self._load_whisper()
@@ -109,6 +119,9 @@ class WhisperBackend(TranscriberBase):
 
         model_id = _resolve_whisper_model_id(self.model)
         self._device, torch_dtype = _get_device_and_dtype(device=self._requested_device)
+
+        if self._device == "cpu" and self.num_threads is not None:
+            configure_torch_cpu_threads(self.num_threads)
 
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             model_id, dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True

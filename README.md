@@ -101,7 +101,7 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--model MODEL`: Model name (auto-selected if omitted). For whisper: HuggingFace short name or full ID (default: `large-v3-turbo` → `openai/whisper-large-v3-turbo`). For moonshine: use short names like `small-streaming`, `base`, `tiny` — these map to language-specific variants (e.g., `small-streaming` → `small-streaming-en`). Defaults: `small-streaming` (English), `base` (Chinese/Spanish).
 - `--backend {whisper, moonshine, qwen-asr, qwen-asr-rs}`: Transcription backend (default: `whisper`)
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
-- `--threads N`: Number of CPU threads for inference (default: `min(2, cpu_count)` for moonshine, none for other backends). For qwen-asr-rs, sets the `RAYON_NUM_THREADS` environment variable.
+- `--threads N`: Number of CPU threads for inference. If omitted, moonshine defaults to `min(2, cpu_count)` and other backends leave threading unset. For whisper and qwen-asr, thread tuning applies to CPU execution and configures PyTorch CPU threading before model load. For moonshine, it configures ONNX Runtime sessions. For qwen-asr-rs, it sets the `RAYON_NUM_THREADS` environment variable.
 - `--device {cpu, mps, metal, cuda}`: Device for whisper, qwen-asr, and qwen-asr-rs backends (default: auto-detect cuda > mps > cpu). Not supported by moonshine.
 - `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr, and qwen-asr-rs backends)
 - `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper backend only)
@@ -262,6 +262,8 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 - **Qwen3-ASR** backend: 30-language support, 30-second hard limit per segment
 - **Qwen3-ASR (Rust)** backend: Same model via Rust bindings, supports CPU/Metal/CUDA via `--device`. Recommended over `qwen-asr` for Metal, as it leaks significantly less memory.
 - Device auto-detected for torch-based backends (whisper, qwen-asr, qwen-asr-rs): CUDA > MPS > CPU. Override with `--device`. Moonshine uses ONNX runtime (CUDA or CPU)
+- If `--threads` is omitted, moonshine defaults to `min(2, cpu_count)` and other backends use their runtime defaults
+- For whisper and qwen-asr on CPU, `--threads` primes common BLAS/OpenMP env vars before import, sets PyTorch intra-op threads, and keeps inter-op threads at 1
 - Larger Whisper models (e.g., `large-v3`) provide better accuracy but require more memory
 - Moonshine supports English, Chinese, and Spanish only
 

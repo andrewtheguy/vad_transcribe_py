@@ -1,11 +1,12 @@
 """Qwen3-ASR backend using the qwen-asr package."""
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
-import torch
 
 from vad_transcribe_py._types import (
     TARGET_SAMPLE_RATE,
@@ -18,6 +19,13 @@ from vad_transcribe_py.vad_processor import (
     QWEN_ASR_HARD_LIMIT_SECONDS,
     QWEN_ASR_SOFT_LIMIT_SECONDS,
 )
+from vad_transcribe_py.backends._torch_threads import (
+    configure_torch_cpu_threads,
+    prime_torch_cpu_thread_env,
+)
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +70,8 @@ def _get_device_and_dtype(device: str | None = None) -> tuple[str, torch.dtype]:
 
     When *device* is ``None``, auto-detect: cuda > mps > cpu.
     """
+    import torch
+
     if device is None:
         if torch.cuda.is_available():
             resolved = "cuda"
@@ -117,8 +127,7 @@ class QwenASRBackend(TranscriberBase):
         self._eos_token_ids: list[int] = []
 
         if num_threads is not None:
-            import torch
-            torch.set_num_threads(num_threads)
+            prime_torch_cpu_thread_env(num_threads)
 
         logger.info("Loading %s model...", self.model)
         self._load_model()
@@ -147,6 +156,9 @@ class QwenASRBackend(TranscriberBase):
 
         device, torch_dtype = _get_device_and_dtype(device=self._device)
 
+        if device == "cpu" and self.num_threads is not None:
+            configure_torch_cpu_threads(self.num_threads)
+
         self._qwen_model = Qwen3ASRModel.from_pretrained(
             self.model,
             dtype=torch_dtype,
@@ -170,6 +182,8 @@ class QwenASRBackend(TranscriberBase):
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return a single segment."""
+        import torch
+
         qwen_language = _LANGUAGE_MAP.get(self.language) if self.language else None
         if self.language and qwen_language is None:
             raise ValueError(f"Unrecognized language code '{self.language}'. Available: {', '.join(_LANGUAGE_MAP)}")

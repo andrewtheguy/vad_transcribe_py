@@ -1,19 +1,30 @@
+import os
 import sys
 from types import ModuleType
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
+import vad_transcribe_py.backends.qwen as qwen_module
+import vad_transcribe_py.backends.whisper as whisper_module
 from vad_transcribe_py.backends.qwen import QwenASRBackend
 from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
 from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
+from vad_transcribe_py.backends._torch_threads import (
+    _CPU_THREAD_ENV_VARS,
+    configure_torch_cpu_threads,
+    prime_torch_cpu_thread_env,
+)
 from vad_transcribe_py.vad_processor import (
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
     MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,
     WHISPER_HARD_LIMIT_SECONDS,
 )
+
+REAL_WHISPER_LOAD = WhisperBackend._load_whisper
 
 
 @pytest.fixture(autouse=True)
@@ -157,6 +168,37 @@ def test_create_transcriber_qwen_with_condition(stub_qwen):
     assert transcriber._condition is False
 
 
+def test_prime_torch_cpu_thread_env(monkeypatch):
+    """Test that CPU threading env vars are primed for torch backends."""
+    for env_var in _CPU_THREAD_ENV_VARS:
+        monkeypatch.delenv(env_var, raising=False)
+
+    assert prime_torch_cpu_thread_env(6) == 6
+    for env_var in _CPU_THREAD_ENV_VARS:
+        assert os.environ[env_var] == "6"
+
+
+def test_configure_torch_cpu_threads(monkeypatch):
+    """Test that torch CPU intra-op and inter-op threads are configured."""
+    from vad_transcribe_py.backends import _torch_threads as torch_threads
+
+    intra_calls: list[int] = []
+    interop_calls: list[int] = []
+
+    monkeypatch.setattr(torch_threads, "_interop_threads", None)
+    monkeypatch.setattr(torch, "set_num_threads", lambda n: intra_calls.append(n))
+    monkeypatch.setattr(torch, "set_num_interop_threads", lambda n: interop_calls.append(n))
+    monkeypatch.setattr(torch, "get_num_threads", lambda: 7)
+    monkeypatch.setattr(torch, "get_num_interop_threads", lambda: 1)
+
+    intra_threads, interop_threads = configure_torch_cpu_threads(7)
+
+    assert intra_calls == [7]
+    assert interop_calls == [1]
+    assert intra_threads == 7
+    assert interop_threads == 1
+
+
 def test_hard_limit_seconds_whisper():
     """Test that whisper backend reports correct hard limit."""
     transcriber = WhisperBackend(
@@ -292,6 +334,99 @@ def test_qwen_rejects_streaming_or_vllm_backend(monkeypatch):
 
     with pytest.raises(RuntimeError, match="non-streaming transformers backend"):
         QwenASRBackend(language="en")
+
+
+def test_whisper_configures_cpu_threads_when_requested(monkeypatch):
+    """Test whisper configures PyTorch CPU threads when --threads is used."""
+
+    class StubModel:
+        def to(self, device):
+            self.device = device
+            return self
+
+    class StubAutoModelForSpeechSeq2Seq:
+        from_pretrained_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            cls.from_pretrained_calls.append((args, kwargs))
+            return StubModel()
+
+    class StubProcessor:
+        tokenizer = object()
+        feature_extractor = object()
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return cls()
+
+    transformers_module = ModuleType("transformers")
+    transformers_module.AutoModelForSpeechSeq2Seq = StubAutoModelForSpeechSeq2Seq
+    transformers_module.AutoProcessor = StubProcessor
+    transformers_module.pipeline = lambda *args, **kwargs: SimpleNamespace(args=args, kwargs=kwargs)
+
+    configure_calls: list[int] = []
+    def configure_threads(num_threads: int) -> tuple[int, int]:
+        configure_calls.append(num_threads)
+        return num_threads, 1
+
+    monkeypatch.setattr(WhisperBackend, "_load_whisper", REAL_WHISPER_LOAD)
+    monkeypatch.setattr(whisper_module, "_get_device_and_dtype", lambda device=None: ("cpu", torch.float32))
+    monkeypatch.setattr(whisper_module, "configure_torch_cpu_threads", configure_threads)
+    monkeypatch.setitem(sys.modules, "transformers", transformers_module)
+
+    backend = WhisperBackend(language="en", model="large-v3-turbo", num_threads=6, device="cpu")
+
+    assert configure_calls == [6]
+    assert backend._device == "cpu"
+    assert backend.pipe is not None
+    assert StubAutoModelForSpeechSeq2Seq.from_pretrained_calls
+
+
+def test_qwen_configures_cpu_threads_when_requested(monkeypatch):
+    """Test qwen-asr configures PyTorch CPU threads when --threads is used."""
+
+    class StubProcessor:
+        def __init__(self):
+            self.tokenizer = SimpleNamespace(
+                eos_token_id=101,
+                pad_token_id=102,
+            )
+
+    class StubQwen3ASRModel:
+        def __init__(self):
+            self.backend = "transformers"
+            self.processor = StubProcessor()
+            self.model = SimpleNamespace(thinker=SimpleNamespace())
+
+        def transcribe(self, audio, language, context=""):
+            return [SimpleNamespace(text="hello")]
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return cls()
+
+    qwen_pkg = ModuleType("qwen_asr")
+    qwen_pkg.Qwen3ASRModel = StubQwen3ASRModel
+    inference_module = ModuleType("qwen_asr.inference")
+    utils_module = ModuleType("qwen_asr.inference.utils")
+    utils_module.parse_asr_output = lambda raw, user_language=None: (user_language or "", raw)
+
+    configure_calls: list[int] = []
+    def configure_threads(num_threads: int) -> tuple[int, int]:
+        configure_calls.append(num_threads)
+        return num_threads, 1
+
+    monkeypatch.setattr(qwen_module, "_get_device_and_dtype", lambda device=None: ("cpu", torch.float32))
+    monkeypatch.setattr(qwen_module, "configure_torch_cpu_threads", configure_threads)
+    monkeypatch.setitem(sys.modules, "qwen_asr", qwen_pkg)
+    monkeypatch.setitem(sys.modules, "qwen_asr.inference", inference_module)
+    monkeypatch.setitem(sys.modules, "qwen_asr.inference.utils", utils_module)
+
+    backend = QwenASRBackend(language="en", num_threads=5, device="cpu")
+
+    assert configure_calls == [5]
+    assert backend._qwen_model.backend == "transformers"
 
 
 @pytest.fixture()

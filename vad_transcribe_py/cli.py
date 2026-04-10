@@ -655,8 +655,9 @@ def main():
                                         'none (default), simplified (zh-Hans), traditional (zh-Hant)')
     parser_transcribe.add_argument('--threads', type=int, default=None,
                                    help='Number of CPU threads for inference '
-                                        '(default: min(2, cpu_count) for moonshine, '
-                                        'none for other backends)')
+                                        '(default: min(2, cpu_count) for moonshine when omitted, '
+                                        'unset for other backends; whisper and qwen-asr apply on CPU only; '
+                                        'qwen-asr-rs sets RAYON_NUM_THREADS)')
     parser_transcribe.add_argument('--no-condition', action='store_true',
                                    help='Disable conditioning on previous segment output '
                                         '(whisper, qwen-asr, and qwen-asr-rs backends). By default, each segment '
