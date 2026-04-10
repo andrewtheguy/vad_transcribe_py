@@ -1,15 +1,10 @@
 version = 1
 requires-python = ">=3.14.0, <3.15"
 resolution-markers = [
-    "platform_machine == 'aarch64' and platform_system == 'Linux' and sys_platform == 'linux'",
-    "platform_machine == 'x86_64' and platform_system == 'Linux' and sys_platform == 'linux'",
-    "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system == 'Linux') or (platform_system == 'Linux' and sys_platform != 'linux')",
+    "platform_system == 'Linux'",
     "platform_system != 'Linux' and sys_platform == 'win32'",
     "platform_system != 'Linux' and sys_platform == 'emscripten'",
-    "platform_system != 'Linux' and sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and platform_system != 'Linux' and sys_platform == 'linux'",
-    "platform_machine == 'x86_64' and platform_system != 'Linux' and sys_platform == 'linux'",
-    "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system != 'Linux' and sys_platform == 'linux') or (platform_system != 'Linux' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "platform_system != 'Linux' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
 [[package]]
@@ -282,7 +277,7 @@ name = "click"
 version = "8.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system == 'Windows' and sys_platform == 'linux') or (platform_system == 'Windows' and sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/57/75/31212c6bf2503fdf920d87fee5d7a86a2e3bcf444984126f13d8e4016804/click-8.3.2.tar.gz", hash = "sha256:14162b8b3b3550a7d479eafa77dfd3c38d9dc8951f6f69c78913a8f9a7540fd5", size = 302856 }
 wheels = [
@@ -1386,11 +1381,11 @@ wheels = [
 
 [[package]]
 name = "python-multipart"
-version = "0.0.24"
+version = "0.0.26"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8a/45/e23b5dc14ddb9918ae4a625379506b17b6f8fc56ca1d82db62462f59aea6/python_multipart-0.0.24.tar.gz", hash = "sha256:9574c97e1c026e00bc30340ef7c7d76739512ab4dfd428fec8c330fa6a5cc3c8", size = 37695 }
+sdist = { url = "https://files.pythonhosted.org/packages/88/71/b145a380824a960ebd60e1014256dbb7d2253f2316ff2d73dfd8928ec2c3/python_multipart-0.0.26.tar.gz", hash = "sha256:08fadc45918cd615e26846437f50c5d6d23304da32c341f289a617127b081f17", size = 43501 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/73/89930efabd4da63cea44a3f438aeb753d600123570e6d6264e763617a9ce/python_multipart-0.0.24-py3-none-any.whl", hash = "sha256:9b110a98db707df01a53c194f0af075e736a770dc5058089650d70b4a182f950", size = 24420 },
+    { url = "https://files.pythonhosted.org/packages/9a/22/f1925cdda983ab66fc8ec6ec8014b959262747e58bdca26a4e3d1da29d56/python_multipart-0.0.26-py3-none-any.whl", hash = "sha256:c0b169f8c4484c13b0dcf2ef0ec3a4adb255c4b7d18d8e420477d2b1dd03f185", size = 28847 },
 ]
 
 [[package]]
@@ -1452,13 +1447,13 @@ wheels = [
 
 [[package]]
 name = "qwen-burn"
-version = "0.0.1a1"
-source = { path = "../qwen-burn/dist/qwen_burn-0.0.1a1-cp39-abi3-macosx_11_0_arm64.whl" }
+version = "0.0.1a2"
+source = { path = "../qwen-burn/dist/qwen_burn-0.0.1a2-cp39-abi3-macosx_11_0_arm64.whl" }
 dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { filename = "qwen_burn-0.0.1a1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:eb37302f7e3be93b2190ce78c4a16958a1f3ef8413097bd6f64a11ee64183b01" },
+    { filename = "qwen_burn-0.0.1a2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:319075a3b46c96edb49c6275570af57fd9bcc78678ee5ea07d64bfc557d202cf" },
 ]
 
 [package.metadata]
@@ -1932,7 +1927,7 @@ name = "tqdm"
 version = "4.67.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and platform_system == 'Windows' and sys_platform == 'linux') or (platform_system == 'Windows' and sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598 }
 wheels = [
@@ -2077,7 +2072,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
     { name = "qwen-asr", specifier = ">=0.0.6" },
-    { name = "qwen-burn", path = "../qwen-burn/dist/qwen_burn-0.0.1a1-cp39-abi3-macosx_11_0_arm64.whl" },
+    { name = "qwen-burn", path = "../qwen-burn/dist/qwen_burn-0.0.1a2-cp39-abi3-macosx_11_0_arm64.whl" },
     { name = "requests", specifier = ">=2.32" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
