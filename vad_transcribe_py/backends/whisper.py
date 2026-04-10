@@ -29,11 +29,24 @@ _MODEL_LANGUAGE_OVERRIDES: dict[str, dict[str, str]] = {
 }
 
 
-def _get_device_and_dtype() -> tuple[str, torch.dtype]:
-    """Auto-detect best device and dtype."""
-    if torch.cuda.is_available():
+def _get_device_and_dtype(device: str | None = None) -> tuple[str, torch.dtype]:
+    """Resolve device and dtype for Whisper.
+
+    When *device* is ``None``, auto-detect: cuda > mps > cpu.
+    """
+    if device is None:
+        if torch.cuda.is_available():
+            resolved = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            resolved = "mps"
+        else:
+            resolved = "cpu"
+    else:
+        resolved = device
+
+    if resolved == "cuda":
         return "cuda:0", torch.float16
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    elif resolved == "mps":
         return "mps", torch.float16
     else:
         return "cpu", torch.float32
@@ -57,6 +70,7 @@ class WhisperBackend(TranscriberBase):
         num_threads: int | None = None,
         condition: bool = True,
         sub_timestamps: bool = True,
+        device: str | None = None,
     ):
         super().__init__(language, chinese_conversion, num_threads)
         self.model = model
@@ -65,6 +79,7 @@ class WhisperBackend(TranscriberBase):
         self._sub_timestamps = sub_timestamps
         self._prompt_ids: Any = None
         self._processor: Any = None
+        self._requested_device = device
         self._device: str = "cpu"
 
         if num_threads is not None:
@@ -93,7 +108,7 @@ class WhisperBackend(TranscriberBase):
             )
 
         model_id = _resolve_whisper_model_id(self.model)
-        self._device, torch_dtype = _get_device_and_dtype()
+        self._device, torch_dtype = _get_device_and_dtype(device=self._requested_device)
 
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             model_id, dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True

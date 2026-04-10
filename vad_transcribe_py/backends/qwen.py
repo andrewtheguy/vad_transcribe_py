@@ -57,11 +57,24 @@ _LANGUAGE_MAP: dict[str, str] = {
 }
 
 
-def _get_device_and_dtype(enable_mps: bool = False) -> tuple[str, torch.dtype]:
-    """Auto-detect best device and dtype for Qwen3-ASR."""
-    if torch.cuda.is_available():
+def _get_device_and_dtype(device: str | None = None) -> tuple[str, torch.dtype]:
+    """Resolve device and dtype for Qwen3-ASR.
+
+    When *device* is ``None``, auto-detect: cuda > mps > cpu.
+    """
+    if device is None:
+        if torch.cuda.is_available():
+            resolved = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            resolved = "mps"
+        else:
+            resolved = "cpu"
+    else:
+        resolved = device
+
+    if resolved == "cuda":
         return "cuda:0", torch.bfloat16
-    elif enable_mps and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    elif resolved == "mps":
         return "mps", torch.float16
     else:
         return "cpu", torch.float32
@@ -92,12 +105,12 @@ class QwenASRBackend(TranscriberBase):
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
         condition: bool = True,
-        enable_mps: bool = False,
+        device: str | None = None,
     ):
         super().__init__(language, chinese_conversion, num_threads)
         self.model = model
         self._condition = condition
-        self._enable_mps = enable_mps
+        self._device = device
         self._previous_text: str = ""
         self._qwen_model: Any = None
         self._parse_asr_output: Any = None
@@ -132,7 +145,7 @@ class QwenASRBackend(TranscriberBase):
         #import transformers
         #transformers.logging.set_verbosity_error()
 
-        device, torch_dtype = _get_device_and_dtype(enable_mps=self._enable_mps)
+        device, torch_dtype = _get_device_and_dtype(device=self._device)
 
         self._qwen_model = Qwen3ASRModel.from_pretrained(
             self.model,
