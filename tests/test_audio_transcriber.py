@@ -308,8 +308,9 @@ def test_qwen_rejects_streaming_or_vllm_backend(monkeypatch):
 
 @pytest.fixture()
 def stub_qwen_rs(monkeypatch):
-    """Stub out QwenASRRsBackend model loading."""
+    """Stub out QwenASRRsBackend model loading and device detection."""
     monkeypatch.setattr(QwenASRRsBackend, "_load_model", lambda _self, _model: None)
+    monkeypatch.setattr(QwenASRRsBackend, "_detect_device", staticmethod(lambda: "cpu"))
 
 
 def test_qwen_rs_conditioning_enabled_by_default(stub_qwen_rs):
@@ -326,9 +327,9 @@ def test_qwen_rs_conditioning_disabled(stub_qwen_rs):
 
 
 def test_qwen_rs_device_default(stub_qwen_rs):
-    """Test that qwen-asr-rs defaults to cpu device."""
+    """Test that qwen-asr-rs auto-detects device when not specified."""
     transcriber = QwenASRRsBackend(language="en")
-    assert transcriber._device == "cpu"
+    assert transcriber._device == "cpu"  # stubbed _detect_device returns "cpu"
 
 
 def test_qwen_rs_device_custom(stub_qwen_rs):
@@ -368,9 +369,9 @@ def test_qwen_rs_transcribe_integration(monkeypatch):
     """Test qwen-asr-rs transcribe via a stub qwencandle module."""
 
     class StubQwenAsr:
-        def __init__(self, model_id=None, device="cpu"):
-            self.model_id = model_id
+        def __init__(self, device: str, model_id: str | None = None):
             self.device = device
+            self.model_id = model_id
             self.transcribe_calls: list[dict[str, object]] = []
 
         def transcribe(self, samples, *, language=None, context=None):
@@ -380,6 +381,8 @@ def test_qwen_rs_transcribe_integration(monkeypatch):
     qwencandle_module = ModuleType("qwencandle")
     qwencandle_module.QwenAsr = StubQwenAsr  # type: ignore[attr-defined]
     qwencandle_module.DEFAULT_MODEL_ID = "Qwen/Qwen3-ASR-0.6B"  # type: ignore[attr-defined]
+    qwencandle_module.is_cuda_available = lambda: False  # type: ignore[attr-defined]
+    qwencandle_module.is_metal_available = lambda: False  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "qwencandle", qwencandle_module)
 
     backend = QwenASRRsBackend(language="en")

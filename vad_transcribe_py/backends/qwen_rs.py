@@ -63,13 +63,13 @@ class QwenASRRsBackend(TranscriberBase):
         model: str | None = None,
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
-        device: str = 'cpu',
+        device: str | None = None,
         condition: bool = True,
     ):
         super().__init__(language, chinese_conversion, num_threads)
         if num_threads is not None:
             os.environ["RAYON_NUM_THREADS"] = str(num_threads)
-        self._device = device
+        self._device = device or self._detect_device()
         self._condition = condition
         self._previous_text: str = ""
         self._model: object = None
@@ -84,6 +84,17 @@ class QwenASRRsBackend(TranscriberBase):
     def soft_limit_seconds(self) -> float | None:
         return QWEN_ASR_SOFT_LIMIT_SECONDS
 
+    @staticmethod
+    def _detect_device() -> str:
+        """Auto-detect the best available device: cuda > metal > cpu."""
+        import qwencandle
+
+        if qwencandle.is_cuda_available():
+            return "cuda"
+        if qwencandle.is_metal_available():
+            return "metal"
+        return "cpu"
+
     def _load_model(self, model: str | None) -> None:
         """Load Qwen3-ASR model via the qwencandle Rust bindings."""
         try:
@@ -95,7 +106,7 @@ class QwenASRRsBackend(TranscriberBase):
             )
 
         logger.info("Loading qwencandle model (device=%s)...", self._device)
-        self._model = QwenAsr(model_id=model, device=self._device)
+        self._model = QwenAsr(self._device, model_id=model)
         logger.info("qwencandle model loaded on %s", self._device)
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
