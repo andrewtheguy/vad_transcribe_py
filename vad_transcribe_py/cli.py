@@ -669,9 +669,9 @@ def main():
                                    help='Enable MPS (Apple Silicon GPU) detection for qwen-asr backend. '
                                         'WARNING: MPS has known memory leak issues with qwen-asr '
                                         'and may cause increasing memory usage over long transcriptions.')
-    parser_transcribe.add_argument('--device', type=str, default='cpu',
+    parser_transcribe.add_argument('--device', type=str, default=None,
                                    help='Device for qwen-asr-rs backend: cpu, metal, or cuda '
-                                        '(default: cpu)')
+                                        '(default: auto-detect cuda > metal > cpu)')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
@@ -697,7 +697,7 @@ def main():
                 lock.acquire()
 
             if args.action == 'transcribe':
-                if args.device != 'cpu' and args.backend != 'qwen-asr-rs':
+                if args.device is not None and args.backend != 'qwen-asr-rs':
                     parser.error('--device is only supported by the qwen-asr-rs backend')
 
                 if args.threads is not None:
