@@ -211,8 +211,7 @@ def create_transcriber(
     num_threads: int | None = None,
     condition: bool = True,
     sub_timestamps: bool = True,
-    enable_mps: bool = False,
-    device: str = 'cpu',
+    device: str | None = None,
 ) -> AudioTranscriber:
     """Factory function to create a transcriber backend instance."""
     if backend == 'whisper':
@@ -225,6 +224,7 @@ def create_transcriber(
             num_threads=num_threads,
             condition=condition,
             sub_timestamps=sub_timestamps,
+            device=device,
         )
     elif backend == 'moonshine':
         from vad_transcribe_py.backends.moonshine import MoonshineBackend
@@ -247,7 +247,7 @@ def create_transcriber(
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
             condition=condition,
-            enable_mps=enable_mps,
+            device=device,
         )
     elif backend == 'qwen-asr-rs':
         from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend

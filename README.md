@@ -102,7 +102,7 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--backend {whisper, moonshine, qwen-asr, qwen-asr-rs}`: Transcription backend (default: `whisper`)
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 - `--threads N`: Number of CPU threads for inference (default: `min(2, cpu_count)` for moonshine, none for other backends). For qwen-asr-rs, sets the `RAYON_NUM_THREADS` environment variable.
-- `--device {cpu, metal, cuda}`: Device for qwen-asr-rs backend only (default: auto-detect cuda > metal > cpu)
+- `--device {cpu, mps, metal, cuda}`: Device for whisper, qwen-asr, and qwen-asr-rs backends (default: auto-detect cuda > mps > cpu). Not supported by moonshine.
 - `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr, and qwen-asr-rs backends)
 - `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper backend only)
 
@@ -261,7 +261,7 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 - **Moonshine** backend: Fast ONNX inference. English (streaming, 60s hard limit), Chinese/Spanish (non-streaming, 9s hard limit)
 - **Qwen3-ASR** backend: 30-language support, 30-second hard limit per segment
 - **Qwen3-ASR (Rust)** backend: Same model via Rust bindings, supports CPU/Metal/CUDA via `--device`. Recommended over `qwen-asr` for Metal, as it leaks significantly less memory.
-- Whisper device auto-detected: CUDA > MPS > CPU. Moonshine uses ONNX runtime (CUDA or CPU)
+- Device auto-detected for torch-based backends (whisper, qwen-asr, qwen-asr-rs): CUDA > MPS > CPU. Override with `--device`. Moonshine uses ONNX runtime (CUDA or CPU)
 - Larger Whisper models (e.g., `large-v3`) provide better accuracy but require more memory
 - Moonshine supports English, Chinese, and Spanish only
 

@@ -665,13 +665,10 @@ def main():
                                    help='Disable sub-sentence timestamp splitting '
                                         '(whisper backend only). Returns one segment per '
                                         'VAD segment instead of multiple timestamped chunks.')
-    parser_transcribe.add_argument('--enable-mps-detection', action='store_true',
-                                   help='Enable MPS (Apple Silicon GPU) detection for qwen-asr backend. '
-                                        'WARNING: MPS has known memory leak issues with qwen-asr '
-                                        'and may cause increasing memory usage over long transcriptions.')
     parser_transcribe.add_argument('--device', type=str, default=None,
-                                   help='Device for qwen-asr-rs backend: cpu, metal, or cuda '
-                                        '(default: auto-detect cuda > metal > cpu)')
+                                   help='Device for whisper, qwen-asr, and qwen-asr-rs backends: '
+                                        'cpu, metal/mps, or cuda '
+                                        '(default: auto-detect cuda > mps > cpu)')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
@@ -697,8 +694,8 @@ def main():
                 lock.acquire()
 
             if args.action == 'transcribe':
-                if args.device is not None and args.backend != 'qwen-asr-rs':
-                    parser.error('--device is only supported by the qwen-asr-rs backend')
+                if args.device is not None and args.backend == 'moonshine':
+                    parser.error('--device is not supported by the moonshine backend')
 
                 if args.threads is not None:
                     num_threads = args.threads
@@ -717,7 +714,6 @@ def main():
                         num_threads=num_threads,
                         condition=not args.no_condition,
                         sub_timestamps=not args.no_sub_timestamps,
-                        enable_mps=args.enable_mps_detection,
                         device=args.device,
                     )
                     segment_count = stream_transcribe_stdin_with_vad(
@@ -737,7 +733,6 @@ def main():
                         num_threads=num_threads,
                         condition=not args.no_condition,
                         sub_timestamps=not args.no_sub_timestamps,
-                        enable_mps=args.enable_mps_detection,
                         device=args.device,
                     )
 
