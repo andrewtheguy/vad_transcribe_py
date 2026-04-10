@@ -65,37 +65,25 @@ def test_transcribed_segment_dataclass():
 
 def test_process_text_chinese_no_conversion():
     """Test that Chinese text is not converted by default."""
-    result = audio_transcriber.process_text("简体中文", "zh", "none")
+    result = audio_transcriber.process_text("简体中文", "none")
     assert result == "简体中文"
 
 
 def test_process_text_chinese_to_traditional():
     """Test that Chinese text is converted to Traditional Chinese."""
-    result = audio_transcriber.process_text("简体中文", "zh", "traditional")
+    result = audio_transcriber.process_text("简体中文", "traditional")
     assert result == "簡體中文"
 
 
 def test_process_text_chinese_to_simplified():
     """Test that Chinese text is converted to Simplified Chinese."""
-    result = audio_transcriber.process_text("簡體中文", "zh", "simplified")
+    result = audio_transcriber.process_text("簡體中文", "simplified")
     assert result == "简体中文"
 
 
-def test_process_text_cantonese_no_conversion():
-    """Test that Cantonese text is not converted by default."""
-    result = audio_transcriber.process_text("简体中文", "yue", "none")
-    assert result == "简体中文"
-
-
-def test_process_text_cantonese_to_traditional():
-    """Test that Cantonese text is converted to Traditional Chinese."""
-    result = audio_transcriber.process_text("简体中文", "yue", "traditional")
-    assert result == "簡體中文"
-
-
-def test_process_text_english():
-    """Test that English text is not modified."""
-    result = audio_transcriber.process_text("Hello world", "en", "none")
+def test_process_text_english_none():
+    """Test that English text is not modified with none conversion."""
+    result = audio_transcriber.process_text("Hello world", "none")
     assert result == "Hello world"
 
 
