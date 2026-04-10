@@ -53,9 +53,9 @@ def is_repetitive(text: str) -> bool:
     return False
 
 
-def process_text(text: str, language: str | None, chinese_conversion: ChineseConversion) -> str:
+def process_text(text: str, chinese_conversion: ChineseConversion) -> str:
     """Process text for storage (e.g., convert Chinese variants)."""
-    if language in ['yue', 'zh'] and chinese_conversion != 'none':
+    if chinese_conversion != 'none':
         if chinese_conversion == 'traditional':
             return zhconv(text, 'zh-Hant')
         elif chinese_conversion == 'simplified':
@@ -89,5 +89,5 @@ class TranscriberBase:
         start_fmt = format_timestamp(start)
         end_fmt = format_timestamp(end)
         logger.info("[%s -> %s] %s", start_fmt, end_fmt, text)
-        text = process_text(text, self.language, self.chinese_conversion)
+        text = process_text(text, self.chinese_conversion)
         return TranscribedSegment(text=text, start=start, end=end)
