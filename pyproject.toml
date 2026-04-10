@@ -20,14 +20,14 @@ dependencies = [
     "filelock>=3.25.2",
     "requests>=2.32",
     "qwen-asr>=0.0.6",
-    "qwen-burn==0.0.1a2",
+    "qwen-burn==0.0.1a3",
 ]
 
 [project.scripts]
 vad-transcribe-py = "vad_transcribe_py.cli:main"
 
 [tool.uv.sources]
-qwen-burn = { path = "/Users/it3/codes/andrew/qwen-burn/dist/qwen_burn-0.0.1a2-cp39-abi3-macosx_11_0_arm64.whl" }
+qwen-burn = { path = "/Users/it3/codes/andrew/qwen-burn/dist/qwen_burn-0.0.1a3-cp39-abi3-macosx_11_0_arm64.whl" }
 
 [tool.hatch.metadata]
 allow-direct-references = true

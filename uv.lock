@@ -1447,13 +1447,13 @@ wheels = [
 
 [[package]]
 name = "qwen-burn"
-version = "0.0.1a2"
-source = { path = "../qwen-burn/dist/qwen_burn-0.0.1a2-cp39-abi3-macosx_11_0_arm64.whl" }
+version = "0.0.1a3"
+source = { path = "../qwen-burn/dist/qwen_burn-0.0.1a3-cp39-abi3-macosx_11_0_arm64.whl" }
 dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { filename = "qwen_burn-0.0.1a2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:319075a3b46c96edb49c6275570af57fd9bcc78678ee5ea07d64bfc557d202cf" },
+    { filename = "qwen_burn-0.0.1a3-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:b2369ab121740ffeb139ff46a4bbfa4484aa1cabd9b1611c5f941fc3b4b99e10" },
 ]
 
 [package.metadata]
@@ -2072,7 +2072,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
     { name = "qwen-asr", specifier = ">=0.0.6" },
-    { name = "qwen-burn", path = "../qwen-burn/dist/qwen_burn-0.0.1a2-cp39-abi3-macosx_11_0_arm64.whl" },
+    { name = "qwen-burn", path = "../qwen-burn/dist/qwen_burn-0.0.1a3-cp39-abi3-macosx_11_0_arm64.whl" },
     { name = "requests", specifier = ">=2.32" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
