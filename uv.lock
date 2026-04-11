@@ -2008,7 +2008,7 @@ wheels = [
 
 [[package]]
 name = "vad-transcribe-py"
-version = "0.2.31"
+version = "0.2.32"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
