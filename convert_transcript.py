@@ -7,7 +7,8 @@ import urllib.request
 from pathlib import Path
 from typing import TextIO, cast
 
-LMSTUDIO_URL = "http://127.0.0.1:1234/v1/chat/completions"
+OLLAMA_URL = "http://127.0.0.1:11434/v1/chat/completions"
+DEFAULT_MODEL = "gemma4:e2b-it-q8_0"
 SUMMARY_SYSTEM_PROMPT = "總結一下這節目錄音文本的內容"
 
 
@@ -35,9 +36,9 @@ def convert(path: Path, out: TextIO) -> None:
     out.write(f"[{format_ts(last_end_ms)}]: (end)\n")
 
 
-def summarize(transcript: str) -> str:
+def summarize(transcript: str, model: str) -> str:
     payload = {
-        "model": "local-model",
+        "model": model,
         "temperature": 0,
         "messages": [
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
@@ -45,7 +46,7 @@ def summarize(transcript: str) -> str:
         ],
     }
     req = urllib.request.Request(
-        LMSTUDIO_URL,
+        OLLAMA_URL,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
@@ -63,17 +64,23 @@ def main() -> None:
     _ = parser.add_argument(
         "--summarize",
         action="store_true",
-        help="send transcript to LM Studio at 127.0.0.1:1234 and emit the summary instead",
+        help="send transcript to Ollama at 127.0.0.1:11434 and emit the summary instead",
+    )
+    _ = parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Ollama model name to use for summarization (default: {DEFAULT_MODEL})",
     )
     args = parser.parse_args()
     src = cast(Path, args.input)
     dest = cast("Path | None", args.output)
     do_summarize = cast(bool, args.summarize)
+    model = cast(str, args.model)
 
     if do_summarize:
         buf = io.StringIO()
         convert(src, buf)
-        summary = summarize(buf.getvalue())
+        summary = summarize(buf.getvalue(), model)
         if dest is None:
             sys.stdout.write(summary)
             if not summary.endswith("\n"):
