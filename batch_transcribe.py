@@ -40,7 +40,7 @@ def has_stream_end(path: Path) -> bool:
         return False
     with path.open("rb") as f:
         tail_size = min(size, 4096)
-        _ = f.seek(size - tail_size)
+        f.seek(size - tail_size)
         tail = f.read(tail_size).decode("utf-8", errors="replace")
     last = next((ln for ln in reversed(tail.splitlines()) if ln.strip()), "")
     return STREAM_END_MARKER in last
@@ -60,7 +60,7 @@ def transcribe(m4a: Path, out_file: Path) -> None:
             )
         except BaseException:
             ffmpeg.kill()
-            _ = ffmpeg.wait()
+            ffmpeg.wait()
             raise
         # Close parent copy so ffmpeg sees SIGPIPE if transcribe exits early.
         ffmpeg.stdout.close()
@@ -70,8 +70,8 @@ def transcribe(m4a: Path, out_file: Path) -> None:
         except BaseException:
             ffmpeg.kill()
             transcribe_proc.kill()
-            _ = ffmpeg.wait()
-            _ = transcribe_proc.wait()
+            ffmpeg.wait()
+            transcribe_proc.wait()
             raise
 
     if ffmpeg_rc != 0:
