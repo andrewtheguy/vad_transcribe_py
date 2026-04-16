@@ -15,7 +15,7 @@ find "$TRANSCRIPT_BASE" -name '*_transcript.jsonl' -type f | sort | while IFS= r
     base="$(basename "$rel" _transcript.jsonl)"
 
     out_dir="$OUTPUT_BASE/$dir"
-    out_file="$out_dir/${base}_summary.txt"
+    out_file="$out_dir/${base}_summary.md"
 
     if [[ -s "$out_file" ]]; then
         echo "Already summarized: $out_file"
