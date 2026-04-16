@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOURLY_DIR="/Volumes/dasdata/capture881903/output/hourly"
+INPUT_DIR="/Volumes/dasdata/capture881903/trimmed"
 OUTPUT_BASE="./tmp/transcripts"
 
-find "$HOURLY_DIR" -name '*.m4a' -type f | sort | while IFS= read -r m4a; do
-    rel="${m4a#$HOURLY_DIR/}"
+find "$INPUT_DIR" -name '*.m4a' -type f | sort | while IFS= read -r m4a; do
+    rel="${m4a#$INPUT_DIR/}"
     dir="$(dirname "$rel")"
     base="$(basename "$rel" .m4a)"
 
