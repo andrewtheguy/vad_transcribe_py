@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
-from vad_transcribe_py.backends.qwen import QwenASRBackend
+from vad_transcribe_py.backends.mlx import QwenASRMLXBackend
 from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
 from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
 from vad_transcribe_py.vad_processor import (
@@ -128,35 +128,6 @@ def test_create_transcriber_with_no_condition():
     assert transcriber._condition is False
 
 
-@pytest.fixture()
-def stub_qwen(monkeypatch):
-    """Stub out Qwen model loading."""
-    monkeypatch.setattr(QwenASRBackend, "_load_model", lambda _self: None)
-
-
-def test_qwen_conditioning_enabled_by_default(stub_qwen):
-    """Test that conditioning is enabled by default for qwen-asr."""
-    transcriber = QwenASRBackend(language="en")
-    assert transcriber._condition is True
-    assert transcriber._previous_text == ""
-
-
-def test_qwen_conditioning_disabled(stub_qwen):
-    """Test that conditioning can be disabled for qwen-asr."""
-    transcriber = QwenASRBackend(language="en", condition=False)
-    assert transcriber._condition is False
-
-
-def test_create_transcriber_qwen_with_condition(stub_qwen):
-    """Test that factory passes condition to qwen-asr backend."""
-    transcriber = audio_transcriber.create_transcriber(
-        language="en",
-        backend="qwen-asr",
-        condition=False,
-    )
-    assert transcriber._condition is False
-
-
 def test_hard_limit_seconds_whisper():
     """Test that whisper backend reports correct hard limit."""
     transcriber = WhisperBackend(
@@ -214,84 +185,6 @@ def test_moonshine_resolve_model_invalid_language():
 
     with pytest.raises(ValueError, match="Unknown language"):
         resolve_model("fr")
-
-
-def test_qwen_uses_non_streaming_transformers_backend(monkeypatch):
-    """Test qwen-asr is initialized in non-streaming transformers mode."""
-
-    class StubProcessor:
-        def __init__(self):
-            self.tokenizer = SimpleNamespace(
-                eos_token_id=101,
-                pad_token_id=102,
-            )
-
-    class StubQwen3ASRModel:
-        llm_called = False
-        from_pretrained_calls = []
-        transcribe_calls = []
-
-        def __init__(self):
-            self.backend = "transformers"
-            self.processor = StubProcessor()
-            self.model = SimpleNamespace(thinker=SimpleNamespace())
-
-        def transcribe(self, audio, language, context=""):
-            type(self).transcribe_calls.append({"audio": audio, "language": language, "context": context})
-            return [SimpleNamespace(text="hello")]
-
-        @classmethod
-        def from_pretrained(cls, *args, **kwargs):
-            cls.from_pretrained_calls.append((args, kwargs))
-            return cls()
-
-        @classmethod
-        def LLM(cls, *args, **kwargs):
-            cls.llm_called = True
-            raise AssertionError("streaming/vLLM path should not be used")
-
-    qwen_module = ModuleType("qwen_asr")
-    qwen_module.Qwen3ASRModel = StubQwen3ASRModel
-    inference_module = ModuleType("qwen_asr.inference")
-    utils_module = ModuleType("qwen_asr.inference.utils")
-    utils_module.parse_asr_output = lambda raw, user_language=None: (user_language or "", raw)
-
-    monkeypatch.setitem(sys.modules, "qwen_asr", qwen_module)
-    monkeypatch.setitem(sys.modules, "qwen_asr.inference", inference_module)
-    monkeypatch.setitem(sys.modules, "qwen_asr.inference.utils", utils_module)
-
-    backend = QwenASRBackend(language="en")
-    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
-
-    assert StubQwen3ASRModel.from_pretrained_calls
-    assert StubQwen3ASRModel.llm_called is False
-    assert StubQwen3ASRModel.transcribe_calls
-    assert StubQwen3ASRModel.transcribe_calls[0]["language"] == "English"
-    assert backend._eos_token_ids == [101, 102]
-    assert backend._qwen_model.backend == "transformers"
-    assert segments[0].text == "hello"
-
-
-def test_qwen_rejects_streaming_or_vllm_backend(monkeypatch):
-    """Test qwen-asr fails fast if it is not using the transformers backend."""
-
-    class StubQwen3ASRModel:
-        @classmethod
-        def from_pretrained(cls, *args, **kwargs):
-            return SimpleNamespace(backend="vllm")
-
-    qwen_module = ModuleType("qwen_asr")
-    qwen_module.Qwen3ASRModel = StubQwen3ASRModel
-    inference_module = ModuleType("qwen_asr.inference")
-    utils_module = ModuleType("qwen_asr.inference.utils")
-    utils_module.parse_asr_output = lambda raw, user_language=None: (user_language or "", raw)
-
-    monkeypatch.setitem(sys.modules, "qwen_asr", qwen_module)
-    monkeypatch.setitem(sys.modules, "qwen_asr.inference", inference_module)
-    monkeypatch.setitem(sys.modules, "qwen_asr.inference.utils", utils_module)
-
-    with pytest.raises(RuntimeError, match="non-streaming transformers backend"):
-        QwenASRBackend(language="en")
 
 
 @pytest.fixture()
@@ -380,3 +273,100 @@ def test_qwen_rs_transcribe_integration(monkeypatch):
     assert backend._model.transcribe_calls
     assert backend._model.transcribe_calls[0]["language"] == "English"
     assert segments[0].text == "hello world"
+
+
+@pytest.fixture()
+def stub_qwen_mlx(monkeypatch):
+    """Stub out QwenASRMLXBackend model loading."""
+    monkeypatch.setattr(QwenASRMLXBackend, "_load_model", lambda _self: None)
+
+
+def test_qwen_mlx_conditioning_enabled_by_default(stub_qwen_mlx):
+    """Test that conditioning is enabled by default for qwen-asr-mlx."""
+    transcriber = QwenASRMLXBackend(language="en")
+    assert transcriber._condition is True
+    assert transcriber._previous_text == ""
+
+
+def test_qwen_mlx_conditioning_disabled(stub_qwen_mlx):
+    """Test that conditioning can be disabled for qwen-asr-mlx."""
+    transcriber = QwenASRMLXBackend(language="en", condition=False)
+    assert transcriber._condition is False
+
+
+def test_qwen_mlx_hard_limit(stub_qwen_mlx):
+    """Test that qwen-asr-mlx reports correct hard limit."""
+    from vad_transcribe_py.vad_processor import QWEN_ASR_HARD_LIMIT_SECONDS
+    transcriber = QwenASRMLXBackend(language="en")
+    assert transcriber.hard_limit_seconds == QWEN_ASR_HARD_LIMIT_SECONDS
+
+
+def test_qwen_mlx_soft_limit(stub_qwen_mlx):
+    """Test that qwen-asr-mlx reports correct soft limit."""
+    from vad_transcribe_py.vad_processor import QWEN_ASR_SOFT_LIMIT_SECONDS
+    transcriber = QwenASRMLXBackend(language="en")
+    assert transcriber.soft_limit_seconds == QWEN_ASR_SOFT_LIMIT_SECONDS
+
+
+def test_qwen_mlx_device_ignored(stub_qwen_mlx, caplog):
+    """Test that non-metal device is accepted but logged+ignored."""
+    import logging
+    caplog.set_level(logging.WARNING)
+    _ = QwenASRMLXBackend(language="en", device="cuda")
+    assert any("ignored" in r.message for r in caplog.records)
+
+
+def test_create_transcriber_qwen_mlx_with_condition(stub_qwen_mlx):
+    """Test that factory passes condition to qwen-asr-mlx backend."""
+    transcriber = audio_transcriber.create_transcriber(
+        language="en",
+        backend="qwen-asr-mlx",
+        condition=False,
+    )
+    assert transcriber._condition is False
+    assert isinstance(transcriber, audio_transcriber.AudioTranscriber)
+
+
+def test_qwen_mlx_transcribe_integration(monkeypatch):
+    """Test qwen-asr-mlx transcribe via a stub mlx_audio module."""
+
+    class StubMLXModel:
+        def __init__(self):
+            self.generate_calls: list[dict[str, object]] = []
+
+        def generate(self, audio, *, language=None, system_prompt=None, verbose=False, **_kwargs):
+            self.generate_calls.append(
+                {"audio": audio, "language": language, "system_prompt": system_prompt}
+            )
+            return SimpleNamespace(text="hello mlx")
+
+    stub = StubMLXModel()
+    mlx_audio_module = ModuleType("mlx_audio")
+    stt_module = ModuleType("mlx_audio.stt")
+    utils_module = ModuleType("mlx_audio.stt.utils")
+    utils_module.load_model = lambda _model_id: stub  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx_audio", mlx_audio_module)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt", stt_module)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt.utils", utils_module)
+
+    backend = QwenASRMLXBackend(language="en")
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert stub.generate_calls
+    assert stub.generate_calls[0]["language"] == "English"
+    # First pass: _previous_text is empty → system_prompt stays None.
+    assert stub.generate_calls[0]["system_prompt"] is None
+    assert segments[0].text == "hello mlx"
+    assert backend._previous_text == "hello mlx"
+
+    # Second call: _previous_text flows into system_prompt.
+    _ = backend.transcribe(np.zeros(16000, dtype=np.float32))
+    assert stub.generate_calls[1]["system_prompt"] == "hello mlx"
+
+
+def test_qwen_mlx_unknown_language_raises(stub_qwen_mlx):
+    """Test that an unrecognized language code surfaces ValueError at transcribe time."""
+    backend = QwenASRMLXBackend(language="xx")
+    backend._mlx_model = object()  # satisfy the assert in transcribe()
+    with pytest.raises(ValueError, match="Unrecognized language code"):
+        backend.transcribe(np.zeros(16000, dtype=np.float32))

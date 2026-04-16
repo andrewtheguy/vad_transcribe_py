@@ -238,17 +238,6 @@ def create_transcriber(
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
         )
-    elif backend == 'qwen-asr':
-        from vad_transcribe_py.backends.qwen import QWEN_ASR_DEFAULT_MODEL, QwenASRBackend
-
-        return QwenASRBackend(
-            language=language,
-            model=model if model is not None else QWEN_ASR_DEFAULT_MODEL,
-            chinese_conversion=chinese_conversion,
-            num_threads=num_threads,
-            condition=condition,
-            device=device,
-        )
     elif backend == 'qwen-asr-rs':
         from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
 
@@ -259,6 +248,17 @@ def create_transcriber(
             num_threads=num_threads,
             device=device,
             condition=condition,
+        )
+    elif backend == 'qwen-asr-mlx':
+        from vad_transcribe_py.backends.mlx import QWEN_ASR_MLX_DEFAULT_MODEL, QwenASRMLXBackend
+
+        return QwenASRMLXBackend(
+            language=language,
+            model=model if model is not None else QWEN_ASR_MLX_DEFAULT_MODEL,
+            chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
+            condition=condition,
+            device=device,
         )
     else:
         raise ValueError(f"Unsupported backend: {backend}")
