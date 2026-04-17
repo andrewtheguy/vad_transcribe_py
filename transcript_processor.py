@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TextIO, cast
 
 API_URL = "http://127.0.0.1:1234/v1/chat/completions"
+DEFAULT_MODEL = "google/gemma-4-e2b"
 SUMMARY_SYSTEM_PROMPT = "總結一下這節目錄音文本的內容"
 STREAM_END_MARKER = '"type": "stream_end"'
 
@@ -144,7 +145,7 @@ def main() -> int:
     )
 
     p_sum = sub.add_parser(
-        "summarize", help="Summarize a single transcript via OpenAI-compatible API."
+        "summarize", help="Summarize a single transcript via Ollama."
     )
     p_sum.add_argument(
         "--input", "-i", type=Path, required=True, help="transcript.jsonl input path"
@@ -154,8 +155,8 @@ def main() -> int:
     )
     p_sum.add_argument(
         "--model",
-        default="",
-        help="model name",
+        default=DEFAULT_MODEL,
+        help=f"Ollama model (default: {DEFAULT_MODEL})",
     )
 
     p_batch = sub.add_parser(
@@ -164,8 +165,8 @@ def main() -> int:
     )
     p_batch.add_argument(
         "--model",
-        default="",
-        help="model name",
+        default=DEFAULT_MODEL,
+        help=f"Ollama model (default: {DEFAULT_MODEL})",
     )
 
     args = parser.parse_args()
