@@ -1,6 +1,6 @@
 [project]
 name = "vad-transcribe-py"
-version = "0.2.33"
+version = "0.2.34"
 description = ""
 authors = [{ name = "Andrew Chen", email = "andrew@jaanuu.com" }]
 requires-python = "~=3.14.0"
@@ -19,8 +19,8 @@ dependencies = [
     "tqdm>=4.67.3",
     "filelock>=3.25.2",
     "requests>=2.32",
-    "qwen-asr>=0.0.6",
     "qwencandle==0.0.10",
+    "mlx-audio>=0.4.2",
 ]
 
 [project.scripts]

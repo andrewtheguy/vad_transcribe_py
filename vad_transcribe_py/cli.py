@@ -646,7 +646,8 @@ def main():
                                         '(required for moonshine, optional for others)')
     parser_transcribe.add_argument('--model', type=str, default=None,
                                    help='Model name (default: large-v3-turbo for whisper, auto-selected for moonshine)')
-    parser_transcribe.add_argument('--backend', type=str, choices=['whisper', 'moonshine', 'qwen-asr', 'qwen-asr-rs'],
+    parser_transcribe.add_argument('--backend', type=str,
+                                   choices=['whisper', 'moonshine', 'qwen-asr-rs', 'qwen-asr-mlx'],
                                    default='whisper', help='Transcription backend (default: whisper)')
     parser_transcribe.add_argument('--chinese-conversion', type=str,
                                    choices=['none', 'simplified', 'traditional'],
@@ -659,16 +660,18 @@ def main():
                                         'none for other backends)')
     parser_transcribe.add_argument('--no-condition', action='store_true',
                                    help='Disable conditioning on previous segment output '
-                                        '(whisper, qwen-asr, and qwen-asr-rs backends). By default, each segment '
-                                        'is conditioned on the prior transcript for consistency.')
+                                        '(whisper, qwen-asr-rs, and qwen-asr-mlx backends). '
+                                        'By default, each segment is conditioned on the prior transcript '
+                                        'for consistency.')
     parser_transcribe.add_argument('--no-sub-timestamps', action='store_true',
                                    help='Disable sub-sentence timestamp splitting '
                                         '(whisper backend only). Returns one segment per '
                                         'VAD segment instead of multiple timestamped chunks.')
     parser_transcribe.add_argument('--device', type=str, default=None,
-                                   help='Device for whisper, qwen-asr, and qwen-asr-rs backends: '
+                                   help='Device for whisper and qwen-asr-rs backends: '
                                         'cpu, metal/mps, or cuda '
-                                        '(default: auto-detect cuda > mps > cpu)')
+                                        '(default: auto-detect cuda > mps > cpu). '
+                                        'The qwen-asr-mlx backend always uses Metal and ignores this flag.')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
