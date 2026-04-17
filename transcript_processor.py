@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TextIO, cast
 
 API_URL = "http://127.0.0.1:1234/v1/chat/completions"
-DEFAULT_MODEL = "google/gemma-4-e2b"
+DEFAULT_MODEL = "google/gemma-4-e4b"
 SUMMARY_SYSTEM_PROMPT = "總結一下這節目錄音文本的內容"
 STREAM_END_MARKER = '"type": "stream_end"'
 
