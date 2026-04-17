@@ -20,7 +20,7 @@ dependencies = [
     "filelock>=3.25.2",
     "requests>=2.32",
     "qwen-asr>=0.0.6",
-    "qwencandle==0.0.9",
+    "qwencandle==0.0.10",
 ]
 
 [project.scripts]
@@ -60,7 +60,7 @@ dev = [
 ]
 
 [tool.pyright]
-exclude = [".venv", "build", "dist", ".git", "tests", "scripts"]
+exclude = [".venv", "build", "dist", ".git", "tests", "scripts","tmp"]
 reportUnknownParameterType = true
 reportUninitializedInstanceVariable = true
 reportMissingTypeStubs = false
