@@ -7,8 +7,7 @@ import urllib.request
 from pathlib import Path
 from typing import TextIO, cast
 
-OLLAMA_URL = "http://127.0.0.1:11434/v1/chat/completions"
-DEFAULT_MODEL = "gemma4:e2b-it-q8_0"
+API_URL = "http://127.0.0.1:1234/v1/chat/completions"
 SUMMARY_SYSTEM_PROMPT = "總結一下這節目錄音文本的內容"
 STREAM_END_MARKER = '"type": "stream_end"'
 
@@ -50,7 +49,7 @@ def summarize(transcript: str, model: str) -> str:
         ],
     }
     req = urllib.request.Request(
-        OLLAMA_URL,
+        API_URL,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
@@ -145,7 +144,7 @@ def main() -> int:
     )
 
     p_sum = sub.add_parser(
-        "summarize", help="Summarize a single transcript via Ollama."
+        "summarize", help="Summarize a single transcript via OpenAI-compatible API."
     )
     p_sum.add_argument(
         "--input", "-i", type=Path, required=True, help="transcript.jsonl input path"
@@ -155,8 +154,7 @@ def main() -> int:
     )
     p_sum.add_argument(
         "--model",
-        default=DEFAULT_MODEL,
-        help=f"Ollama model (default: {DEFAULT_MODEL})",
+        help="model name",
     )
 
     p_batch = sub.add_parser(
@@ -165,8 +163,7 @@ def main() -> int:
     )
     p_batch.add_argument(
         "--model",
-        default=DEFAULT_MODEL,
-        help=f"Ollama model (default: {DEFAULT_MODEL})",
+        help="model name",
     )
 
     args = parser.parse_args()
