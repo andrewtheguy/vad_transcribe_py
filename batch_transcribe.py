@@ -26,7 +26,7 @@ TRANSCRIBE_CMD = [
     "transcribe",
     "--stdin",
     "--backend",
-    "qwen-asr-rs",
+    "qwen-asr-mlx",
     "--chinese-conversion",
     "traditional",
 ]
