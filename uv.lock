@@ -1066,16 +1066,16 @@ wheels = [
 
 [[package]]
 name = "qwencandle"
-version = "0.0.9"
+version = "0.0.10"
 source = { registry = "https://andrewtheguy.github.io/qwencandle/simple/" }
 dependencies = [
     { name = "numpy" },
 ]
 wheels = [
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.9/qwencandle-0.0.9-cp39-abi3-macosx_11_0_arm64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.9/qwencandle-0.0.9-cp39-abi3-manylinux_2_38_x86_64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.9/qwencandle-0.0.9-cp39-abi3-manylinux_2_39_aarch64.whl" },
-    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.9/qwencandle-0.0.9-cp39-abi3-win_amd64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.10/qwencandle-0.0.10-cp39-abi3-macosx_11_0_arm64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.10/qwencandle-0.0.10-cp39-abi3-manylinux_2_38_x86_64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.10/qwencandle-0.0.10-cp39-abi3-manylinux_2_39_aarch64.whl" },
+    { url = "https://github.com/andrewtheguy/qwencandle/releases/download/v0.0.10/qwencandle-0.0.10-cp39-abi3-win_amd64.whl" },
 ]
 
 [[package]]
