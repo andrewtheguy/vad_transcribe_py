@@ -154,6 +154,7 @@ def main() -> int:
     )
     p_sum.add_argument(
         "--model",
+        default="",
         help="model name",
     )
 
@@ -163,6 +164,7 @@ def main() -> int:
     )
     p_batch.add_argument(
         "--model",
+        default="",
         help="model name",
     )
 
