@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+import argparse
 import subprocess
 import sys
 from pathlib import Path
 
-INPUT_DIR = Path("/Volumes/dasdata/capture881903/trimmed")
+DEFAULT_INPUT_DIR = Path("/Volumes/dasdata/capture881903/trimmed")
 OUTPUT_BASE = Path("./tmp/transcripts")
 STREAM_END_MARKER = '"type": "stream_end"'
 
@@ -83,13 +84,23 @@ def transcribe(m4a: Path, out_file: Path) -> None:
 
 
 def main() -> int:
-    if not INPUT_DIR.is_dir():
-        print(f"Error: input dir not found: {INPUT_DIR}", file=sys.stderr)
+    parser = argparse.ArgumentParser(description="Batch transcribe m4a files in a directory.")
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=DEFAULT_INPUT_DIR,
+        help=f"Directory containing m4a files to transcribe (default: {DEFAULT_INPUT_DIR})",
+    )
+    args = parser.parse_args()
+    input_dir: Path = args.input_dir
+
+    if not input_dir.is_dir():
+        print(f"Error: input dir not found: {input_dir}", file=sys.stderr)
         return 1
 
-    m4as = sorted(p for p in INPUT_DIR.rglob("*.m4a") if p.is_file())
+    m4as = sorted(p for p in input_dir.rglob("*.m4a") if p.is_file())
     for m4a in m4as:
-        rel = m4a.relative_to(INPUT_DIR)
+        rel = m4a.relative_to(input_dir)
         out_file = OUTPUT_BASE / rel.parent / f"{rel.stem}_transcript.jsonl"
         if has_stream_end(out_file):
             print(f"Already transcribed: {out_file}")
