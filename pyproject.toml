@@ -19,7 +19,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "filelock>=3.25.2",
     "requests>=2.32",
-    "qwencandle==0.0.9",
+    "qwencandle==0.0.10",
     "mlx-audio>=0.4.2",
 ]
 

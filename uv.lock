@@ -1603,7 +1603,7 @@ requires-dist = [
     { name = "onnxruntime", specifier = ">=1.24.4" },
     { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
-    { name = "qwencandle", specifier = "==0.0.9", index = "https://andrewtheguy.github.io/qwencandle/simple/" },
+    { name = "qwencandle", specifier = "==0.0.10", index = "https://andrewtheguy.github.io/qwencandle/simple/" },
     { name = "requests", specifier = ">=2.32" },
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
