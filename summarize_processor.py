@@ -2,28 +2,51 @@
 import argparse
 import io
 import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
-from typing import TextIO, cast
+from typing import NamedTuple, TextIO, cast
 
 API_URL = "http://127.0.0.1:1234/v1/chat/completions"
 DEFAULT_MODEL = "google/gemma-4-e4b"
 SUMMARY_SYSTEM_PROMPT = "總結一下這節目錄音文本的內容"
 STREAM_END_MARKER = '"type": "stream_end"'
 
+FILENAME_TIME_RANGE_RE = re.compile(r"_(\d{8})_(\d{6})_(\d{6})(?:_|$)")
+
 BATCH_TRANSCRIPT_BASE = Path("./tmp/transcripts")
 BATCH_SUMMARY_BASE = Path("./tmp/summaries")
 
 
-def format_ts(ms: int) -> str:
-    total = ms // 1000
+class TimeRange(NamedTuple):
+    date: str
+    start: str
+    end: str
+
+
+def _to_12h(hms: str) -> str:
+    h, m, s = hms.split(":")
+    hi = int(h)
+    suffix = "am" if hi < 12 else "pm"
+    h12 = hi % 12 or 12
+    return f"{h12}:{m}:{s}{suffix}"
+
+
+def _hms_to_seconds(hms: str) -> int:
+    h, m, s = hms.split(":")
+    return int(h) * 3600 + int(m) * 60 + int(s)
+
+
+def format_ts(ms: int, offset_seconds: int = 0) -> str:
+    total = (ms // 1000 + offset_seconds) % 86400
     h, rem = divmod(total, 3600)
     m, s = divmod(rem, 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def convert(path: Path, out: TextIO) -> None:
+def convert(path: Path, out: TextIO, time_range: "TimeRange | None" = None) -> None:
+    offset = _hms_to_seconds(time_range.start) if time_range else 0
     last_end_ms = 0
     with path.open(encoding="utf-8") as f:
         for line in f:
@@ -36,16 +59,37 @@ def convert(path: Path, out: TextIO) -> None:
             start_ms = int(obj["start_ms"])
             text = obj["text"]
             last_end_ms = int(obj["end_ms"])
-            out.write(f"[{format_ts(start_ms)}]:{text}\n")
-    out.write(f"[{format_ts(last_end_ms)}]: (end)\n")
+            out.write(f"[{format_ts(start_ms, offset)}]:{text}\n")
+    out.write(f"[{format_ts(last_end_ms, offset)}]: (end)\n")
 
 
-def summarize(transcript: str, model: str) -> str:
+def extract_time_range(path: Path) -> TimeRange | None:
+    m = FILENAME_TIME_RANGE_RE.search(path.stem)
+    if not m:
+        return None
+    date, start, end = m.groups()
+    return TimeRange(
+        date=f"{date[:4]}-{date[4:6]}-{date[6:8]}",
+        start=f"{start[:2]}:{start[2:4]}:{start[4:6]}",
+        end=f"{end[:2]}:{end[2:4]}:{end[4:6]}",
+    )
+
+
+def build_system_prompt(time_range: TimeRange | None) -> str:
+    if time_range is None:
+        return SUMMARY_SYSTEM_PROMPT
+    return (
+        f"{SUMMARY_SYSTEM_PROMPT}, "
+        f"錄音時間範圍: {time_range.date} {_to_12h(time_range.start)} - {_to_12h(time_range.end)}"
+    )
+
+
+def summarize(transcript: str, model: str, time_range: TimeRange | None = None) -> str:
     payload = {
         "model": model,
         "temperature": 0,
         "messages": [
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_prompt(time_range)},
             {"role": "user", "content": transcript},
         ],
     }
@@ -62,9 +106,16 @@ def summarize(transcript: str, model: str) -> str:
 
 
 def summarize_file(src: Path, dest: Path | None, model: str) -> None:
+    time_range = extract_time_range(src)
     buf = io.StringIO()
-    convert(src, buf)
-    summary = summarize(buf.getvalue(), model)
+    convert(src, buf, time_range)
+    transcript = buf.getvalue()
+    print(
+        f"--- Transcript to summarize ({src}) ---\n{transcript}"
+        f"--- End transcript ---",
+        file=sys.stderr,
+    )
+    summary = summarize(transcript, model, time_range)
     if dest is None:
         sys.stdout.write(summary)
         if not summary.endswith("\n"):
@@ -175,11 +226,12 @@ def main() -> int:
     if cmd == "convert":
         src = cast(Path, args.input)
         dest = cast("Path | None", args.output)
+        tr = extract_time_range(src)
         if dest is None:
-            convert(src, sys.stdout)
+            convert(src, sys.stdout, tr)
         else:
             with dest.open("w", encoding="utf-8") as out:
-                convert(src, out)
+                convert(src, out, tr)
         return 0
 
     if cmd == "summarize":
