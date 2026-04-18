@@ -78,10 +78,12 @@ def extract_time_range(path: Path) -> TimeRange | None:
 def build_system_prompt(time_range: TimeRange | None) -> str:
     if time_range is None:
         return SUMMARY_SYSTEM_PROMPT
-    return (
+    prompt = (
         f"{SUMMARY_SYSTEM_PROMPT}, "
         f"錄音時間範圍: {time_range.date} {_to_12h(time_range.start)} - {_to_12h(time_range.end)}"
     )
+    print(f"System prompt: {prompt}", file=sys.stderr)
+    return prompt
 
 
 def summarize(transcript: str, model: str, time_range: TimeRange | None = None) -> str:
@@ -110,11 +112,11 @@ def summarize_file(src: Path, dest: Path | None, model: str) -> None:
     buf = io.StringIO()
     convert(src, buf, time_range)
     transcript = buf.getvalue()
-    print(
-        f"--- Transcript to summarize ({src}) ---\n{transcript}"
-        f"--- End transcript ---",
-        file=sys.stderr,
-    )
+    # print(
+    #     f"--- Transcript to summarize ({src}) ---\n{transcript}"
+    #     f"--- End transcript ---",
+    #     file=sys.stderr,
+    # )
     summary = summarize(transcript, model, time_range)
     if dest is None:
         sys.stdout.write(summary)
