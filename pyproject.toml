@@ -3,7 +3,7 @@ name = "vad-transcribe-py"
 version = "0.2.35"
 description = ""
 authors = [{ name = "Andrew Chen", email = "andrew@jaanuu.com" }]
-requires-python = "~=3.14.0"
+requires-python = ">=3.12"
 readme = "README.md"
 dependencies = [
     "silero-vad>=5.1.2,<6",
@@ -20,7 +20,7 @@ dependencies = [
     "filelock>=3.25.2",
     "requests>=2.32",
     "qwencandle==0.0.11",
-    "mlx-audio>=0.4.2",
+    "mlx-audio>=0.4.2; sys_platform == 'darwin'",
 ]
 
 [project.scripts]
