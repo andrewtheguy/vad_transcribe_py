@@ -1791,7 +1791,7 @@ requires-dist = [
     { name = "argparse", specifier = ">=1.4.0,<2" },
     { name = "filelock", specifier = ">=3.25.2" },
     { name = "mlx-audio", marker = "sys_platform == 'darwin'", specifier = ">=0.4.2" },
-    { name = "numpy", specifier = ">=2.2.1,<3" },
+    { name = "numpy", specifier = ">=2.0,<3" },
     { name = "onnxruntime", specifier = ">=1.24.4" },
     { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2" },
