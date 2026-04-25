@@ -76,6 +76,10 @@ reportMissingImports = true
 reportMissingModuleSource = false
 reportUnusedCallResult = false
 reportImplicitOverride = false
+# mlx-audio imports are platform-conditional (sys_platform == 'darwin'), so the
+# `# pyright: ignore[reportMissingImports]` suppression on those imports is
+# necessary on Linux CI but would otherwise be flagged as redundant on macOS.
+reportUnnecessaryTypeIgnoreComment = false
 
 [build-system]
 requires = ["hatchling"]
