@@ -252,7 +252,10 @@ def create_transcriber(
             condition=True if condition is None else condition,
         )
     elif backend == 'qwen-asr-mlx':
-        from vad_transcribe_py.backends.mlx import QWEN_ASR_MLX_DEFAULT_MODEL, QwenASRMLXBackend
+        from vad_transcribe_py.backends.qwen_asr_mlx import (
+            QWEN_ASR_MLX_DEFAULT_MODEL,
+            QwenASRMLXBackend,
+        )
 
         return QwenASRMLXBackend(
             language=language,

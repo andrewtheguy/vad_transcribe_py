@@ -13,7 +13,7 @@ from vad_transcribe_py.backends.glm_asr_mlx import (
     GLM_ASR_MLX_MAX_TOKENS,
     GLMASRMLXBackend,
 )
-from vad_transcribe_py.backends.mlx import QwenASRMLXBackend
+from vad_transcribe_py.backends.qwen_asr_mlx import QwenASRMLXBackend
 from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
 from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
 from vad_transcribe_py.vad_processor import (
