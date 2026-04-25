@@ -6,8 +6,8 @@
 - [Moonshine](https://github.com/usefulsensors/moonshine) - Fast ONNX-based ASR models (English: streaming, Chinese/Spanish: non-streaming). Auto-downloaded on first use.
 - [Qwen3-ASR (Rust)](https://github.com/andrewtheguy/qwencandle/releases/tag/v0.0.3) - Qwen3-ASR via qwencandle Rust bindings (PyO3), supports CPU/Metal/CUDA
 - [Qwen3-ASR (MLX)](https://huggingface.co/mlx-community/Qwen3-ASR-0.6B-bf16) - Qwen3-ASR via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/Qwen3-ASR-0.6B-bf16` (best accuracy per published WER benchmark)
-- [GLM-ASR](https://huggingface.co/zai-org/GLM-ASR-Nano-2512) - Z.ai GLM-ASR Nano via HuggingFace Transformers. Default model: `zai-org/GLM-ASR-Nano-2512`
-- [GLM-ASR (MLX)](https://huggingface.co/mlx-community/GLM-ASR-Nano-2512-8bit) - GLM-ASR Nano via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/GLM-ASR-Nano-2512-8bit` (8-bit quantized, ~2.4 GB download)
+- [GLM-ASR](https://huggingface.co/zai-org/GLM-ASR-Nano-2512) - Z.ai GLM-ASR Nano via HuggingFace Transformers. Default model: `zai-org/GLM-ASR-Nano-2512` (1.5B parameters per upstream model card, BF16)
+- [GLM-ASR (MLX)](https://huggingface.co/mlx-community/GLM-ASR-Nano-2512-8bit) - GLM-ASR Nano via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/GLM-ASR-Nano-2512-8bit` (same 1.5B-parameter network as the upstream model, 8-bit MLX quantization, ~2.4 GB on disk)
 
 ## Features
 
@@ -281,7 +281,7 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 - **Qwen3-ASR (Rust)** backend: 30-language support via qwencandle Rust bindings, supports CPU/Metal/CUDA via `--device`, 60-second hard limit per segment
 - **Qwen3-ASR (MLX)** backend: Same model via mlx-audio on Apple Silicon (Metal only, `--device` ignored). Default `mlx-community/Qwen3-ASR-0.6B-bf16` (2.29 % WER on LibriSpeech test-clean per published benchmark). 8-bit (`-8bit`) is near-lossless; 4-bit (`-4bit`) is fastest but with measurable WER loss.
 - **GLM-ASR** backend: Transformers-based GLM-ASR Nano inference, supports CPU/MPS/CUDA via `--device`, 60-second hard limit per segment
-- **GLM-ASR (MLX)** backend: Same model via mlx-audio on Apple Silicon (Metal only, `--device` ignored). Default `mlx-community/GLM-ASR-Nano-2512-8bit` (~2.4 GB download, 8-bit quantized). English and Chinese; the model auto-detects language and `--language` is not forwarded.
+- **GLM-ASR (MLX)** backend: Same 1.5B-parameter network as the Transformers backend, 8-bit MLX-quantized, served via mlx-audio on Apple Silicon (Metal only, `--device` ignored). Default `mlx-community/GLM-ASR-Nano-2512-8bit` (~2.4 GB on disk). English and Chinese; the model auto-detects language and `--language` is not forwarded.
 - Device auto-detected for torch-based backends (whisper, qwen-asr-rs, glm-asr): CUDA > MPS > CPU. Override with `--device`. Moonshine uses ONNX runtime (CUDA or CPU).
 - Larger Whisper models (e.g., `large-v3`) provide better accuracy but require more memory
 - Moonshine supports English, Chinese, and Spanish only
@@ -310,7 +310,7 @@ uv run pytest
 - Whisper: HuggingFace model files (~1-3GB depending on model size) - downloaded automatically on first use
 - Moonshine: ONNX model files (~10-100MB) - downloaded automatically from `download.moonshine.ai` on first use
 - GLM-ASR: HuggingFace model files for `zai-org/GLM-ASR-Nano-2512` - downloaded automatically on first use
-- GLM-ASR (MLX): HuggingFace model files for `mlx-community/GLM-ASR-Nano-2512-8bit` (~2.4 GB) - downloaded automatically on first use (Apple Silicon only)
+- GLM-ASR (MLX): HuggingFace model files for `mlx-community/GLM-ASR-Nano-2512-8bit` (~2.4 GB on disk; same 1.5B-parameter network as the upstream model, 8-bit MLX-quantized) - downloaded automatically on first use (Apple Silicon only)
 
 ## Known Limitations
 
