@@ -152,8 +152,8 @@ class WhisperBackend(TranscriberBase):
                 for chunk in result["chunks"]
             ]
         else:
-            text = result["text"].strip()
-            segments = [self._make_segment(text, start_offset, start_offset + len(audio) / TARGET_SAMPLE_RATE)] if text else []
+            text = result["text"]
+            segments = [self._make_segment(text, start_offset, start_offset + len(audio) / TARGET_SAMPLE_RATE)]
 
         # Update prompt with this segment's output for next-segment conditioning
         if self._condition and segments:
