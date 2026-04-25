@@ -68,7 +68,7 @@ class GLMASRMLXBackend(TranscriberBase):
     def _load_model(self) -> None:
         """Load GLM-ASR via mlx-audio. First run downloads the model from HuggingFace."""
         try:
-            from mlx_audio.stt.utils import load_model
+            from mlx_audio.stt.utils import load_model  # pyright: ignore[reportMissingImports]
         except ImportError:
             raise ImportError(
                 "mlx-audio is not installed (Apple Silicon only). "
