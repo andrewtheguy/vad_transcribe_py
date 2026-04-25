@@ -89,7 +89,7 @@ class GLMASRMLXBackend(TranscriberBase):
             max_tokens=GLM_ASR_MLX_MAX_TOKENS,
             verbose=False,
         )
-        text: str = output.text.strip()
+        text: str = output.text
 
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-        return [self._make_segment(text, start_offset, end_time)] if text else []
+        return [self._make_segment(text, start_offset, end_time)]

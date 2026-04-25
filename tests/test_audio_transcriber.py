@@ -662,8 +662,8 @@ def test_glm_mlx_transcribe_integration(monkeypatch):
     assert segments[0].end == 2.5
 
 
-def test_glm_mlx_empty_text_returns_no_segments(monkeypatch):
-    """Test that empty model output yields no segments (matches glm-asr behavior)."""
+def test_glm_mlx_empty_text_still_returns_segment(monkeypatch):
+    """Empty/whitespace model output still yields a segment (matches qwen-asr-mlx)."""
 
     class StubMLXModel:
         def generate(self, _audio, **_kwargs):
@@ -681,4 +681,5 @@ def test_glm_mlx_empty_text_returns_no_segments(monkeypatch):
     backend = GLMASRMLXBackend(language=None)
     segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
 
-    assert segments == []
+    assert len(segments) == 1
+    assert segments[0].text == "   "
