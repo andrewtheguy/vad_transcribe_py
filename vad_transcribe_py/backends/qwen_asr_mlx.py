@@ -11,7 +11,7 @@ from vad_transcribe_py._types import (
     ChineseConversion,
     TranscribedSegment,
     TranscriberBase,
-    is_repetitive,
+    conditioning_context,
 )
 from vad_transcribe_py.vad_processor import (
     QWEN_ASR_HARD_LIMIT_SECONDS,
@@ -76,6 +76,7 @@ class QwenASRMLXBackend(TranscriberBase):
         self.model = model
         self._condition = condition
         self._previous_text: str = ""
+        self._prior_line: str = ""
         self._mlx_model: Any = None
 
         if device is not None and device != "metal":
@@ -132,11 +133,8 @@ class QwenASRMLXBackend(TranscriberBase):
         text: str = output.text
 
         if self._condition:
-            stripped = text.strip()
-            if stripped and not is_repetitive(stripped):
-                self._previous_text = stripped
-            elif is_repetitive(stripped):
-                self._previous_text = ""
+            self._previous_text = conditioning_context(text, self._prior_line)
+            self._prior_line = text.strip()
 
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
         return [self._make_segment(text, start_offset, end_time)]

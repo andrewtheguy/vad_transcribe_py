@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Literal, Protocol, runtime_checkable
 
 import numpy as np
@@ -33,6 +34,7 @@ class TranscribedSegment:
 
 
 _REPETITION_THRESHOLD = 0.3
+_NEAR_DUPLICATE_THRESHOLD = 0.9
 
 
 def is_repetitive(text: str) -> bool:
@@ -51,6 +53,36 @@ def is_repetitive(text: str) -> bool:
         return True
 
     return False
+
+
+def is_near_duplicate(current: str, prior: str) -> bool:
+    """Detect when *current* is almost exactly the same as *prior*.
+
+    Used to avoid feeding back near-identical lines as conditioning context,
+    which tends to push the model into a repeat-the-prompt loop.
+    """
+    if not current or not prior:
+        return False
+    a = current.strip().lower()
+    b = prior.strip().lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= _NEAR_DUPLICATE_THRESHOLD
+
+
+def conditioning_context(current: str, prior_line: str) -> str:
+    """Return *current* as conditioning context for the next segment, or "" if unsafe.
+
+    Filters out empty, internally-repetitive, and near-duplicate-of-prior text —
+    all cases where feeding the line back as a prompt tends to nudge the model
+    into a repeat-the-prompt loop.
+    """
+    stripped = current.strip()
+    if not stripped or is_repetitive(stripped) or is_near_duplicate(stripped, prior_line):
+        return ""
+    return stripped
 
 
 def process_text(text: str, chinese_conversion: ChineseConversion) -> str:

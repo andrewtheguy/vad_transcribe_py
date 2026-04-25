@@ -12,7 +12,7 @@ from vad_transcribe_py._types import (
     ChineseConversion,
     TranscribedSegment,
     TranscriberBase,
-    is_repetitive,
+    conditioning_context,
 )
 from vad_transcribe_py.vad_processor import (
     WHISPER_HARD_LIMIT_SECONDS,
@@ -78,6 +78,7 @@ class WhisperBackend(TranscriberBase):
         self._condition = condition
         self._sub_timestamps = sub_timestamps
         self._prompt_ids: Any = None
+        self._prior_line: str = ""
         self._processor: Any = None
         self._requested_device = device
         self._device: str = "cpu"
@@ -157,10 +158,12 @@ class WhisperBackend(TranscriberBase):
 
         # Update prompt with this segment's output for next-segment conditioning
         if self._condition and segments:
-            output_text = " ".join(seg.text for seg in segments).strip()
-            if output_text and not is_repetitive(output_text):
-                self._prompt_ids = self._processor.get_prompt_ids(output_text, return_tensors="pt").to(self._device)
-            elif is_repetitive(output_text):
+            output_text = " ".join(seg.text for seg in segments)
+            safe = conditioning_context(output_text, self._prior_line)
+            if safe:
+                self._prompt_ids = self._processor.get_prompt_ids(safe, return_tensors="pt").to(self._device)
+            else:
                 self._prompt_ids = None
+            self._prior_line = output_text.strip()
 
         return segments
