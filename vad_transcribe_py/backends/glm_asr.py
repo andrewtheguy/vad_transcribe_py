@@ -21,7 +21,7 @@ from vad_transcribe_py.vad_processor import (
 logger = logging.getLogger(__name__)
 
 GLM_ASR_DEFAULT_MODEL = "zai-org/GLM-ASR-Nano-2512"
-GLM_ASR_MAX_NEW_TOKENS = 512
+GLM_ASR_MAX_NEW_TOKENS = 500
 
 _LANGUAGE_MAP: dict[str, str] = {
     "zh": "Chinese",

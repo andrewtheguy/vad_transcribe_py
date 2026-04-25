@@ -7,7 +7,7 @@ import pytest
 import torch
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
-from vad_transcribe_py.backends.glm_asr import GLM_ASR_DEFAULT_MODEL, GLM_ASR_MAX_NEW_TOKENS, GLMASRBackend
+from vad_transcribe_py.backends.glm_asr import GLM_ASR_DEFAULT_MODEL, GLMASRBackend
 from vad_transcribe_py.backends.mlx import QwenASRMLXBackend
 from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
 from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
@@ -504,7 +504,7 @@ def test_glm_asr_transcribe_integration(monkeypatch):
     assert stub_processor.last_inputs.device == "cuda:0"
     assert stub_processor.last_inputs.dtype == torch.bfloat16
     assert stub_model.generate_calls
-    assert stub_model.generate_calls[0]["max_new_tokens"] == GLM_ASR_MAX_NEW_TOKENS
+    assert stub_model.generate_calls[0]["max_new_tokens"] == 500
     assert stub_processor.decode_calls[0]["generated_ids"].tolist() == [[20, 21]]
     assert stub_processor.decode_calls[0]["skip_special_tokens"] is True
     assert segments[0].text == "hello glm"
