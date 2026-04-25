@@ -6,12 +6,13 @@
 - [Moonshine](https://github.com/usefulsensors/moonshine) - Fast ONNX-based ASR models (English: streaming, Chinese/Spanish: non-streaming). Auto-downloaded on first use.
 - [Qwen3-ASR (Rust)](https://github.com/andrewtheguy/qwencandle/releases/tag/v0.0.3) - Qwen3-ASR via qwencandle Rust bindings (PyO3), supports CPU/Metal/CUDA
 - [Qwen3-ASR (MLX)](https://huggingface.co/mlx-community/Qwen3-ASR-0.6B-bf16) - Qwen3-ASR via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/Qwen3-ASR-0.6B-bf16` (best accuracy per published WER benchmark)
+- [GLM-ASR](https://huggingface.co/zai-org/GLM-ASR-Nano-2512) - Z.ai GLM-ASR Nano via HuggingFace Transformers. Default model: `zai-org/GLM-ASR-Nano-2512`
 
 ## Features
 
 - **Streaming Audio Processing**: Audio is streamed from ffmpeg - never loads full file into memory
 - **Smart Voice Detection**: Uses Silero VAD to detect speech segments
-- **Flexible Backend Selection**: Choose between Whisper (default) or Moonshine backends
+- **Flexible Backend Selection**: Choose between Whisper (default), Moonshine, Qwen3-ASR, or GLM-ASR backends
 - **File Transcription**: Process audio files to JSON transcripts
 - **Split Mode**: Save detected speech segments as Opus files
 - **Multi-language Support**: Supports all languages available in OpenAI Whisper models
@@ -98,15 +99,15 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--stdin`: Read WAV audio (mono, 16kHz) from stdin (mutually exclusive with --file). Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV. Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (required for moonshine, optional for other backends which auto-detect when omitted)
-- `--model MODEL`: Model name (auto-selected if omitted). For whisper: HuggingFace short name or full ID (default: `large-v3-turbo` → `openai/whisper-large-v3-turbo`). For moonshine: use short names like `small-streaming`, `base`, `tiny` — these map to language-specific variants (e.g., `small-streaming` → `small-streaming-en`). Defaults: `small-streaming` (English), `base` (Chinese/Spanish).
-- `--backend {whisper, moonshine, qwen-asr-rs, qwen-asr-mlx}`: Transcription backend (default: `whisper`)
+- `--model MODEL`: Model name (auto-selected if omitted). For whisper: HuggingFace short name or full ID (default: `large-v3-turbo` → `openai/whisper-large-v3-turbo`). For GLM-ASR: HuggingFace model ID (default: `zai-org/GLM-ASR-Nano-2512`). For moonshine: use short names like `small-streaming`, `base`, `tiny` — these map to language-specific variants (e.g., `small-streaming` → `small-streaming-en`). Defaults: `small-streaming` (English), `base` (Chinese/Spanish).
+- `--backend {whisper, moonshine, qwen-asr-rs, qwen-asr-mlx, glm-asr}`: Transcription backend (default: `whisper`)
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
-- `--threads N`: Number of CPU threads for inference (default: `min(2, cpu_count)` for moonshine, none for other backends). For qwen-asr-rs, sets the `RAYON_NUM_THREADS` environment variable. Ignored by qwen-asr-mlx.
-- `--device {cpu, mps, metal, cuda}`: Device for whisper and qwen-asr-rs backends (default: auto-detect cuda > mps > cpu). Not supported by moonshine. The qwen-asr-mlx backend always uses Metal and ignores this flag.
+- `--threads N`: Number of CPU threads for inference (default: `min(2, cpu_count)` for moonshine, none for other backends). For qwen-asr-rs, sets the `RAYON_NUM_THREADS` environment variable. Ignored by qwen-asr-mlx and glm-asr.
+- `--device {cpu, mps, metal, cuda}`: Device for whisper, qwen-asr-rs, and glm-asr backends (default: auto-detect cuda > mps > cpu). Not supported by moonshine. The qwen-asr-mlx backend always uses Metal and ignores this flag.
 - `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr-rs, and qwen-asr-mlx backends)
 - `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper backend only)
 
-VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 30s hard, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s). Use the `split` command for manual VAD tuning.
+VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 30s hard, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR: 30s / 60s). Use the `split` command for manual VAD tuning.
 
 ### Transcribe Examples
 
@@ -159,6 +160,13 @@ uv run vad-transcribe-py transcribe --file audio.wav --backend qwen-asr-mlx
 # Override MLX quantization (bf16 default, or 8bit/6bit/5bit/4bit for smaller/faster)
 uv run vad-transcribe-py transcribe --file audio.wav --backend qwen-asr-mlx \
     --model mlx-community/Qwen3-ASR-0.6B-8bit
+```
+
+**Use GLM-ASR backend (auto-detects language when --language is omitted):**
+```bash
+uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr
+uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr --language en
+uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr --device cuda
 ```
 
 **Use a different Whisper model:**
@@ -251,6 +259,7 @@ Language support varies by backend:
 - **Whisper**: All languages available in OpenAI Whisper models
 - **Moonshine**: English (`en`), Chinese (`zh`), Spanish (`es`)
 - **Qwen3-ASR (Rust) / Qwen3-ASR (MLX)**: 30 languages — `zh`, `en`, `yue`, `ar`, `de`, `fr`, `es`, `pt`, `id`, `it`, `ko`, `ru`, `th`, `vi`, `ja`, `tr`, `hi`, `ms`, `nl`, `sv`, `da`, `fi`, `pl`, `cs`, `fil`, `fa`, `el`, `ro`, `hu`, `mk`
+- **GLM-ASR**: Uses the same explicit language-code set as Qwen3-ASR when `--language` is provided; omit `--language` to use the model's default transcription prompt
 
 **Chinese Character Conversion:** For Chinese language codes (`zh` and `yue`), you can optionally convert characters using `--chinese-conversion`:
 - `none` (default): No conversion, output as-is from Whisper
@@ -265,7 +274,8 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 - **Moonshine** backend: Fast ONNX inference. English (streaming, 60s hard limit), Chinese/Spanish (non-streaming, 9s hard limit)
 - **Qwen3-ASR (Rust)** backend: 30-language support via qwencandle Rust bindings, supports CPU/Metal/CUDA via `--device`, 60-second hard limit per segment
 - **Qwen3-ASR (MLX)** backend: Same model via mlx-audio on Apple Silicon (Metal only, `--device` ignored). Default `mlx-community/Qwen3-ASR-0.6B-bf16` (2.29 % WER on LibriSpeech test-clean per published benchmark). 8-bit (`-8bit`) is near-lossless; 4-bit (`-4bit`) is fastest but with measurable WER loss.
-- Device auto-detected for torch-based backends (whisper, qwen-asr-rs): CUDA > MPS > CPU. Override with `--device`. Moonshine uses ONNX runtime (CUDA or CPU).
+- **GLM-ASR** backend: Transformers-based GLM-ASR Nano inference, supports CPU/MPS/CUDA via `--device`, 60-second hard limit per segment
+- Device auto-detected for torch-based backends (whisper, qwen-asr-rs, glm-asr): CUDA > MPS > CPU. Override with `--device`. Moonshine uses ONNX runtime (CUDA or CPU).
 - Larger Whisper models (e.g., `large-v3`) provide better accuracy but require more memory
 - Moonshine supports English, Chinese, and Spanish only
 
@@ -292,12 +302,13 @@ uv run pytest
 
 - Whisper: HuggingFace model files (~1-3GB depending on model size) - downloaded automatically on first use
 - Moonshine: ONNX model files (~10-100MB) - downloaded automatically from `download.moonshine.ai` on first use
+- GLM-ASR: HuggingFace model files for `zai-org/GLM-ASR-Nano-2512` - downloaded automatically on first use
 
 ## Known Limitations
 
 - File-based transcription only (no real-time/live transcription)
 - Live streams not supported (URLs must have fixed duration)
-- VAD enforces per-backend hard limits on segment duration via force-split (30s Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming, 60s Qwen3-ASR Rust/MLX)
+- VAD enforces per-backend hard limits on segment duration via force-split (30s Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming, 60s Qwen3-ASR Rust/MLX, 60s GLM-ASR)
 - No database persistence (outputs to JSONL files or Opus segments)
 - No web interface
 

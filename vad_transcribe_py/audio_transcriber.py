@@ -260,5 +260,16 @@ def create_transcriber(
             condition=condition,
             device=device,
         )
+    elif backend == 'glm-asr':
+        from vad_transcribe_py.backends.glm_asr import GLM_ASR_DEFAULT_MODEL, GLMASRBackend
+
+        return GLMASRBackend(
+            language=language,
+            model=model if model is not None else GLM_ASR_DEFAULT_MODEL,
+            chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
+            condition=condition,
+            device=device,
+        )
     else:
         raise ValueError(f"Unsupported backend: {backend}")

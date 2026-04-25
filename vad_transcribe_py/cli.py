@@ -645,9 +645,11 @@ def main():
                                    help='Language code for transcription '
                                         '(required for moonshine, optional for others)')
     parser_transcribe.add_argument('--model', type=str, default=None,
-                                   help='Model name (default: large-v3-turbo for whisper, auto-selected for moonshine)')
+                                   help='Model name (default: large-v3-turbo for whisper, '
+                                        'zai-org/GLM-ASR-Nano-2512 for glm-asr, '
+                                        'auto-selected for moonshine)')
     parser_transcribe.add_argument('--backend', type=str,
-                                   choices=['whisper', 'moonshine', 'qwen-asr-rs', 'qwen-asr-mlx'],
+                                   choices=['whisper', 'moonshine', 'qwen-asr-rs', 'qwen-asr-mlx', 'glm-asr'],
                                    default='whisper', help='Transcription backend (default: whisper)')
     parser_transcribe.add_argument('--chinese-conversion', type=str,
                                    choices=['none', 'simplified', 'traditional'],
@@ -668,7 +670,7 @@ def main():
                                         '(whisper backend only). Returns one segment per '
                                         'VAD segment instead of multiple timestamped chunks.')
     parser_transcribe.add_argument('--device', type=str, default=None,
-                                   help='Device for whisper and qwen-asr-rs backends: '
+                                   help='Device for whisper, qwen-asr-rs, and glm-asr backends: '
                                         'cpu, metal/mps, or cuda '
                                         '(default: auto-detect cuda > mps > cpu). '
                                         'The qwen-asr-mlx backend always uses Metal and ignores this flag.')
