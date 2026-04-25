@@ -275,5 +275,21 @@ def create_transcriber(
             num_threads=num_threads,
             device=device,
         )
+    elif backend == 'glm-asr-mlx':
+        from vad_transcribe_py.backends.glm_asr_mlx import (
+            GLM_ASR_MLX_DEFAULT_MODEL,
+            GLMASRMLXBackend,
+        )
+
+        if condition is True:
+            raise ValueError("condition=True is not supported by the glm-asr-mlx backend")
+
+        return GLMASRMLXBackend(
+            language=language,
+            model=model if model is not None else GLM_ASR_MLX_DEFAULT_MODEL,
+            chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
+            device=device,
+        )
     else:
         raise ValueError(f"Unsupported backend: {backend}")
