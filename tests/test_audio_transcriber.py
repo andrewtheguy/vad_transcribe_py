@@ -8,7 +8,12 @@ import torch
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
 from vad_transcribe_py.backends.glm_asr import GLM_ASR_DEFAULT_MODEL, GLMASRBackend
-from vad_transcribe_py.backends.mlx import QwenASRMLXBackend
+from vad_transcribe_py.backends.glm_asr_mlx import (
+    GLM_ASR_MLX_DEFAULT_MODEL,
+    GLM_ASR_MLX_MAX_TOKENS,
+    GLMASRMLXBackend,
+)
+from vad_transcribe_py.backends.qwen_asr_mlx import QwenASRMLXBackend
 from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
 from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
 from vad_transcribe_py.vad_processor import (
@@ -334,13 +339,20 @@ def test_create_transcriber_qwen_mlx_with_condition(stub_qwen_mlx):
 def test_qwen_mlx_transcribe_integration(monkeypatch):
     """Test qwen-asr-mlx transcribe via a stub mlx_audio module."""
 
+    from vad_transcribe_py.backends.qwen_asr_mlx import QWEN_ASR_MLX_MAX_TOKENS
+
     class StubMLXModel:
         def __init__(self):
             self.generate_calls: list[dict[str, object]] = []
 
-        def generate(self, audio, *, language=None, system_prompt=None, verbose=False, **_kwargs):
+        def generate(self, audio, *, language=None, system_prompt=None, max_tokens=8192, verbose=False, **_kwargs):
             self.generate_calls.append(
-                {"audio": audio, "language": language, "system_prompt": system_prompt}
+                {
+                    "audio": audio,
+                    "language": language,
+                    "system_prompt": system_prompt,
+                    "max_tokens": max_tokens,
+                }
             )
             return SimpleNamespace(text="hello mlx")
 
@@ -360,6 +372,8 @@ def test_qwen_mlx_transcribe_integration(monkeypatch):
     assert stub.generate_calls[0]["language"] == "English"
     # First pass: _previous_text is empty → system_prompt stays None.
     assert stub.generate_calls[0]["system_prompt"] is None
+    # Cap generation so larger Qwen3-ASR variants can't hang on non-speech audio.
+    assert stub.generate_calls[0]["max_tokens"] == QWEN_ASR_MLX_MAX_TOKENS
     assert segments[0].text == "hello mlx"
     assert backend._previous_text == "hello mlx"
 
@@ -564,3 +578,117 @@ def test_glm_asr_default_prompt(monkeypatch):
 
     assert stub_processor.prompt is None
     assert segments[0].text == "hello"
+
+
+@pytest.fixture()
+def stub_glm_mlx(monkeypatch):
+    """Stub out GLMASRMLXBackend model loading."""
+    monkeypatch.setattr(GLMASRMLXBackend, "_load_model", lambda _self: None)
+
+
+def test_glm_mlx_defaults(stub_glm_mlx):
+    """Test that glm-asr-mlx initializes with the default model and limits."""
+    transcriber = GLMASRMLXBackend(language=None)
+    assert transcriber.model == GLM_ASR_MLX_DEFAULT_MODEL
+    assert transcriber.hard_limit_seconds == GLM_ASR_HARD_LIMIT_SECONDS
+    assert transcriber.soft_limit_seconds == GLM_ASR_SOFT_LIMIT_SECONDS
+
+
+def test_glm_mlx_device_ignored(stub_glm_mlx, caplog):
+    """Test that non-metal device is accepted but logged+ignored."""
+    import logging
+    caplog.set_level(logging.WARNING)
+    _ = GLMASRMLXBackend(language="en", device="cuda")
+    assert any("ignored" in r.message and "device" in r.message for r in caplog.records)
+
+
+def test_glm_mlx_num_threads_ignored(stub_glm_mlx, caplog):
+    """Test that num_threads is accepted but logged+ignored."""
+    import logging
+    caplog.set_level(logging.WARNING)
+    _ = GLMASRMLXBackend(language="en", num_threads=4)
+    assert any("ignored" in r.message and "num_threads" in r.message for r in caplog.records)
+
+
+def test_glm_mlx_unsupported_language_warns(stub_glm_mlx, caplog):
+    """Test that an out-of-support language emits a warning but does not raise."""
+    import logging
+    caplog.set_level(logging.WARNING)
+    _ = GLMASRMLXBackend(language="fr")
+    assert any("English/Chinese" in r.message for r in caplog.records)
+
+
+def test_create_transcriber_glm_mlx_default_model(stub_glm_mlx):
+    """Test that factory uses GLM_ASR_MLX_DEFAULT_MODEL when model is None."""
+    transcriber = audio_transcriber.create_transcriber(
+        language=None,
+        backend="glm-asr-mlx",
+    )
+    assert isinstance(transcriber, GLMASRMLXBackend)
+    assert transcriber.model == GLM_ASR_MLX_DEFAULT_MODEL
+
+
+def test_create_transcriber_glm_mlx_condition_rejected(stub_glm_mlx):
+    """Test that condition=True raises ValueError for glm-asr-mlx."""
+    with pytest.raises(ValueError, match="condition=True is not supported"):
+        _ = audio_transcriber.create_transcriber(
+            language=None,
+            backend="glm-asr-mlx",
+            condition=True,
+        )
+
+
+def test_glm_mlx_transcribe_integration(monkeypatch):
+    """Test glm-asr-mlx transcribe via a stub mlx_audio module."""
+
+    class StubMLXModel:
+        def __init__(self):
+            self.generate_calls: list[dict[str, object]] = []
+
+        def generate(self, audio, *, max_tokens=128, verbose=False, **_kwargs):
+            self.generate_calls.append(
+                {"audio": audio, "max_tokens": max_tokens, "verbose": verbose}
+            )
+            return SimpleNamespace(text="hello glm mlx")
+
+    stub = StubMLXModel()
+    mlx_audio_module = ModuleType("mlx_audio")
+    stt_module = ModuleType("mlx_audio.stt")
+    utils_module = ModuleType("mlx_audio.stt.utils")
+    utils_module.load_model = lambda _model_id: stub  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx_audio", mlx_audio_module)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt", stt_module)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt.utils", utils_module)
+
+    backend = GLMASRMLXBackend(language=None)
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32), start_offset=1.5)
+
+    assert stub.generate_calls
+    assert stub.generate_calls[0]["max_tokens"] == GLM_ASR_MLX_MAX_TOKENS
+    assert stub.generate_calls[0]["verbose"] is False
+    assert segments[0].text == "hello glm mlx"
+    assert segments[0].start == 1.5
+    assert segments[0].end == 2.5
+
+
+def test_glm_mlx_empty_text_still_returns_segment(monkeypatch):
+    """Empty/whitespace model output still yields a segment (matches qwen-asr-mlx)."""
+
+    class StubMLXModel:
+        def generate(self, _audio, **_kwargs):
+            return SimpleNamespace(text="   ")
+
+    stub = StubMLXModel()
+    mlx_audio_module = ModuleType("mlx_audio")
+    stt_module = ModuleType("mlx_audio.stt")
+    utils_module = ModuleType("mlx_audio.stt.utils")
+    utils_module.load_model = lambda _model_id: stub  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx_audio", mlx_audio_module)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt", stt_module)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt.utils", utils_module)
+
+    backend = GLMASRMLXBackend(language=None)
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert len(segments) == 1
+    assert segments[0].text == "   "

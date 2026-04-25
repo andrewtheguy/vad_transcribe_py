@@ -252,7 +252,10 @@ def create_transcriber(
             condition=True if condition is None else condition,
         )
     elif backend == 'qwen-asr-mlx':
-        from vad_transcribe_py.backends.mlx import QWEN_ASR_MLX_DEFAULT_MODEL, QwenASRMLXBackend
+        from vad_transcribe_py.backends.qwen_asr_mlx import (
+            QWEN_ASR_MLX_DEFAULT_MODEL,
+            QwenASRMLXBackend,
+        )
 
         return QwenASRMLXBackend(
             language=language,
@@ -271,6 +274,22 @@ def create_transcriber(
         return GLMASRBackend(
             language=language,
             model=model if model is not None else GLM_ASR_DEFAULT_MODEL,
+            chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
+            device=device,
+        )
+    elif backend == 'glm-asr-mlx':
+        from vad_transcribe_py.backends.glm_asr_mlx import (
+            GLM_ASR_MLX_DEFAULT_MODEL,
+            GLMASRMLXBackend,
+        )
+
+        if condition is True:
+            raise ValueError("condition=True is not supported by the glm-asr-mlx backend")
+
+        return GLMASRMLXBackend(
+            language=language,
+            model=model if model is not None else GLM_ASR_MLX_DEFAULT_MODEL,
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
             device=device,

@@ -21,6 +21,10 @@ from vad_transcribe_py.vad_processor import (
 logger = logging.getLogger(__name__)
 
 QWEN_ASR_MLX_DEFAULT_MODEL = "mlx-community/Qwen3-ASR-0.6B-bf16"
+# mlx-audio defaults to max_tokens=8192, which lets larger Qwen3-ASR variants
+# (e.g. 1.7B-bf16) run away on music or other non-speech audio. 500 covers the
+# longest 60s speech segment we ever feed in.
+QWEN_ASR_MLX_MAX_TOKENS = 500
 
 _LANGUAGE_MAP: dict[str, str] = {
     "zh": "Chinese",
@@ -122,6 +126,7 @@ class QwenASRMLXBackend(TranscriberBase):
             audio,
             language=qwen_language,
             system_prompt=sys_prompt,
+            max_tokens=QWEN_ASR_MLX_MAX_TOKENS,
             verbose=False,
         )
         text: str = output.text

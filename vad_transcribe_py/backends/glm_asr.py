@@ -166,7 +166,7 @@ class GLMASRBackend(TranscriberBase):
 
         input_length = inputs["input_ids"].shape[1]
         generated_ids = generated_ids[:, input_length:]
-        text = self._processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+        text = self._processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-        return [self._make_segment(text, start_offset, end_time)] if text else []
+        return [self._make_segment(text, start_offset, end_time)]
