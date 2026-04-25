@@ -1800,7 +1800,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.14.1,<2" },
     { name = "silero-vad", specifier = ">=5.1.2,<6" },
     { name = "tqdm", specifier = ">=4.67.3" },
-    { name = "transformers", specifier = ">=4.52" },
+    { name = "transformers", specifier = ">=5.5.4" },
     { name = "zhconv-rs", specifier = ">=0.3.2.post2,<0.4" },
 ]
 

@@ -4,12 +4,16 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
+from vad_transcribe_py.backends.glm_asr import GLM_ASR_DEFAULT_MODEL, GLMASRBackend
 from vad_transcribe_py.backends.mlx import QwenASRMLXBackend
 from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
 from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
 from vad_transcribe_py.vad_processor import (
+    GLM_ASR_HARD_LIMIT_SECONDS,
+    GLM_ASR_SOFT_LIMIT_SECONDS,
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
     MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,
     WHISPER_HARD_LIMIT_SECONDS,
@@ -370,3 +374,193 @@ def test_qwen_mlx_unknown_language_raises(stub_qwen_mlx):
     backend._mlx_model = object()  # satisfy the assert in transcribe()
     with pytest.raises(ValueError, match="Unrecognized language code"):
         backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+
+@pytest.fixture()
+def stub_glm_asr(monkeypatch):
+    """Stub out GLMASRBackend model loading and device detection."""
+    monkeypatch.setattr(GLMASRBackend, "_load_model", lambda _self: None)
+    monkeypatch.setattr("vad_transcribe_py.backends.glm_asr._detect_device", lambda _device=None: "cpu")
+
+
+def test_glm_asr_defaults(stub_glm_asr):
+    """Test that glm-asr initializes with the default model and limits."""
+    transcriber = GLMASRBackend(language="en")
+    assert transcriber.model == GLM_ASR_DEFAULT_MODEL
+    assert transcriber.hard_limit_seconds == GLM_ASR_HARD_LIMIT_SECONDS
+    assert transcriber.soft_limit_seconds == GLM_ASR_SOFT_LIMIT_SECONDS
+
+
+def test_create_transcriber_glm_asr(stub_glm_asr):
+    """Test that factory creates the glm-asr backend."""
+    transcriber = audio_transcriber.create_transcriber(
+        language="en",
+        backend="glm-asr",
+        device="cuda",
+    )
+    assert isinstance(transcriber, GLMASRBackend)
+    assert isinstance(transcriber, audio_transcriber.AudioTranscriber)
+
+
+def test_glm_asr_sets_torch_threads(stub_glm_asr, monkeypatch):
+    """Test that glm-asr forwards num_threads to torch CPU threading."""
+    set_threads_calls: list[int] = []
+    monkeypatch.setattr(torch, "set_num_threads", set_threads_calls.append)
+
+    _ = GLMASRBackend(language="en", num_threads=3)
+
+    assert set_threads_calls == [3]
+
+
+def test_glm_asr_unknown_language_raises(stub_glm_asr):
+    """Test that an unrecognized GLM-ASR language code raises ValueError."""
+    backend = GLMASRBackend(language="xx")
+    backend._processor = object()
+    backend._model = object()
+    with pytest.raises(ValueError, match="Unrecognized language code"):
+        backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+
+def test_glm_asr_transcribe_integration(monkeypatch):
+    """Test glm-asr transcribe via stub Transformers classes."""
+
+    class StubInputs(dict):
+        def __init__(self):
+            super().__init__(input_ids=np.array([[10, 11, 12]]))
+            self.device: str | None = None
+            self.dtype: torch.dtype | None = None
+
+        def to(self, device: str, dtype: torch.dtype | None = None):
+            self.device = device
+            self.dtype = dtype
+            return self
+
+    class StubProcessor:
+        def __init__(self):
+            self.apply_calls: list[dict[str, object]] = []
+            self.decode_calls: list[dict[str, object]] = []
+            self.last_inputs: StubInputs | None = None
+
+        def apply_transcription_request(self, audio, *, prompt=None, return_tensors=None):
+            self.apply_calls.append(
+                {"audio": audio, "prompt": prompt, "return_tensors": return_tensors}
+            )
+            self.last_inputs = StubInputs()
+            return self.last_inputs
+
+        def batch_decode(self, generated_ids, *, skip_special_tokens=False):
+            self.decode_calls.append(
+                {"generated_ids": generated_ids, "skip_special_tokens": skip_special_tokens}
+            )
+            return ["hello glm"]
+
+    class StubAutoProcessor:
+        @staticmethod
+        def from_pretrained(model_id):
+            assert model_id == GLM_ASR_DEFAULT_MODEL
+            return stub_processor
+
+    class StubGLMModel:
+        def __init__(self):
+            self.device: str | None = None
+            self.dtype = torch.bfloat16
+            self.eval_called = False
+            self.generate_calls: list[dict[str, object]] = []
+
+        @classmethod
+        def from_pretrained(cls, model_id, *, dtype=None):
+            assert model_id == GLM_ASR_DEFAULT_MODEL
+            assert dtype == "auto"
+            return stub_model
+
+        def to(self, device: str):
+            self.device = device
+            return self
+
+        def eval(self):
+            self.eval_called = True
+            return self
+
+        def generate(self, **inputs):
+            self.generate_calls.append(inputs)
+            return np.array([[10, 11, 12, 20, 21]])
+
+    stub_processor = StubProcessor()
+    stub_model = StubGLMModel()
+    transformers_module = ModuleType("transformers")
+    transformers_module.AutoProcessor = StubAutoProcessor  # type: ignore[attr-defined]
+    transformers_module.GlmAsrForConditionalGeneration = StubGLMModel  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "transformers", transformers_module)
+
+    backend = GLMASRBackend(language="en", device="cuda")
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32), start_offset=2.0)
+
+    assert stub_model.device == "cuda:0"
+    assert stub_model.eval_called is True
+    assert stub_processor.apply_calls
+    assert stub_processor.apply_calls[0]["prompt"] == "Transcribe the input speech in English."
+    assert stub_processor.apply_calls[0]["return_tensors"] == "pt"
+    assert stub_processor.last_inputs is not None
+    assert stub_processor.last_inputs.device == "cuda:0"
+    assert stub_processor.last_inputs.dtype == torch.bfloat16
+    assert stub_model.generate_calls
+    assert stub_model.generate_calls[0]["max_new_tokens"] == 500
+    assert stub_processor.decode_calls[0]["generated_ids"].tolist() == [[20, 21]]
+    assert stub_processor.decode_calls[0]["skip_special_tokens"] is True
+    assert segments[0].text == "hello glm"
+    assert segments[0].start == 2.0
+    assert segments[0].end == 3.0
+
+
+def test_glm_asr_default_prompt(monkeypatch):
+    """Test that omitting language lets the processor use its default prompt."""
+
+    class StubInputs(dict):
+        def __init__(self):
+            super().__init__(input_ids=np.array([[1]]))
+
+        def to(self, _device: str):
+            return self
+
+    class StubProcessor:
+        def __init__(self):
+            self.prompt = "unset"
+
+        def apply_transcription_request(self, _audio, *, prompt=None, return_tensors=None):
+            self.prompt = prompt
+            return StubInputs()
+
+        def batch_decode(self, _generated_ids, *, skip_special_tokens=False):
+            return ["hello"]
+
+    class StubAutoProcessor:
+        @staticmethod
+        def from_pretrained(_model_id):
+            return stub_processor
+
+    class StubGLMModel:
+        @classmethod
+        def from_pretrained(cls, _model_id, *, dtype=None):
+            return stub_model
+
+        def to(self, _device: str):
+            return self
+
+        def eval(self):
+            return self
+
+        def generate(self, **_inputs):
+            return np.array([[1, 2]])
+
+    stub_processor = StubProcessor()
+    stub_model = StubGLMModel()
+    transformers_module = ModuleType("transformers")
+    transformers_module.AutoProcessor = StubAutoProcessor  # type: ignore[attr-defined]
+    transformers_module.GlmAsrForConditionalGeneration = StubGLMModel  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "transformers", transformers_module)
+
+    backend = GLMASRBackend(language=None)
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert stub_processor.prompt is None
+    assert segments[0].text == "hello"
