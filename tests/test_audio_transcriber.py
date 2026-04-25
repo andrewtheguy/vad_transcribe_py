@@ -339,13 +339,20 @@ def test_create_transcriber_qwen_mlx_with_condition(stub_qwen_mlx):
 def test_qwen_mlx_transcribe_integration(monkeypatch):
     """Test qwen-asr-mlx transcribe via a stub mlx_audio module."""
 
+    from vad_transcribe_py.backends.qwen_asr_mlx import QWEN_ASR_MLX_MAX_TOKENS
+
     class StubMLXModel:
         def __init__(self):
             self.generate_calls: list[dict[str, object]] = []
 
-        def generate(self, audio, *, language=None, system_prompt=None, verbose=False, **_kwargs):
+        def generate(self, audio, *, language=None, system_prompt=None, max_tokens=8192, verbose=False, **_kwargs):
             self.generate_calls.append(
-                {"audio": audio, "language": language, "system_prompt": system_prompt}
+                {
+                    "audio": audio,
+                    "language": language,
+                    "system_prompt": system_prompt,
+                    "max_tokens": max_tokens,
+                }
             )
             return SimpleNamespace(text="hello mlx")
 
@@ -365,6 +372,8 @@ def test_qwen_mlx_transcribe_integration(monkeypatch):
     assert stub.generate_calls[0]["language"] == "English"
     # First pass: _previous_text is empty → system_prompt stays None.
     assert stub.generate_calls[0]["system_prompt"] is None
+    # Cap generation so larger Qwen3-ASR variants can't hang on non-speech audio.
+    assert stub.generate_calls[0]["max_tokens"] == QWEN_ASR_MLX_MAX_TOKENS
     assert segments[0].text == "hello mlx"
     assert backend._previous_text == "hello mlx"
 
