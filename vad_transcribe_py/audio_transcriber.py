@@ -209,7 +209,7 @@ def create_transcriber(
     backend: str = 'whisper',
     chinese_conversion: ChineseConversion = 'none',
     num_threads: int | None = None,
-    condition: bool = True,
+    condition: bool | None = None,
     sub_timestamps: bool = True,
     device: str | None = None,
 ) -> AudioTranscriber:
@@ -222,7 +222,7 @@ def create_transcriber(
             model=model if model is not None else WHISPER_DEFAULT_MODEL,
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
-            condition=condition,
+            condition=True if condition is None else condition,
             sub_timestamps=sub_timestamps,
             device=device,
         )
@@ -231,6 +231,8 @@ def create_transcriber(
 
         if language is None:
             raise ValueError("--language is required for the moonshine backend")
+        if condition is True:
+            raise ValueError("condition=True is not supported by the moonshine backend")
 
         return MoonshineBackend(
             language=language,
@@ -247,7 +249,7 @@ def create_transcriber(
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
             device=device,
-            condition=condition,
+            condition=True if condition is None else condition,
         )
     elif backend == 'qwen-asr-mlx':
         from vad_transcribe_py.backends.mlx import QWEN_ASR_MLX_DEFAULT_MODEL, QwenASRMLXBackend
@@ -257,11 +259,14 @@ def create_transcriber(
             model=model if model is not None else QWEN_ASR_MLX_DEFAULT_MODEL,
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
-            condition=condition,
+            condition=True if condition is None else condition,
             device=device,
         )
     elif backend == 'glm-asr':
         from vad_transcribe_py.backends.glm_asr import GLM_ASR_DEFAULT_MODEL, GLMASRBackend
+
+        if condition is True:
+            raise ValueError("condition=True is not supported by the glm-asr backend")
 
         return GLMASRBackend(
             language=language,

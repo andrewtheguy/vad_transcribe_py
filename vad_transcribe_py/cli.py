@@ -717,7 +717,7 @@ def main():
                         args.language, args.model, args.backend,
                         args.chinese_conversion,
                         num_threads=num_threads,
-                        condition=not args.no_condition,
+                        condition=False if args.no_condition else None,
                         sub_timestamps=not args.no_sub_timestamps,
                         device=args.device,
                     )
@@ -736,7 +736,7 @@ def main():
                         args.language, args.model, args.backend,
                         args.chinese_conversion,
                         num_threads=num_threads,
-                        condition=not args.no_condition,
+                        condition=False if args.no_condition else None,
                         sub_timestamps=not args.no_sub_timestamps,
                         device=args.device,
                     )
