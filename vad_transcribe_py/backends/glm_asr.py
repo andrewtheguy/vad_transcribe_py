@@ -82,7 +82,6 @@ class GLMASRBackend(TranscriberBase):
         model: str = GLM_ASR_DEFAULT_MODEL,
         chinese_conversion: ChineseConversion = 'none',
         num_threads: int | None = None,
-        condition: bool = True,
         device: str | None = None,
     ):
         super().__init__(language, chinese_conversion, num_threads)
@@ -92,9 +91,7 @@ class GLMASRBackend(TranscriberBase):
         self._model: Any = None
 
         if num_threads is not None:
-            logger.warning("num_threads=%d ignored; glm-asr backend has no threading knob", num_threads)
-        if not condition:
-            logger.warning("condition=False ignored; glm-asr backend does not support previous-segment conditioning")
+            torch.set_num_threads(num_threads)
 
         logger.info("Loading %s model via Transformers on %s...", self.model, self._device)
         self._load_model()

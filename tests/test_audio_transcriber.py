@@ -402,6 +402,16 @@ def test_create_transcriber_glm_asr(stub_glm_asr):
     assert isinstance(transcriber, audio_transcriber.AudioTranscriber)
 
 
+def test_glm_asr_sets_torch_threads(stub_glm_asr, monkeypatch):
+    """Test that glm-asr forwards num_threads to torch CPU threading."""
+    set_threads_calls: list[int] = []
+    monkeypatch.setattr(torch, "set_num_threads", set_threads_calls.append)
+
+    _ = GLMASRBackend(language="en", num_threads=3)
+
+    assert set_threads_calls == [3]
+
+
 def test_glm_asr_unknown_language_raises(stub_glm_asr):
     """Test that an unrecognized GLM-ASR language code raises ValueError."""
     backend = GLMASRBackend(language="xx")

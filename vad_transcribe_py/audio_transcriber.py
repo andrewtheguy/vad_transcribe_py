@@ -268,7 +268,6 @@ def create_transcriber(
             model=model if model is not None else GLM_ASR_DEFAULT_MODEL,
             chinese_conversion=chinese_conversion,
             num_threads=num_threads,
-            condition=condition,
             device=device,
         )
     else:
