@@ -14,6 +14,8 @@ _NEAR_DUPLICATE_THRESHOLD = 0.9
 
 def format_timestamp(seconds: float) -> str:
     """Format seconds to hh:mm:ss.ms format."""
+    if seconds < 0:
+        raise ValueError(f"format_timestamp requires non-negative seconds, got {seconds}")
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
