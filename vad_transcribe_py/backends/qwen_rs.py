@@ -7,11 +7,13 @@ import numpy as np
 import numpy.typing as npt
 
 from vad_transcribe_py._types import (
-    TARGET_SAMPLE_RATE,
-    ChineseConversion,
     TranscribedSegment,
     TranscriberBase,
-    is_repetitive,
+)
+from vad_transcribe_py._utils import (
+    TARGET_SAMPLE_RATE,
+    ChineseConversion,
+    conditioning_context,
 )
 from vad_transcribe_py.vad_processor import (
     QWEN_ASR_HARD_LIMIT_SECONDS,
@@ -72,6 +74,7 @@ class QwenASRRsBackend(TranscriberBase):
         self._device = device or self._detect_device()
         self._condition = condition
         self._previous_text: str = ""
+        self._prior_line: str = ""
         self._model: object = None
 
         self._load_model(model)
@@ -125,11 +128,8 @@ class QwenASRRsBackend(TranscriberBase):
         )
 
         if self._condition:
-            stripped = text.strip()
-            if stripped and not is_repetitive(stripped):
-                self._previous_text = stripped
-            elif is_repetitive(stripped):
-                self._previous_text = ""
+            self._previous_text = conditioning_context(text, self._prior_line)
+            self._prior_line = text.strip()
 
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
         return [self._make_segment(text, start_offset, end_time)]
