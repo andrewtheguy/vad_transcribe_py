@@ -7,10 +7,12 @@ import numpy as np
 import numpy.typing as npt
 
 from vad_transcribe_py._types import (
-    TARGET_SAMPLE_RATE,
-    ChineseConversion,
     TranscribedSegment,
     TranscriberBase,
+)
+from vad_transcribe_py._utils import (
+    TARGET_SAMPLE_RATE,
+    ChineseConversion,
     conditioning_context,
 )
 from vad_transcribe_py.vad_processor import (

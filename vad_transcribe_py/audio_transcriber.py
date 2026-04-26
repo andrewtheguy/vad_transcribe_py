@@ -9,11 +9,13 @@ import numpy as np
 import numpy.typing as npt
 
 from vad_transcribe_py._types import (
-    TARGET_SAMPLE_RATE as TARGET_SAMPLE_RATE,
     AudioTranscriber as AudioTranscriber,
-    ChineseConversion as ChineseConversion,
     TranscribedSegment as TranscribedSegment,
     TranscriberBase as TranscriberBase,
+)
+from vad_transcribe_py._utils import (
+    TARGET_SAMPLE_RATE as TARGET_SAMPLE_RATE,
+    ChineseConversion as ChineseConversion,
     format_timestamp as format_timestamp,
     process_text as process_text,
 )
