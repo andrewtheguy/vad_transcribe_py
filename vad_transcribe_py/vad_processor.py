@@ -26,7 +26,7 @@ DEFAULT_LOOK_BACK_SECONDS = 0.5
 ADAPTIVE_MIN_SILENCE_MS = 32  # reduced silence threshold when over soft limit (~one window)
 
 # Whisper backend limits
-WHISPER_HARD_LIMIT_SECONDS = 30
+WHISPER_HARD_LIMIT_SECONDS = 60
 WHISPER_SOFT_LIMIT_SECONDS = 6.0
 
 # Moonshine backend limits

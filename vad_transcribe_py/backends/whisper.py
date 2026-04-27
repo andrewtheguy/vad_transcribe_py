@@ -135,6 +135,11 @@ class WhisperBackend(TranscriberBase):
         """Transcribe audio and return segments with sub-sentence timestamps."""
         generate_kwargs: dict[str, Any] = {
             "language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language) if self.language else None,
+            "condition_on_prev_tokens": True,
+            # "compression_ratio_threshold": 1.35,
+            # "logprob_threshold": -1.0,
+            # "no_speech_threshold": 0.6,
+            # "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
         }
         if self._prompt_ids is not None:
             generate_kwargs["prompt_ids"] = self._prompt_ids
