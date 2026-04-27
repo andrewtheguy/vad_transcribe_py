@@ -98,7 +98,9 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--stdin`: Read WAV audio (mono, 16kHz) from stdin (mutually exclusive with --file). Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV. Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (required for moonshine, optional for other backends which auto-detect when omitted)
-- `--model MODEL`: Model name (auto-selected if omitted). For whisper: HuggingFace short name or full ID (default: `large-v3-turbo` → `openai/whisper-large-v3-turbo`). For GLM-ASR: HuggingFace model ID (default: `zai-org/GLM-ASR-Nano-2512`). For GLM-ASR (MLX): HuggingFace model ID (default: `mlx-community/GLM-ASR-Nano-2512-8bit`). For moonshine: use short names like `small-streaming`, `base`, `tiny` — these map to language-specific variants (e.g., `small-streaming` → `small-streaming-en`). Defaults: `small-streaming` (English), `base` (Chinese/Spanish).
+- `--model MODEL`: Model name (auto-selected if omitted). Defaults: `large-v3-turbo` → `openai/whisper-large-v3-turbo` (whisper), `zai-org/GLM-ASR-Nano-2512` (glm-asr), `mlx-community/Qwen3-ASR-0.6B-bf16` (qwen-asr-mlx), `mlx-community/GLM-ASR-Nano-2512-8bit` (glm-asr-mlx); moonshine picks `small-streaming` for English and `base` for Chinese/Spanish.
+    - **Local directory paths** are accepted by **whisper**, **qwen-asr-rs**, and **glm-asr**.
+    - **GGUF files** are accepted only by **qwen-asr-rs** (qwencandle resolves the format from the path).
 - `--backend {whisper, moonshine, qwen-asr-rs, qwen-asr-mlx, glm-asr, glm-asr-mlx}`: Transcription backend (default: `whisper`)
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 - `--threads N`: Number of CPU threads for inference (default: `min(2, cpu_count)` for moonshine, none for other backends). For qwen-asr-rs, sets the `RAYON_NUM_THREADS` environment variable. Ignored by qwen-asr-mlx, glm-asr-mlx, and glm-asr.

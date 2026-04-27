@@ -647,8 +647,11 @@ def main():
     parser_transcribe.add_argument('--model', type=str, default=None,
                                    help='Model name (default: large-v3-turbo for whisper, '
                                         'zai-org/GLM-ASR-Nano-2512 for glm-asr, '
+                                        'mlx-community/Qwen3-ASR-0.6B-bf16 for qwen-asr-mlx, '
                                         'mlx-community/GLM-ASR-Nano-2512-8bit for glm-asr-mlx, '
-                                        'auto-selected for moonshine)')
+                                        'auto-selected for moonshine). '
+                                        'Local directory paths are accepted by whisper, qwen-asr-rs, and glm-asr. '
+                                        'GGUF files are accepted only by qwen-asr-rs.')
     parser_transcribe.add_argument('--backend', type=str,
                                    choices=['whisper', 'moonshine', 'qwen-asr-rs', 'qwen-asr-mlx', 'glm-asr', 'glm-asr-mlx'],
                                    default='whisper', help='Transcription backend (default: whisper)')
