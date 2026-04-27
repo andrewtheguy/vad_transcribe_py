@@ -40,27 +40,6 @@ sudo apt install ffmpeg
 
 ### Installation
 
-```bash
-# Clone the repository
-git clone https://github.com/andrewtheguy/vad_transcribe_py.git
-cd vad_transcribe_py
-
-# Install all dependencies
-uv sync
-```
-
-### Running (Development)
-
-For development, run commands with `uv run`:
-
-```bash
-uv run vad-transcribe-py transcribe --file audio.wav --language en
-
-uv run vad-transcribe-py split --file audio.wav
-```
-
-### Installing as a Tool (Global)
-
 To install globally and run `vad-transcribe-py` directly:
 
 ```bash
@@ -82,6 +61,25 @@ After installation:
 ```bash
 vad-transcribe-py transcribe --file audio.wav --language en
 vad-transcribe-py split --file audio.wav
+```
+
+### Development
+
+```bash
+# Clone the repository
+git clone https://github.com/andrewtheguy/vad_transcribe_py.git
+cd vad_transcribe_py
+
+# Install all dependencies
+uv sync
+```
+
+For development, run commands with `uv run`:
+
+```bash
+uv run vad-transcribe-py transcribe --file audio.wav --language en
+
+uv run vad-transcribe-py split --file audio.wav
 ```
 
 ---
