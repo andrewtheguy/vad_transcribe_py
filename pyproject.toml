@@ -1,6 +1,6 @@
 [project]
 name = "vad-transcribe-py"
-version = "0.2.41"
+version = "0.2.42"
 description = ""
 authors = [{ name = "Andrew Chen", email = "andrew@jaanuu.com" }]
 requires-python = ">=3.12"
@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-nvidia-whisper = ["nvidia-riva-client>=2.20,<3"]
+nvidia-whisper = ["nvidia-riva-client>=2.25.1,<2.26.0"]
 
 [project.scripts]
 vad-transcribe-py = "vad_transcribe_py.cli:main"
