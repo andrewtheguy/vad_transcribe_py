@@ -17,6 +17,7 @@ from vad_transcribe_py._utils import (
     conditioning_context,
 )
 from vad_transcribe_py.vad_processor import (
+    WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS,
     WHISPER_HARD_LIMIT_SECONDS,
     WHISPER_SOFT_LIMIT_SECONDS,
 )
@@ -93,7 +94,12 @@ class WhisperBackend(TranscriberBase):
 
     @property
     def hard_limit_seconds(self) -> int:
-        return WHISPER_HARD_LIMIT_SECONDS
+        # HF's pipeline only does long-form decoding when return_timestamps=True;
+        # with --no-sub-timestamps it falls back to single-window inference and
+        # would error on audio past Whisper's native 30s window.
+        if self._sub_timestamps:
+            return WHISPER_HARD_LIMIT_SECONDS
+        return WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS
 
     @property
     def soft_limit_seconds(self) -> float | None:
@@ -135,6 +141,11 @@ class WhisperBackend(TranscriberBase):
         """Transcribe audio and return segments with sub-sentence timestamps."""
         generate_kwargs: dict[str, Any] = {
             "language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language) if self.language else None,
+            "condition_on_prev_tokens": True,
+            # "compression_ratio_threshold": 1.35,
+            # "logprob_threshold": -1.0,
+            # "no_speech_threshold": 0.6,
+            # "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
         }
         if self._prompt_ids is not None:
             generate_kwargs["prompt_ids"] = self._prompt_ids

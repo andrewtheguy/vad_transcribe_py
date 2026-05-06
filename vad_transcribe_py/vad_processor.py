@@ -25,9 +25,21 @@ DEFAULT_MIN_SILENCE_DURATION_MS = 2000
 DEFAULT_LOOK_BACK_SECONDS = 0.5
 ADAPTIVE_MIN_SILENCE_MS = 32  # reduced silence threshold when over soft limit (~one window)
 
-# Whisper backend limits
-WHISPER_HARD_LIMIT_SECONDS = 30
+# Whisper backend limits.
+# 60s applies when return_timestamps=True (default): HF's pipeline triggers
+# Whisper's sequential long-form algorithm and stitches 30s windows internally.
+# When --no-sub-timestamps is set, return_timestamps=False and the pipeline
+# can't decode beyond the native 30s window without chunk_length_s, so the
+# backend caps at 30s in that mode.
+WHISPER_HARD_LIMIT_SECONDS = 60
+WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS = 30
 WHISPER_SOFT_LIMIT_SECONDS = 6.0
+
+# NVIDIA-hosted Whisper (Riva gRPC) backend limits.
+# Capped at 30s to stay comfortably under NVCF's 60s default request timeout
+# and to match Whisper's native 30s decoding window (no server-side chunking risk).
+NVIDIA_WHISPER_HARD_LIMIT_SECONDS = 30
+NVIDIA_WHISPER_SOFT_LIMIT_SECONDS = 6.0
 
 # Moonshine backend limits
 MOONSHINE_STREAMING_HARD_LIMIT_SECONDS = 60
