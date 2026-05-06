@@ -14,8 +14,8 @@ from vad_transcribe_py.backends.nvidia_whisper import (
     NvidiaWhisperBackend,
 )
 from vad_transcribe_py.vad_processor import (
-    WHISPER_HARD_LIMIT_SECONDS,
-    WHISPER_SOFT_LIMIT_SECONDS,
+    NVIDIA_WHISPER_HARD_LIMIT_SECONDS,
+    NVIDIA_WHISPER_SOFT_LIMIT_SECONDS,
 )
 
 
@@ -100,8 +100,9 @@ def test_init_wires_auth_metadata(monkeypatch):
     metadata = {entry[0]: entry[1] for entry in auth.metadata_args}
     assert metadata["function-id"] == NVIDIA_WHISPER_FUNCTION_ID
     assert metadata["authorization"] == "Bearer nvapi-test-token"
-    assert backend.hard_limit_seconds == WHISPER_HARD_LIMIT_SECONDS
-    assert backend.soft_limit_seconds == WHISPER_SOFT_LIMIT_SECONDS
+    assert backend.hard_limit_seconds == NVIDIA_WHISPER_HARD_LIMIT_SECONDS
+    assert backend.soft_limit_seconds == NVIDIA_WHISPER_SOFT_LIMIT_SECONDS
+    assert NVIDIA_WHISPER_HARD_LIMIT_SECONDS == 30  # decoupled from local whisper
 
 
 def test_transcribe_concatenates_segments_and_frames_audio(monkeypatch):

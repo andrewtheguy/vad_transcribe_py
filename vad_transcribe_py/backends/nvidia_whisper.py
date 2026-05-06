@@ -18,8 +18,8 @@ from vad_transcribe_py._utils import (
     ChineseConversion,
 )
 from vad_transcribe_py.vad_processor import (
-    WHISPER_HARD_LIMIT_SECONDS,
-    WHISPER_SOFT_LIMIT_SECONDS,
+    NVIDIA_WHISPER_HARD_LIMIT_SECONDS,
+    NVIDIA_WHISPER_SOFT_LIMIT_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,11 +61,11 @@ class NvidiaWhisperBackend(TranscriberBase):
 
     @property
     def hard_limit_seconds(self) -> int:
-        return WHISPER_HARD_LIMIT_SECONDS
+        return NVIDIA_WHISPER_HARD_LIMIT_SECONDS
 
     @property
     def soft_limit_seconds(self) -> float | None:
-        return WHISPER_SOFT_LIMIT_SECONDS
+        return NVIDIA_WHISPER_SOFT_LIMIT_SECONDS
 
     def _init_service(self, api_key: str) -> None:
         """Build the Riva ASR service with NVCF function-id + bearer auth metadata."""

@@ -109,7 +109,7 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr-rs, and qwen-asr-mlx backends; ignored by glm-asr and glm-asr-mlx, which do not support conditioning)
 - `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper backend only)
 
-VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 30s hard, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s). Use the `split` command for manual VAD tuning.
+VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s). Use the `split` command for manual VAD tuning.
 
 ### Transcribe Examples
 
@@ -298,7 +298,8 @@ Conversion is powered by [zhconv-rs](https://github.com/Xmader/zhconv-rs).
 
 ## Performance Notes
 
-- **Whisper** backend: Best for multilingual transcription, 30-second hard limit per segment
+- **Whisper** backend: Best for multilingual transcription, 60-second hard limit per segment (HF Transformers handles long-form decoding by chunking the 30s native window internally when `return_timestamps=True`, which is the default)
+- **NVIDIA Whisper** backend: Hosted whisper-large-v3 via Riva gRPC, 30-second hard limit per segment to stay under the NVCF 60s request timeout
 - **Moonshine** backend: Fast ONNX inference. English (streaming, 60s hard limit), Chinese/Spanish (non-streaming, 9s hard limit)
 - **Qwen3-ASR (Rust)** backend: 30-language support via qwencandle Rust bindings, supports CPU/Metal/CUDA via `--device`, 60-second hard limit per segment
 - **Qwen3-ASR (MLX)** backend: Same model via mlx-audio on Apple Silicon (Metal only, `--device` ignored). Default `mlx-community/Qwen3-ASR-0.6B-bf16` (2.29 % WER on LibriSpeech test-clean per published benchmark). 8-bit (`-8bit`) is near-lossless; 4-bit (`-4bit`) is fastest but with measurable WER loss.
@@ -338,7 +339,7 @@ uv run pytest
 
 - File-based transcription only (no real-time/live transcription)
 - Live streams not supported (URLs must have fixed duration)
-- VAD enforces per-backend hard limits on segment duration via force-split (30s Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming, 60s Qwen3-ASR Rust/MLX, 60s GLM-ASR Transformers/MLX)
+- VAD enforces per-backend hard limits on segment duration via force-split (60s Whisper, 30s NVIDIA Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming, 60s Qwen3-ASR Rust/MLX, 60s GLM-ASR Transformers/MLX)
 - No database persistence (outputs to JSONL files or Opus segments)
 - No web interface
 
