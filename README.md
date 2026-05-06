@@ -8,6 +8,7 @@
 - [Qwen3-ASR (MLX)](https://huggingface.co/mlx-community/Qwen3-ASR-0.6B-bf16) - Qwen3-ASR via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/Qwen3-ASR-0.6B-bf16` (best accuracy per published WER benchmark)
 - [GLM-ASR](https://huggingface.co/zai-org/GLM-ASR-Nano-2512) - Z.ai GLM-ASR Nano via HuggingFace Transformers. Default model: `zai-org/GLM-ASR-Nano-2512` (1.5B parameters per upstream model card, BF16)
 - [GLM-ASR (MLX)](https://huggingface.co/mlx-community/GLM-ASR-Nano-2512-8bit) - GLM-ASR Nano via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/GLM-ASR-Nano-2512-8bit` (same 1.5B-parameter network as the upstream model, 8-bit MLX quantization, ~2.4 GB on disk)
+- [NVIDIA Whisper](https://build.nvidia.com/openai/whisper-large-v3) - OpenAI whisper-large-v3 hosted by NVIDIA via Riva gRPC (no local GPU required). Optional dep: `uv sync --extra nvidia-whisper`. Requires `NVIDIA_API_KEY` in `.env`.
 
 ## Features
 
@@ -101,7 +102,7 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--model MODEL`: Model name (auto-selected if omitted). Defaults: `large-v3-turbo` → `openai/whisper-large-v3-turbo` (whisper), `zai-org/GLM-ASR-Nano-2512` (glm-asr), `mlx-community/Qwen3-ASR-0.6B-bf16` (qwen-asr-mlx), `mlx-community/GLM-ASR-Nano-2512-8bit` (glm-asr-mlx); moonshine picks `small-streaming` for English and `base` for Chinese/Spanish.
     - **Local directory paths** are accepted by **whisper**, **qwen-asr-rs**, and **glm-asr**.
     - **GGUF files** are accepted only by **qwen-asr-rs** (qwencandle resolves the format from the path).
-- `--backend {whisper, moonshine, qwen-asr-rs, qwen-asr-mlx, glm-asr, glm-asr-mlx}`: Transcription backend (default: `whisper`)
+- `--backend {whisper, moonshine, qwen-asr-rs, qwen-asr-mlx, glm-asr, glm-asr-mlx, nvidia-whisper}`: Transcription backend (default: `whisper`). `nvidia-whisper` calls the hosted whisper-large-v3 endpoint at `build.nvidia.com` and requires `NVIDIA_API_KEY` in `.env` (see [NVIDIA Whisper backend](#nvidia-whisper-backend)).
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 - `--threads N`: Number of CPU threads for inference (default: `min(2, cpu_count)` for moonshine, none for other backends). For qwen-asr-rs, sets the `RAYON_NUM_THREADS` environment variable. Ignored by qwen-asr-mlx, glm-asr-mlx, and glm-asr.
 - `--device {cpu, mps, metal, cuda}`: Device for whisper, qwen-asr-rs, and glm-asr backends (default: auto-detect cuda > mps > cpu). Not supported by moonshine. The qwen-asr-mlx and glm-asr-mlx backends always use Metal and ignore this flag.
@@ -179,6 +180,27 @@ uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr-mlx
 ```bash
 uv run vad-transcribe-py transcribe --file audio.wav --model large-v3
 ```
+
+#### NVIDIA Whisper backend
+
+The `nvidia-whisper` backend calls OpenAI whisper-large-v3 hosted on `build.nvidia.com` via Riva gRPC. No local GPU is needed; audio segments are uploaded per VAD chunk.
+
+```bash
+# 1. Install the optional dep (pulls in nvidia-riva-client and grpc).
+uv sync --extra nvidia-whisper
+
+# 2. Get a key at https://build.nvidia.com/openai/whisper-large-v3 and put it in .env:
+cp .env.example .env
+# then edit .env and set NVIDIA_API_KEY=nvapi-...
+
+# 3. Transcribe.
+uv run vad-transcribe-py transcribe --file audio.wav --backend nvidia-whisper --language en
+
+# Omit --language for Riva auto-detect (sends language_code=multi):
+uv run vad-transcribe-py transcribe --file audio.wav --backend nvidia-whisper
+```
+
+`--model`, `--device`, and `--threads` are ignored for this backend (server-side execution, fixed function-id).
 
 ### Transcribe Output Format (JSONL)
 

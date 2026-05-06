@@ -23,6 +23,9 @@ dependencies = [
     "mlx-audio>=0.4.2; sys_platform == 'darwin'",
 ]
 
+[project.optional-dependencies]
+nvidia-whisper = ["nvidia-riva-client>=2.20,<3"]
+
 [project.scripts]
 vad-transcribe-py = "vad_transcribe_py.cli:main"
 

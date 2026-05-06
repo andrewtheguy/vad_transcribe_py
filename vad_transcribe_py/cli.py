@@ -649,12 +649,17 @@ def main():
                                         'zai-org/GLM-ASR-Nano-2512 for glm-asr, '
                                         'mlx-community/Qwen3-ASR-0.6B-bf16 for qwen-asr-mlx, '
                                         'mlx-community/GLM-ASR-Nano-2512-8bit for glm-asr-mlx, '
-                                        'auto-selected for moonshine). '
+                                        'auto-selected for moonshine, '
+                                        'ignored for nvidia-whisper). '
                                         'Local directory paths are accepted by whisper, qwen-asr-rs, and glm-asr. '
                                         'GGUF files are accepted only by qwen-asr-rs.')
     parser_transcribe.add_argument('--backend', type=str,
-                                   choices=['whisper', 'moonshine', 'qwen-asr-rs', 'qwen-asr-mlx', 'glm-asr', 'glm-asr-mlx'],
-                                   default='whisper', help='Transcription backend (default: whisper)')
+                                   choices=['whisper', 'moonshine', 'qwen-asr-rs', 'qwen-asr-mlx',
+                                            'glm-asr', 'glm-asr-mlx', 'nvidia-whisper'],
+                                   default='whisper',
+                                   help='Transcription backend (default: whisper). '
+                                        'nvidia-whisper hits the hosted whisper-large-v3 endpoint at '
+                                        'build.nvidia.com and requires NVIDIA_API_KEY in .env.')
     parser_transcribe.add_argument('--chinese-conversion', type=str,
                                    choices=['none', 'simplified', 'traditional'],
                                    default='none',
@@ -677,7 +682,8 @@ def main():
                                    help='Device for whisper, qwen-asr-rs, and glm-asr backends: '
                                         'cpu, metal/mps, or cuda '
                                         '(default: auto-detect cuda > mps > cpu). '
-                                        'The qwen-asr-mlx and glm-asr-mlx backends always use Metal and ignore this flag.')
+                                        'The qwen-asr-mlx and glm-asr-mlx backends always use Metal and ignore this flag. '
+                                        'The nvidia-whisper backend runs server-side and ignores this flag.')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
 
