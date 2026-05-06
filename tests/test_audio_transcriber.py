@@ -21,6 +21,7 @@ from vad_transcribe_py.vad_processor import (
     GLM_ASR_SOFT_LIMIT_SECONDS,
     MOONSHINE_NON_STREAMING_HARD_LIMIT_SECONDS,
     MOONSHINE_STREAMING_HARD_LIMIT_SECONDS,
+    WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS,
     WHISPER_HARD_LIMIT_SECONDS,
 )
 
@@ -138,12 +139,24 @@ def test_create_transcriber_with_no_condition():
 
 
 def test_hard_limit_seconds_whisper():
-    """Test that whisper backend reports correct hard limit."""
+    """Test that whisper backend reports the long-form hard limit by default."""
     transcriber = WhisperBackend(
         language="en",
         model="large-v3-turbo",
     )
     assert transcriber.hard_limit_seconds == WHISPER_HARD_LIMIT_SECONDS
+    assert WHISPER_HARD_LIMIT_SECONDS == 60
+
+
+def test_hard_limit_seconds_whisper_no_sub_timestamps():
+    """sub_timestamps=False caps the limit at the model's native 30s window."""
+    transcriber = WhisperBackend(
+        language="en",
+        model="large-v3-turbo",
+        sub_timestamps=False,
+    )
+    assert transcriber.hard_limit_seconds == WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS
+    assert WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS == 30
 
 
 def test_moonshine_hard_limits_from_model_config():
