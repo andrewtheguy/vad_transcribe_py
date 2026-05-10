@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 WHISPER_DEFAULT_MODEL = "large-v3-turbo"
 
+# Audio tail prepended to the next contiguous call so Whisper has acoustic
+# context for words cut off mid-sentence at a hard-limit boundary.
+_OVERLAP_SECONDS = 2.0
+_ADJACENT_TOLERANCE_SECONDS = 0.1
+
 # Models that need language code remapping (e.g. yue → zh)
 _MODEL_LANGUAGE_OVERRIDES: dict[str, dict[str, str]] = {
     "alvanlii/whisper-small-cantonese": {"yue": "zh"},
@@ -85,6 +90,8 @@ class WhisperBackend(TranscriberBase):
         self._processor: Any = None
         self._requested_device = device
         self._device: str = "cpu"
+        self._tail_audio: npt.NDArray[np.float32] | None = None
+        self._prior_end_time: float | None = None
 
         if num_threads is not None:
             torch.set_num_threads(num_threads)
@@ -139,6 +146,24 @@ class WhisperBackend(TranscriberBase):
 
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]:
         """Transcribe audio and return segments with sub-sentence timestamps."""
+        # Prepend the tail of the prior call when this segment is contiguous,
+        # so Whisper has acoustic context to resume a sentence cut off at a
+        # hard-limit boundary. Only safe in sub_timestamps mode where we can
+        # dedupe on chunk timestamps.
+        prepend_tail = (
+            self._sub_timestamps
+            and self._tail_audio is not None
+            and self._prior_end_time is not None
+            and abs(start_offset - self._prior_end_time) < _ADJACENT_TOLERANCE_SECONDS
+        )
+        if prepend_tail:
+            assert self._tail_audio is not None
+            pipeline_audio = np.concatenate([self._tail_audio, audio])
+            overlap_seconds = len(self._tail_audio) / TARGET_SAMPLE_RATE
+        else:
+            pipeline_audio = audio
+            overlap_seconds = 0.0
+
         generate_kwargs: dict[str, Any] = {
             "language": _MODEL_LANGUAGE_OVERRIDES.get(self.model, {}).get(self.language, self.language) if self.language else None,
             "condition_on_prev_tokens": True,
@@ -151,23 +176,37 @@ class WhisperBackend(TranscriberBase):
             generate_kwargs["prompt_ids"] = self._prompt_ids
 
         result = self.pipe(
-            audio.copy(),
+            pipeline_audio.copy(),
             return_timestamps=self._sub_timestamps,
             generate_kwargs=generate_kwargs,
         )
 
         if self._sub_timestamps:
-            segments = [
-                self._make_segment(
-                    chunk["text"],
-                    start_offset + chunk["timestamp"][0],
-                    start_offset + (chunk["timestamp"][1] if chunk["timestamp"][1] is not None else len(audio) / TARGET_SAMPLE_RATE),
+            pipeline_duration = len(pipeline_audio) / TARGET_SAMPLE_RATE
+            segments: list[TranscribedSegment] = []
+            for chunk in result["chunks"]:
+                chunk_start = chunk["timestamp"][0]
+                chunk_end = chunk["timestamp"][1] if chunk["timestamp"][1] is not None else pipeline_duration
+                # Drop chunks whose midpoint lies in the prepended overlap region.
+                if (chunk_start + chunk_end) / 2 < overlap_seconds:
+                    continue
+                adjusted_start = max(0.0, chunk_start - overlap_seconds)
+                adjusted_end = max(adjusted_start, chunk_end - overlap_seconds)
+                segments.append(
+                    self._make_segment(
+                        chunk["text"],
+                        start_offset + adjusted_start,
+                        start_offset + adjusted_end,
+                    )
                 )
-                for chunk in result["chunks"]
-            ]
         else:
             text = result["text"]
             segments = [self._make_segment(text, start_offset, start_offset + len(audio) / TARGET_SAMPLE_RATE)]
+
+        if self._sub_timestamps:
+            tail_samples = int(_OVERLAP_SECONDS * TARGET_SAMPLE_RATE)
+            self._tail_audio = audio[-tail_samples:].copy() if len(audio) >= tail_samples else audio.copy()
+            self._prior_end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
 
         # Update prompt with this segment's output for next-segment conditioning
         if self._condition and segments:

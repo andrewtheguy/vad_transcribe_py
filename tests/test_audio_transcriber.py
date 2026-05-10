@@ -171,6 +171,92 @@ def test_resolve_whisper_model_id():
     assert _resolve_whisper_model_id("openai/whisper-large-v3") == "openai/whisper-large-v3"
 
 
+def _make_whisper_fake_pipe(captured_lengths: list[int]):
+    """Build a fake HF pipeline that splits audio into two equal-time chunks."""
+
+    def fake_pipe(audio, *, return_timestamps, generate_kwargs):  # noqa: ARG001
+        captured_lengths.append(len(audio))
+        duration = len(audio) / 16000
+        return {
+            "text": "first second",
+            "chunks": [
+                {"text": "first", "timestamp": (0.0, duration / 2)},
+                {"text": "second", "timestamp": (duration / 2, duration)},
+            ],
+        }
+
+    return fake_pipe
+
+
+def test_whisper_overlap_prepended_and_deduped_on_contiguous_call():
+    """Contiguous call prepends 2s tail and drops overlap chunks."""
+    transcriber = WhisperBackend(language="en", model="large-v3-turbo", condition=False)
+    captured: list[int] = []
+    transcriber.pipe = _make_whisper_fake_pipe(captured)
+
+    audio1 = np.zeros(5 * 16000, dtype=np.float32)
+    segs1 = transcriber.transcribe(audio1, start_offset=0.0)
+    assert captured[0] == 5 * 16000
+    assert len(segs1) == 2
+    assert segs1[0].start == pytest.approx(0.0)
+    assert segs1[1].end == pytest.approx(5.0)
+
+    audio2 = np.zeros(5 * 16000, dtype=np.float32)
+    segs2 = transcriber.transcribe(audio2, start_offset=5.0)
+    # 2s tail prepended → 7s fed to pipe.
+    assert captured[1] == 7 * 16000
+    # Pipeline duration 7s, chunks at [0, 3.5] and [3.5, 7]. First midpoint
+    # (1.75) falls inside the 2s overlap and is dropped; second is kept and
+    # shifted by -2s, then offset by start_offset=5.0.
+    assert len(segs2) == 1
+    assert segs2[0].text == "second"
+    assert segs2[0].start == pytest.approx(6.5)
+    assert segs2[0].end == pytest.approx(10.0)
+
+
+def test_whisper_overlap_skipped_on_non_contiguous_call():
+    """A gap larger than the adjacency tolerance disables tail prepending."""
+    transcriber = WhisperBackend(language="en", model="large-v3-turbo", condition=False)
+    captured: list[int] = []
+    transcriber.pipe = _make_whisper_fake_pipe(captured)
+
+    audio1 = np.zeros(5 * 16000, dtype=np.float32)
+    transcriber.transcribe(audio1, start_offset=0.0)
+    assert captured[0] == 5 * 16000
+
+    audio2 = np.zeros(3 * 16000, dtype=np.float32)
+    segs = transcriber.transcribe(audio2, start_offset=10.0)
+    assert captured[1] == 3 * 16000
+    # No overlap dropped → both chunks kept, anchored at start_offset=10.0.
+    assert len(segs) == 2
+    assert segs[0].start == pytest.approx(10.0)
+    assert segs[-1].end == pytest.approx(13.0)
+
+
+def test_whisper_no_tail_tracked_when_sub_timestamps_disabled():
+    """sub_timestamps=False keeps the legacy single-segment path."""
+    transcriber = WhisperBackend(
+        language="en", model="large-v3-turbo", condition=False, sub_timestamps=False
+    )
+    captured: list[int] = []
+
+    def fake_pipe(audio, *, return_timestamps, generate_kwargs):  # noqa: ARG001
+        captured.append(len(audio))
+        return {"text": "hello"}
+
+    transcriber.pipe = fake_pipe
+
+    audio1 = np.zeros(5 * 16000, dtype=np.float32)
+    transcriber.transcribe(audio1, start_offset=0.0)
+    assert captured[0] == 5 * 16000
+    assert transcriber._tail_audio is None
+
+    audio2 = np.zeros(3 * 16000, dtype=np.float32)
+    transcriber.transcribe(audio2, start_offset=5.0)
+    assert captured[1] == 3 * 16000
+    assert transcriber._tail_audio is None
+
+
 def test_moonshine_resolve_model():
     """Test moonshine model resolution via models.py."""
     from vad_transcribe_py.moonshine.models import resolve_model
