@@ -208,12 +208,12 @@ Transcription outputs streaming JSONL (one JSON object per line). Each entry has
 
 ```jsonl
 {"type": "stream_start"}
-{"type": "segment_start", "timestamp": 0.5, "timestamp_formatted": "00:00:00.500"}
-{"type": "transcript", "start": 0.5, "start_formatted": "00:00:00.500", "end": 2.3, "end_formatted": "00:00:02.300", "text": "Hello world"}
-{"type": "segment_end", "timestamp": 2.3, "timestamp_formatted": "00:00:02.300"}
-{"type": "segment_start", "timestamp": 3.1, "timestamp_formatted": "00:00:03.100"}
-{"type": "transcript", "start": 3.1, "start_formatted": "00:00:03.100", "end": 5.8, "end_formatted": "00:00:05.800", "text": "This is a test"}
-{"type": "segment_end", "timestamp": 5.8, "timestamp_formatted": "00:00:05.800"}
+{"type": "segment_start", "timestamp_ms": 500, "timestamp_formatted": "00:00:00.500"}
+{"type": "transcript", "id": "019...", "start_ms": 500, "start_formatted": "00:00:00.500", "text": "Hello world", "end_ms": 2300, "end_formatted": "00:00:02.300"}
+{"type": "segment_end", "timestamp_ms": 2300, "timestamp_formatted": "00:00:02.300"}
+{"type": "segment_start", "timestamp_ms": 3100, "timestamp_formatted": "00:00:03.100"}
+{"type": "transcript", "id": "019...", "start_ms": 3100, "start_formatted": "00:00:03.100", "text": "This is a test", "end_ms": 5800, "end_formatted": "00:00:05.800"}
+{"type": "segment_end", "timestamp_ms": 5800, "timestamp_formatted": "00:00:05.800"}
 {"type": "stream_end"}
 ```
 
@@ -222,6 +222,14 @@ Transcription outputs streaming JSONL (one JSON object per line). Each entry has
 - `transcript`: Contains the transcribed text with start/end timestamps
 - `segment_end`: Marks the end of a VAD-detected speech segment
 - `*_formatted`: Human-readable timestamps in `hh:mm:ss.ms` format
+- Whisper transcript and `segment_end` records can include debug fields such as
+  `ended_mid_sentence`, `whisper_timestamp_missing_end`, `overlap_applied`,
+  `starts_in_overlap`, `held_incomplete`, `merged_incomplete`,
+  `next_overlap_stored`, and `next_overlap_start_ms`.
+  When the final Whisper timestamp is missing its end, the backend prepends
+  audio from that final chunk's start timestamp to the next VAD segment and
+  holds the incomplete transcript until it can merge it with the overlapped
+  decode.
 
 ---
 

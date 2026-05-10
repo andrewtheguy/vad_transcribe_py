@@ -1,4 +1,6 @@
+import json
 import sys
+from io import StringIO
 from types import ModuleType
 from types import SimpleNamespace
 
@@ -7,6 +9,7 @@ import pytest
 import torch
 
 import vad_transcribe_py.audio_transcriber as audio_transcriber
+from vad_transcribe_py.cli import write_jsonl_boundary, write_jsonl_segment
 from vad_transcribe_py.backends.glm_asr import GLM_ASR_DEFAULT_MODEL, GLMASRBackend
 from vad_transcribe_py.backends.glm_asr_mlx import (
     GLM_ASR_MLX_DEFAULT_MODEL,
@@ -71,6 +74,54 @@ def test_transcribed_segment_dataclass():
     assert segment.text == "Hello world"
     assert segment.start == 1.5
     assert segment.end == 3.0
+    assert segment.debug == {}
+
+
+def test_jsonl_segment_includes_debug_fields():
+    """Debug metadata is emitted as top-level JSONL fields."""
+    output = StringIO()
+    segment = audio_transcriber.TranscribedSegment(
+        text="Hello world",
+        start=1.5,
+        end=3.0,
+        debug={
+            "ended_mid_sentence": True,
+            "overlap_applied": True,
+            "overlap_start_ms": 1200,
+        },
+    )
+
+    write_jsonl_segment(segment, output)
+
+    line = json.loads(output.getvalue())
+    assert line["type"] == "transcript"
+    assert line["ended_mid_sentence"] is True
+    assert line["overlap_applied"] is True
+    assert line["overlap_start_ms"] == 1200
+
+
+def test_jsonl_boundary_includes_debug_fields():
+    """Segment boundary debug metadata is emitted as top-level JSONL fields."""
+    output = StringIO()
+
+    write_jsonl_boundary(
+        "segment_end",
+        3.0,
+        output,
+        {
+            "ended_mid_sentence": True,
+            "next_overlap_stored": True,
+            "next_overlap_start_ms": 2500,
+            "next_overlap_skipped_reason": None,
+        },
+    )
+
+    line = json.loads(output.getvalue())
+    assert line["type"] == "segment_end"
+    assert line["ended_mid_sentence"] is True
+    assert line["next_overlap_stored"] is True
+    assert line["next_overlap_start_ms"] == 2500
+    assert "next_overlap_skipped_reason" not in line
 
 
 def test_process_text_chinese_no_conversion():
@@ -157,6 +208,109 @@ def test_hard_limit_seconds_whisper_no_sub_timestamps():
     )
     assert transcriber.hard_limit_seconds == WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS
     assert WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS == 30
+
+
+def test_whisper_stores_overlap_from_incomplete_final_timestamp():
+    """A final chunk without an end timestamp becomes next-segment overlap."""
+    transcriber = WhisperBackend(
+        language="en",
+        model="large-v3-turbo",
+        condition=False,
+    )
+
+    calls: list[np.ndarray] = []
+
+    def pipe(audio, *, return_timestamps, generate_kwargs):
+        calls.append(audio.copy())
+        assert return_timestamps is True
+        assert generate_kwargs["language"] == "en"
+        return {
+            "text": "unfinished",
+            "chunks": [
+                {"text": "unfinished", "timestamp": (1.0, None)},
+            ],
+        }
+
+    transcriber.pipe = pipe
+    audio = np.arange(4 * 16000, dtype=np.float32)
+
+    segments = transcriber.transcribe(audio, start_offset=10.0)
+
+    assert len(calls) == 1
+    np.testing.assert_array_equal(calls[0], audio)
+    assert segments == []
+
+    assert transcriber._overlap_start_offset == pytest.approx(11.0)
+    assert transcriber._overlap_audio is not None
+    assert transcriber._pending_incomplete_segment is not None
+    assert transcriber._pending_incomplete_segment.text == "unfinished"
+    assert transcriber._pending_incomplete_segment.start == pytest.approx(11.0)
+    assert transcriber._pending_incomplete_segment.end == pytest.approx(14.0)
+    np.testing.assert_array_equal(transcriber._overlap_audio, audio[16000:])
+    assert transcriber.last_segment_debug["ended_mid_sentence"] is True
+    assert transcriber.last_segment_debug["held_incomplete"] is True
+    assert transcriber.last_segment_debug["emitted_chunk_count"] == 0
+    assert transcriber.last_segment_debug["next_overlap_stored"] is True
+    assert transcriber.last_segment_debug["next_overlap_start_ms"] == 11000
+
+
+def test_whisper_prepends_overlap_and_merges_held_incomplete_chunk():
+    """Pending incomplete text is merged with the next overlapped decode."""
+    transcriber = WhisperBackend(
+        language="en",
+        model="large-v3-turbo",
+        condition=False,
+    )
+
+    first_audio = np.arange(4 * 16000, dtype=np.float32)
+    second_audio = np.arange(2 * 16000, dtype=np.float32) + 100000
+    calls: list[np.ndarray] = []
+
+    def pipe(audio, *, return_timestamps, generate_kwargs):
+        calls.append(audio.copy())
+        if len(calls) == 1:
+            return {
+                "text": "big music's",
+                "chunks": [
+                    {"text": "big music's", "timestamp": (1.0, None)},
+                ],
+            }
+        return {
+            "text": "old stars new",
+            "chunks": [
+                {"text": "old", "timestamp": (0.0, 2.0)},
+                {"text": " stars", "timestamp": (2.5, 4.0)},
+                {"text": "new", "timestamp": (4.0, 5.0)},
+            ],
+        }
+
+    transcriber.pipe = pipe
+
+    _ = transcriber.transcribe(first_audio, start_offset=10.0)
+    segments = transcriber.transcribe(second_audio, start_offset=14.0)
+
+    assert len(calls) == 2
+    expected_combined = np.concatenate([first_audio[16000:], second_audio]).astype(np.float32, copy=False)
+    np.testing.assert_array_equal(calls[1], expected_combined)
+
+    assert [segment.text for segment in segments] == ["big music's stars", "new"]
+    assert segments[0].start == pytest.approx(11.0)
+    assert segments[0].end == pytest.approx(15.0)
+    assert segments[0].debug["overlap_applied"] is True
+    assert segments[0].debug["starts_in_overlap"] is True
+    assert segments[0].debug["merged_incomplete"] is True
+    assert segments[0].debug["pending_incomplete_start_ms"] == 11000
+    assert segments[0].debug["overlap_start_ms"] == 11000
+    assert segments[0].debug["overlap_cutoff_ms"] == 14000
+    assert segments[1].start == pytest.approx(15.0)
+    assert segments[1].debug["starts_in_overlap"] is False
+
+    assert transcriber.last_segment_debug["overlap_applied"] is True
+    assert transcriber.last_segment_debug["skipped_overlap_chunk_count"] == 1
+    assert transcriber.last_segment_debug["ended_mid_sentence"] is False
+    assert transcriber.last_segment_debug["pending_incomplete_merged"] is True
+    assert transcriber._overlap_audio is None
+    assert transcriber._pending_incomplete_segment is None
 
 
 def test_moonshine_hard_limits_from_model_config():

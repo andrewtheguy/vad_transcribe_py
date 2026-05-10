@@ -259,7 +259,7 @@ def save_audio_segment(
 
 def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> None:
     """Write a single transcription segment as JSONL to the output file."""
-    line = json.dumps({
+    payload: dict[str, object] = {
         "type": "transcript",
         "id": str(uuid.uuid7()),
         "start_ms": round(segment.start * 1000),
@@ -267,7 +267,9 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> No
         "text": segment.text,
         "end_ms": round(segment.end * 1000),
         "end_formatted": format_timestamp(segment.end),
-    }, ensure_ascii=False)
+    }
+    payload.update(segment.debug)
+    line = json.dumps(payload, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()
 
@@ -279,7 +281,12 @@ def write_jsonl_marker(event: str, output_file: IO[str]) -> None:
     output_file.flush()
 
 
-def write_jsonl_boundary(event: str, timestamp: float, output_file: IO[str]) -> None:
+def write_jsonl_boundary(
+    event: str,
+    timestamp: float,
+    output_file: IO[str],
+    debug: dict[str, object] | None = None,
+) -> None:
     """Write a segment boundary event as JSONL.
 
     Args:
@@ -287,11 +294,14 @@ def write_jsonl_boundary(event: str, timestamp: float, output_file: IO[str]) -> 
         timestamp: The timestamp of the boundary in seconds
         output_file: File object to write to
     """
-    line = json.dumps({
+    payload: dict[str, object] = {
         "type": event,
         "timestamp_ms": round(timestamp * 1000),
         "timestamp_formatted": format_timestamp(timestamp),
-    }, ensure_ascii=False)
+    }
+    if debug:
+        payload.update({key: value for key, value in debug.items() if value is not None})
+    line = json.dumps(payload, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()
 
@@ -340,7 +350,13 @@ def stream_transcribe_with_vad(
             write_jsonl_segment(ts, output_file)
 
         segment_end_time = segment.start + segment.duration_seconds
-        write_jsonl_boundary("segment_end", segment_end_time, output_file)
+        segment_debug = getattr(transcriber, "last_segment_debug", None)
+        write_jsonl_boundary(
+            "segment_end",
+            segment_end_time,
+            output_file,
+            segment_debug if isinstance(segment_debug, dict) else None,
+        )
 
         segment_count += 1
 
@@ -422,7 +438,13 @@ def stream_transcribe_stdin_with_vad(
             write_jsonl_segment(ts, output_file)
 
         segment_end_time = segment.start + segment.duration_seconds
-        write_jsonl_boundary("segment_end", segment_end_time, output_file)
+        segment_debug = getattr(transcriber, "last_segment_debug", None)
+        write_jsonl_boundary(
+            "segment_end",
+            segment_end_time,
+            output_file,
+            segment_debug if isinstance(segment_debug, dict) else None,
+        )
 
         segment_count += 1
 
