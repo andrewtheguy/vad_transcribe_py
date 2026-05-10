@@ -5,6 +5,7 @@ Tests both default mode (16kHz downsampling) and --preserve-sample-rate mode
 using real speech audio (samples/samples_jfk.wav).
 """
 
+import io
 import json
 import os
 import subprocess
@@ -13,7 +14,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from vad_transcribe_py.cli import split_by_vad, get_audio_properties, resample_to_16k
+from vad_transcribe_py.audio_transcriber import TranscribedSegment
+from vad_transcribe_py.cli import (
+    get_audio_properties,
+    resample_to_16k,
+    split_by_vad,
+    write_jsonl_segment,
+)
 
 
 # Path to JFK speech sample (16kHz mono, ~11 seconds)
@@ -470,6 +477,48 @@ class TestCLIIntegration:
 
         assert result.returncode != 0
         assert "Error" in result.stderr or "error" in result.stderr.lower()
+
+
+class TestWriteJsonlSegmentFlags:
+    """JSONL transcript writer omits boundary flags by default and emits when set."""
+
+    def _write_and_parse(self, segment: TranscribedSegment) -> dict:
+        buf = io.StringIO()
+        write_jsonl_segment(segment, buf)
+        return json.loads(buf.getvalue())
+
+    def test_flags_omitted_when_false(self):
+        payload = self._write_and_parse(
+            TranscribedSegment(text="Hello world.", start=0.0, end=1.0)
+        )
+        assert payload["type"] == "transcript"
+        assert payload["text"] == "Hello world."
+        assert "continued_from_prior" not in payload
+        assert "ends_mid_sentence" not in payload
+
+    def test_continued_from_prior_emitted_when_true(self):
+        payload = self._write_and_parse(
+            TranscribedSegment(
+                text="continuation",
+                start=5.0,
+                end=6.0,
+                continued_from_prior=True,
+            )
+        )
+        assert payload["continued_from_prior"] is True
+        assert "ends_mid_sentence" not in payload
+
+    def test_ends_mid_sentence_emitted_when_true(self):
+        payload = self._write_and_parse(
+            TranscribedSegment(
+                text="cut off",
+                start=2.0,
+                end=3.0,
+                ends_mid_sentence=True,
+            )
+        )
+        assert payload["ends_mid_sentence"] is True
+        assert "continued_from_prior" not in payload
 
 
 if __name__ == "__main__":

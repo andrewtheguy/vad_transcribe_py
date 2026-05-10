@@ -36,6 +36,19 @@ _MODEL_LANGUAGE_OVERRIDES: dict[str, dict[str, str]] = {
     "alvanlii/whisper-small-cantonese": {"yue": "zh"},
 }
 
+_TERMINAL_PUNCTUATION = frozenset(".?!。？！…")
+_TRAILING_CLOSERS = frozenset("\"')]}»」』）】’”")
+
+
+def _ends_mid_sentence(text: str) -> bool:
+    """Heuristic: True if *text* does not end with sentence-terminal punctuation."""
+    stripped = text.rstrip()
+    while stripped and stripped[-1] in _TRAILING_CLOSERS:
+        stripped = stripped[:-1]
+    if not stripped:
+        return False
+    return stripped[-1] not in _TERMINAL_PUNCTUATION
+
 
 def _get_device_and_dtype(device: str | None = None) -> tuple[str, torch.dtype]:
     """Resolve device and dtype for Whisper.
@@ -202,6 +215,11 @@ class WhisperBackend(TranscriberBase):
         else:
             text = result["text"]
             segments = [self._make_segment(text, start_offset, start_offset + len(audio) / TARGET_SAMPLE_RATE)]
+
+        for seg in segments:
+            seg.ends_mid_sentence = _ends_mid_sentence(seg.text)
+        if overlap_seconds > 0 and segments:
+            segments[0].continued_from_prior = True
 
         if self._sub_timestamps:
             tail_samples = int(_OVERLAP_SECONDS * TARGET_SAMPLE_RATE)

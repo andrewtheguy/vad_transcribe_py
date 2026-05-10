@@ -259,7 +259,7 @@ def save_audio_segment(
 
 def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> None:
     """Write a single transcription segment as JSONL to the output file."""
-    line = json.dumps({
+    payload: dict[str, object] = {
         "type": "transcript",
         "id": str(uuid.uuid7()),
         "start_ms": round(segment.start * 1000),
@@ -267,7 +267,12 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> No
         "text": segment.text,
         "end_ms": round(segment.end * 1000),
         "end_formatted": format_timestamp(segment.end),
-    }, ensure_ascii=False)
+    }
+    if segment.continued_from_prior:
+        payload["continued_from_prior"] = True
+    if segment.ends_mid_sentence:
+        payload["ends_mid_sentence"] = True
+    line = json.dumps(payload, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()
 

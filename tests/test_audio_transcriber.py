@@ -15,7 +15,11 @@ from vad_transcribe_py.backends.glm_asr_mlx import (
 )
 from vad_transcribe_py.backends.qwen_asr_mlx import QwenASRMLXBackend
 from vad_transcribe_py.backends.qwen_rs import QwenASRRsBackend
-from vad_transcribe_py.backends.whisper import WhisperBackend, _resolve_whisper_model_id
+from vad_transcribe_py.backends.whisper import (
+    WhisperBackend,
+    _ends_mid_sentence,
+    _resolve_whisper_model_id,
+)
 from vad_transcribe_py.vad_processor import (
     GLM_ASR_HARD_LIMIT_SECONDS,
     GLM_ASR_SOFT_LIMIT_SECONDS,
@@ -200,6 +204,10 @@ def test_whisper_overlap_prepended_and_deduped_on_contiguous_call():
     assert len(segs1) == 2
     assert segs1[0].start == pytest.approx(0.0)
     assert segs1[1].end == pytest.approx(5.0)
+    # No prior call → first segment not flagged as a continuation.
+    assert segs1[0].continued_from_prior is False
+    # Fake chunks "first"/"second" have no terminal punctuation.
+    assert all(seg.ends_mid_sentence for seg in segs1)
 
     audio2 = np.zeros(5 * 16000, dtype=np.float32)
     segs2 = transcriber.transcribe(audio2, start_offset=5.0)
@@ -212,6 +220,9 @@ def test_whisper_overlap_prepended_and_deduped_on_contiguous_call():
     assert segs2[0].text == "second"
     assert segs2[0].start == pytest.approx(6.5)
     assert segs2[0].end == pytest.approx(10.0)
+    # First kept chunk of a tail-prepended call is marked as a continuation.
+    assert segs2[0].continued_from_prior is True
+    assert segs2[0].ends_mid_sentence is True
 
 
 def test_whisper_overlap_skipped_on_non_contiguous_call():
@@ -231,6 +242,30 @@ def test_whisper_overlap_skipped_on_non_contiguous_call():
     assert len(segs) == 2
     assert segs[0].start == pytest.approx(10.0)
     assert segs[-1].end == pytest.approx(13.0)
+    # Gap means no continuation flag, even though prior call existed.
+    assert segs[0].continued_from_prior is False
+
+
+def test_ends_mid_sentence_heuristic():
+    """Sentence-terminal detection across punctuation styles."""
+    # Terminated → False
+    assert _ends_mid_sentence("Hello world.") is False
+    assert _ends_mid_sentence("Really?") is False
+    assert _ends_mid_sentence("Stop!") is False
+    assert _ends_mid_sentence("你好。") is False
+    assert _ends_mid_sentence("真的？") is False
+    assert _ends_mid_sentence("Trailing whitespace.  \n") is False
+    # Closing quotes/brackets after terminal punctuation still count as terminated.
+    assert _ends_mid_sentence('She said "go home."') is False
+    assert _ends_mid_sentence("(Done.)") is False
+    # Not terminated → True
+    assert _ends_mid_sentence("Hello world") is True
+    assert _ends_mid_sentence("and then the") is True
+    assert _ends_mid_sentence("comma,") is True
+    assert _ends_mid_sentence("dash —") is True
+    # Empty / whitespace-only → False (no claim either way).
+    assert _ends_mid_sentence("") is False
+    assert _ends_mid_sentence("   ") is False
 
 
 def test_whisper_no_tail_tracked_when_sub_timestamps_disabled():

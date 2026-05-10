@@ -22,6 +22,9 @@ class TranscribedSegment:
     text: str
     start: float
     end: float
+    # Backends may set these to expose boundary metadata to consumers.
+    continued_from_prior: bool = False
+    ends_mid_sentence: bool = False
 
 
 @runtime_checkable
