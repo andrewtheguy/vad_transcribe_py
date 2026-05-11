@@ -1,6 +1,7 @@
 import sys
 from types import ModuleType
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -705,3 +706,417 @@ def test_glm_mlx_empty_text_still_returns_segment(monkeypatch):
 
     assert len(segments) == 1
     assert segments[0].text == "   "
+
+
+# ---------------------------------------------------------------------------
+# Retry-without-prompt behavior
+#
+# Each conditioning-capable backend (whisper, qwen_rs, qwen_asr_mlx) re-runs
+# inference with the conditioning prompt cleared if the first output near-
+# duplicates the previous segment's text and a prompt was actually used.
+# Whisper gates this on sub_timestamps=False (the no-stitching path) — the
+# multi-chunk path keeps existing behavior.
+# ---------------------------------------------------------------------------
+
+
+class _StubPromptIds:
+    def to(self, _device):
+        return self
+
+
+class _StubProcessor:
+    def get_prompt_ids(self, _text, return_tensors=None):
+        return _StubPromptIds()
+
+
+def _whisper_no_subts_backend(prior_line: str, prompt_set: bool) -> WhisperBackend:
+    """Build a stubbed whisper backend pre-loaded with prior-segment state."""
+    backend = WhisperBackend(language="en", model="large-v3-turbo", sub_timestamps=False)
+    backend._prior_line = prior_line
+    backend._prompt_ids = "prompt-tensor" if prompt_set else None  # opaque sentinel; backend only checks for None
+    backend._processor = _StubProcessor()  # post-transcribe conditioning update needs get_prompt_ids
+    return backend
+
+
+def test_whisper_retry_without_prompt_when_output_near_duplicates_prior():
+    """Prompt was used and output near-duplicates prior → re-run without prompt_ids and mark prompt_retry=True."""
+    backend = _whisper_no_subts_backend(prior_line="hello world", prompt_set=True)
+    calls: list[dict[str, Any]] = []
+
+    def fake_pipe(audio, *, return_timestamps, generate_kwargs):
+        calls.append({"return_timestamps": return_timestamps, "generate_kwargs": dict(generate_kwargs)})
+        # First call returns a near-duplicate; second call (no prompt_ids) returns different text.
+        if "prompt_ids" in generate_kwargs:
+            return {"text": "hello world"}
+        return {"text": "something different"}
+
+    backend.pipe = fake_pipe
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert len(calls) == 2
+    assert "prompt_ids" in calls[0]["generate_kwargs"]
+    assert "prompt_ids" not in calls[1]["generate_kwargs"]
+    assert len(segments) == 1
+    assert segments[0].text == "something different"
+    assert segments[0].prompt_retry is True
+
+
+def test_whisper_no_retry_when_prompt_was_not_used():
+    """No prompt → no retry, even if output happens to near-duplicate prior."""
+    backend = _whisper_no_subts_backend(prior_line="hello world", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+
+    def fake_pipe(audio, *, return_timestamps, generate_kwargs):
+        calls.append({"generate_kwargs": dict(generate_kwargs)})
+        return {"text": "hello world"}
+
+    backend.pipe = fake_pipe
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert len(calls) == 1
+    assert "prompt_ids" not in calls[0]["generate_kwargs"]
+    assert segments[0].prompt_retry is False
+
+
+def test_whisper_no_retry_when_output_differs_from_prior():
+    """Prompt was used but output is clearly different → single call only."""
+    backend = _whisper_no_subts_backend(prior_line="hello world", prompt_set=True)
+    calls: list[dict[str, Any]] = []
+
+    def fake_pipe(audio, *, return_timestamps, generate_kwargs):
+        calls.append({"generate_kwargs": dict(generate_kwargs)})
+        return {"text": "completely unrelated transcription"}
+
+    backend.pipe = fake_pipe
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert len(calls) == 1
+    assert segments[0].prompt_retry is False
+
+
+def _whisper_subts_backend(prior_last_chunk: str, prompt_set: bool) -> WhisperBackend:
+    """Build a stubbed sub_timestamps=True whisper backend with prior-call state."""
+    backend = WhisperBackend(language="en", model="large-v3-turbo", sub_timestamps=True)
+    backend._prior_last_chunk = prior_last_chunk
+    backend._prior_line = prior_last_chunk  # consistent with single-chunk-prior case
+    backend._prompt_ids = "prompt-tensor" if prompt_set else None
+    backend._processor = _StubProcessor()
+    return backend
+
+
+def _staged_pipe(staged_results, calls):
+    """Return a fake pipe whose successive calls return the staged dicts in order."""
+    it = iter(staged_results)
+
+    def fake_pipe(audio, *, return_timestamps, generate_kwargs):
+        calls.append({
+            "audio_len": len(audio),
+            "return_timestamps": return_timestamps,
+            "generate_kwargs": dict(generate_kwargs),
+        })
+        return next(it)
+
+    return fake_pipe
+
+
+def test_whisper_subts_mid_segment_repetition_retries_without_prompt():
+    """chunk[i] near-duplicates chunk[i-1] → trim from chunk[i].start, retry without prompt_ids.
+
+    No initial prompt is set; mid-segment duplicates trigger a retry regardless.
+    """
+    backend = _whisper_subts_backend(prior_last_chunk="", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "hello", "timestamp": (0.0, 2.0)},
+                {"text": "abcdefg", "timestamp": (2.0, 5.0)},
+                {"text": "abcdefg", "timestamp": (5.0, 8.0)},
+            ]},
+            {"chunks": [
+                {"text": "fresh tail", "timestamp": (0.0, 3.0)},
+            ]},
+        ],
+        calls,
+    )
+
+    audio = np.zeros(int(8.0 * 16000), dtype=np.float32)
+    segments = backend.transcribe(audio)
+
+    assert len(calls) == 2
+    assert calls[1]["audio_len"] == len(audio) - int(5.0 * 16000)  # trimmed at 5.0s
+    assert "prompt_ids" not in calls[1]["generate_kwargs"]
+    assert [s.text for s in segments] == ["hello", "abcdefg", "fresh tail"]
+    assert [s.prompt_retry for s in segments] == [False, False, True]
+    # Retried chunk's timestamps were re-based by +5.0s.
+    assert segments[2].start == 5.0
+    assert segments[2].end == 8.0
+
+
+def test_whisper_subts_mid_segment_repetition_drops_prompt_ids_when_set():
+    """Mid-segment retry also clears prompt_ids when one was passed in."""
+    backend = _whisper_subts_backend(prior_last_chunk="", prompt_set=True)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "abc", "timestamp": (0.0, 2.0)},
+                {"text": "abc", "timestamp": (2.0, 4.0)},
+            ]},
+            {"chunks": [{"text": "different", "timestamp": (0.0, 2.0)}]},
+        ],
+        calls,
+    )
+
+    backend.transcribe(np.zeros(int(4.0 * 16000), dtype=np.float32))
+
+    assert len(calls) == 2
+    assert "prompt_ids" in calls[0]["generate_kwargs"]
+    assert "prompt_ids" not in calls[1]["generate_kwargs"]
+
+
+def test_whisper_subts_cross_vad_repetition_with_prompt_triggers_retry():
+    """chunk[0] near-duplicates _prior_last_chunk → retry whole call without prompt_ids."""
+    backend = _whisper_subts_backend(prior_last_chunk="hello world", prompt_set=True)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "hello world", "timestamp": (0.0, 3.0)},
+                {"text": "more text", "timestamp": (3.0, 6.0)},
+            ]},
+            {"chunks": [
+                {"text": "actual transcription", "timestamp": (0.0, 6.0)},
+            ]},
+        ],
+        calls,
+    )
+
+    audio = np.zeros(int(6.0 * 16000), dtype=np.float32)
+    segments = backend.transcribe(audio)
+
+    assert len(calls) == 2
+    assert calls[1]["audio_len"] == len(audio)  # trim at 0.0 = whole audio
+    assert "prompt_ids" not in calls[1]["generate_kwargs"]
+    assert [s.text for s in segments] == ["actual transcription"]
+    assert all(s.prompt_retry for s in segments)
+
+
+def test_whisper_subts_cross_vad_repetition_skipped_without_prompt():
+    """chunk[0] near-duplicates _prior_last_chunk but no prompt was used → no retry."""
+    backend = _whisper_subts_backend(prior_last_chunk="hello world", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "hello world", "timestamp": (0.0, 3.0)},
+                {"text": "more text", "timestamp": (3.0, 6.0)},
+            ]},
+        ],
+        calls,
+    )
+
+    segments = backend.transcribe(np.zeros(int(6.0 * 16000), dtype=np.float32))
+
+    assert len(calls) == 1
+    assert all(not s.prompt_retry for s in segments)
+
+
+def test_whisper_subts_no_repetition_no_retry():
+    """All chunks distinct from each other and from prior_last_chunk → single call."""
+    backend = _whisper_subts_backend(prior_last_chunk="prior text", prompt_set=True)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "alpha", "timestamp": (0.0, 2.0)},
+                {"text": "beta", "timestamp": (2.0, 4.0)},
+                {"text": "gamma", "timestamp": (4.0, 6.0)},
+            ]},
+        ],
+        calls,
+    )
+
+    segments = backend.transcribe(np.zeros(int(6.0 * 16000), dtype=np.float32))
+
+    assert len(calls) == 1
+    assert [s.text for s in segments] == ["alpha", "beta", "gamma"]
+    assert all(not s.prompt_retry for s in segments)
+
+
+def test_whisper_subts_retry_offsets_timestamps_with_start_offset():
+    """Retried-chunk start/end = start_offset + trim_start_sec + chunk_timestamp_in_trimmed_call."""
+    backend = _whisper_subts_backend(prior_last_chunk="", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "intro", "timestamp": (0.0, 3.0)},
+                {"text": "loop", "timestamp": (3.0, 5.0)},
+                {"text": "loop", "timestamp": (5.0, 7.0)},
+            ]},
+            # Trimmed audio starts at 5.0s; retried chunk's local timestamps are (1.0, 4.0).
+            {"chunks": [{"text": "rescued", "timestamp": (1.0, 4.0)}]},
+        ],
+        calls,
+    )
+
+    segments = backend.transcribe(np.zeros(int(7.0 * 16000), dtype=np.float32), start_offset=10.0)
+
+    # First two chunks: just the start_offset added.
+    assert segments[0].start == 10.0
+    assert segments[0].end == 13.0
+    assert segments[1].start == 13.0
+    assert segments[1].end == 15.0
+    # Retried chunk: start_offset + trim_start_sec + local_ts.
+    assert segments[2].text == "rescued"
+    assert segments[2].start == 10.0 + 5.0 + 1.0
+    assert segments[2].end == 10.0 + 5.0 + 4.0
+    assert segments[2].prompt_retry is True
+
+
+def test_whisper_subts_prior_last_chunk_updated_after_retry():
+    """After a retried call, _prior_last_chunk reflects the final (retried) chunk's text."""
+    backend = _whisper_subts_backend(prior_last_chunk="", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "alpha", "timestamp": (0.0, 2.0)},
+                {"text": "alpha", "timestamp": (2.0, 4.0)},
+            ]},
+            {"chunks": [{"text": "post-retry tail", "timestamp": (0.0, 2.0)}]},
+        ],
+        calls,
+    )
+
+    backend.transcribe(np.zeros(int(4.0 * 16000), dtype=np.float32))
+
+    assert backend._prior_last_chunk == "post-retry tail"
+
+
+def _install_stub_qwencandle(monkeypatch, side_effect):
+    """Install a stub qwencandle module whose QwenAsr.transcribe yields each item from side_effect in turn."""
+
+    class StubQwenAsr:
+        def __init__(self, device, model_id=None):
+            self.calls: list[dict[str, object]] = []
+            self._iter = iter(side_effect)
+
+        def transcribe(self, samples, *, language=None, context=None):
+            self.calls.append({"language": language, "context": context})
+            return next(self._iter)
+
+    qwencandle_module = ModuleType("qwencandle")
+    qwencandle_module.QwenAsr = StubQwenAsr  # type: ignore[attr-defined]
+    qwencandle_module.DEFAULT_MODEL_ID = "Qwen/Qwen3-ASR-0.6B"  # type: ignore[attr-defined]
+    qwencandle_module.is_cuda_available = lambda: False  # type: ignore[attr-defined]
+    qwencandle_module.is_metal_available = lambda: False  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "qwencandle", qwencandle_module)
+
+
+def test_qwen_rs_retry_without_context_when_output_near_duplicates_prior(monkeypatch):
+    _install_stub_qwencandle(monkeypatch, ["hello world", "something different"])
+    backend = QwenASRRsBackend(language="en")
+    backend._previous_text = "hello world"
+    backend._prior_line = "hello world"
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    calls = backend._model.calls  # type: ignore[attr-defined]
+    assert len(calls) == 2
+    assert calls[0]["context"] == "hello world"
+    assert calls[1]["context"] is None
+    assert segments[0].text == "something different"
+    assert segments[0].prompt_retry is True
+
+
+def test_qwen_rs_no_retry_when_no_context(monkeypatch):
+    _install_stub_qwencandle(monkeypatch, ["hello world"])
+    backend = QwenASRRsBackend(language="en")
+    backend._previous_text = ""  # empty string → treated as "no prompt"
+    backend._prior_line = "hello world"
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    calls = backend._model.calls  # type: ignore[attr-defined]
+    assert len(calls) == 1
+    assert segments[0].prompt_retry is False
+
+
+def test_qwen_rs_no_retry_when_output_differs(monkeypatch):
+    _install_stub_qwencandle(monkeypatch, ["totally fresh transcription"])
+    backend = QwenASRRsBackend(language="en")
+    backend._previous_text = "hello world"
+    backend._prior_line = "hello world"
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert len(backend._model.calls) == 1  # type: ignore[attr-defined]
+    assert segments[0].prompt_retry is False
+
+
+def _install_stub_mlx_audio(monkeypatch, texts):
+    """Install a stub mlx_audio module whose load_model returns a model yielding texts in turn."""
+
+    class StubMLXModel:
+        def __init__(self):
+            self.calls: list[dict[str, object]] = []
+            self._iter = iter(texts)
+
+        def generate(self, audio, *, language=None, system_prompt=None, max_tokens=8192, verbose=False, **_kwargs):
+            self.calls.append({"language": language, "system_prompt": system_prompt})
+            return SimpleNamespace(text=next(self._iter))
+
+    stub = StubMLXModel()
+    mlx_audio_module = ModuleType("mlx_audio")
+    stt_module = ModuleType("mlx_audio.stt")
+    utils_module = ModuleType("mlx_audio.stt.utils")
+    utils_module.load_model = lambda _model_id: stub  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx_audio", mlx_audio_module)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt", stt_module)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt.utils", utils_module)
+    return stub
+
+
+def test_qwen_mlx_retry_without_system_prompt_when_output_near_duplicates_prior(monkeypatch):
+    stub = _install_stub_mlx_audio(monkeypatch, ["hello world", "something different"])
+    backend = QwenASRMLXBackend(language="en")
+    backend._previous_text = "hello world"
+    backend._prior_line = "hello world"
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert len(stub.calls) == 2
+    assert stub.calls[0]["system_prompt"] == "hello world"
+    assert stub.calls[1]["system_prompt"] is None
+    assert segments[0].text == "something different"
+    assert segments[0].prompt_retry is True
+
+
+def test_qwen_mlx_no_retry_when_no_system_prompt(monkeypatch):
+    stub = _install_stub_mlx_audio(monkeypatch, ["hello world"])
+    backend = QwenASRMLXBackend(language="en")
+    backend._previous_text = ""
+    backend._prior_line = "hello world"
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert len(stub.calls) == 1
+    assert stub.calls[0]["system_prompt"] is None
+    assert segments[0].prompt_retry is False
+
+
+def test_qwen_mlx_no_retry_when_output_differs(monkeypatch):
+    stub = _install_stub_mlx_audio(monkeypatch, ["totally fresh transcription"])
+    backend = QwenASRMLXBackend(language="en")
+    backend._previous_text = "hello world"
+    backend._prior_line = "hello world"
+
+    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+    assert len(stub.calls) == 1
+    assert segments[0].prompt_retry is False

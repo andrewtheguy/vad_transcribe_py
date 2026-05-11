@@ -267,6 +267,7 @@ def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> No
         "text": segment.text,
         "end_ms": round(segment.end * 1000),
         "end_formatted": format_timestamp(segment.end),
+        "prompt_retry": segment.prompt_retry,
     }, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()

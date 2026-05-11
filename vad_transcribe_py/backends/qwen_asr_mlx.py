@@ -14,6 +14,7 @@ from vad_transcribe_py._utils import (
     TARGET_SAMPLE_RATE,
     ChineseConversion,
     conditioning_context,
+    is_near_duplicate,
 )
 from vad_transcribe_py.vad_processor import (
     QWEN_ASR_HARD_LIMIT_SECONDS,
@@ -124,6 +125,7 @@ class QwenASRMLXBackend(TranscriberBase):
             )
 
         sys_prompt = self._previous_text if (self._condition and self._previous_text) else None
+        used_prompt = sys_prompt is not None
 
         output = self._mlx_model.generate(
             audio,
@@ -134,9 +136,22 @@ class QwenASRMLXBackend(TranscriberBase):
         )
         text: str = output.text
 
+        prompt_retry = False
+        if used_prompt and is_near_duplicate(text, self._prior_line):
+            logger.info("Retrying segment without conditioning prompt (near-duplicate of prior)")
+            output = self._mlx_model.generate(
+                audio,
+                language=qwen_language,
+                system_prompt=None,
+                max_tokens=QWEN_ASR_MLX_MAX_TOKENS,
+                verbose=False,
+            )
+            text = output.text
+            prompt_retry = True
+
         if self._condition:
             self._previous_text = conditioning_context(text, self._prior_line)
             self._prior_line = text.strip()
 
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
-        return [self._make_segment(text, start_offset, end_time)]
+        return [self._make_segment(text, start_offset, end_time, prompt_retry=prompt_retry)]

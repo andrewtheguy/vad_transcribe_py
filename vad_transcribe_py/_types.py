@@ -22,6 +22,7 @@ class TranscribedSegment:
     text: str
     start: float
     end: float
+    prompt_retry: bool = False
 
 
 @runtime_checkable
@@ -45,10 +46,10 @@ class TranscriberBase:
         self.chinese_conversion: ChineseConversion = chinese_conversion
         self.num_threads = num_threads
 
-    def _make_segment(self, text: str, start: float, end: float) -> TranscribedSegment:
+    def _make_segment(self, text: str, start: float, end: float, prompt_retry: bool = False) -> TranscribedSegment:
         """Format timestamps, print to stderr, process text, and return a TranscribedSegment."""
         start_fmt = format_timestamp(start)
         end_fmt = format_timestamp(end)
         logger.info("[%s -> %s] %s", start_fmt, end_fmt, text)
         text = process_text(text, self.chinese_conversion)
-        return TranscribedSegment(text=text, start=start, end=end)
+        return TranscribedSegment(text=text, start=start, end=end, prompt_retry=prompt_retry)
