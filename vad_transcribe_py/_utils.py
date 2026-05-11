@@ -1,7 +1,5 @@
 """Shared constants and utility functions for transcriber backends."""
 
-from collections import Counter
-from collections.abc import Sequence
 from difflib import SequenceMatcher
 from typing import Literal
 
@@ -14,9 +12,7 @@ _REPETITION_THRESHOLD = 0.3
 _NEAR_DUPLICATE_THRESHOLD = 0.9
 
 INDISTINGUISHABLE_PLACEHOLDER = "(indistinguishable speech)"
-_CLIP_COVERAGE_THRESHOLD = 0.6
-_CLIP_MAX_NGRAM = 4
-_CLIP_DEFAULT_MIN_TOTAL_TOKENS = 8
+_CLIP_MIN_TEXT_LEN = 100
 
 
 def format_timestamp(seconds: float) -> str:
@@ -78,53 +74,39 @@ def conditioning_context(current: str, prior_line: str) -> str:
     return stripped
 
 
-def _has_dominant_repetition(tokens: Sequence[str], min_repetitions: int, min_total_tokens: int) -> bool:
-    """Return True if some n-gram (n in 1.._CLIP_MAX_NGRAM) appears at least
-    ``min_repetitions`` times AND its occurrences cover ≥ 60% of ``tokens``.
-
-    Returns False unconditionally when there are fewer than ``min_total_tokens``
-    tokens — short utterances like "yes yes yes" or "好好好" are plausible real
-    speech and shouldn't be clipped even if technically repetitive.
-    """
-    n = len(tokens)
-    if n < min_total_tokens or n < min_repetitions:
-        return False
-    max_ngram = min(_CLIP_MAX_NGRAM, n // min_repetitions)
-    for ngram_size in range(1, max_ngram + 1):
-        counter: Counter[tuple[str, ...]] = Counter(
-            tuple(tokens[i:i + ngram_size]) for i in range(n - ngram_size + 1)
-        )
-        _, count = counter.most_common(1)[0]
-        if count >= min_repetitions and (count * ngram_size) / n >= _CLIP_COVERAGE_THRESHOLD:
-            return True
-    return False
-
-
 def clip_repetitive_text(
     text: str,
     *,
-    min_repetitions: int = 3,
-    min_total_tokens: int = _CLIP_DEFAULT_MIN_TOTAL_TOKENS,
+    min_repeats: int = 10,
+    max_pattern_len: int = 30,
 ) -> str:
-    """Replace heavily repetitive transcripts with a placeholder, else return as-is.
+    """Truncate consecutively repeating patterns caused by ASR hallucination.
 
-    Catches model degenerate outputs like ``"dungu dungu dungu …"`` (word-level)
-    or ``"好好好好"`` / ``"૨૨૨"`` (character-level) by checking n-gram coverage.
-    A pattern is "heavy" when an n-gram of size 1..4 repeats ``min_repetitions``+
-    times and accounts for ≥ 60% of the tokens.
+    Scans for a char-level periodic run: for each candidate ``pat_len`` in
+    ``2..max_pattern_len``, walks the string looking for
+    ``text[i] == text[i - pat_len]`` over a continuous run of at least
+    ``pat_len * (min_repeats - 1)`` chars. When found, returns the prefix up to
+    and including the first copy of the pattern, followed by
+    ``(indistinguishable speech)``.
 
-    Lines below ``min_total_tokens`` (default 8) are passed through unchanged
-    even if repetitive — short utterances are likely real speech, not model
-    hallucination.
+    Short inputs (< ``_CLIP_MIN_TEXT_LEN`` chars) are passed through unchanged —
+    short utterances like "yes yes yes" or "好好好" are plausible real speech,
+    not model hallucination.
     """
-    if not text:
+    n = len(text)
+    if n < _CLIP_MIN_TEXT_LEN:
         return text
-    words = text.lower().split()
-    if _has_dominant_repetition(words, min_repetitions, min_total_tokens):
-        return INDISTINGUISHABLE_PLACEHOLDER
-    chars = [c for c in text if not c.isspace() and not c.isascii()]
-    if _has_dominant_repetition(chars, min_repetitions, min_total_tokens):
-        return INDISTINGUISHABLE_PLACEHOLDER
+    for pat_len in range(2, min(max_pattern_len + 1, n // min_repeats + 1)):
+        run = 0
+        threshold = pat_len * (min_repeats - 1)
+        for i in range(pat_len, n):
+            if text[i] == text[i - pat_len]:
+                run += 1
+                if run >= threshold:
+                    start = i - run - pat_len + 1
+                    return text[: start + pat_len] + INDISTINGUISHABLE_PLACEHOLDER
+            else:
+                run = 0
     return text
 
 

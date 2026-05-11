@@ -47,20 +47,15 @@ When a duplicate is found, the audio is trimmed to start at `chunks[i].timestamp
 
 ## Clipping single-line repetitions (opt-in)
 
-Even after the per-call retry, a few segments can slip through with degenerate output the model couldn't recover from — a single word looping for the entire VAD window (`"dungu dungu dungu …"`) or a single character repeated dozens of times (`"好好好好…"`, `"૨૨૨…"`). These add no information for downstream consumers and are usually preferable to mark as unintelligible.
+Even after the per-call retry, a few segments can slip through with degenerate output the model couldn't recover from — a single word looping for the rest of the VAD window (`"… some real speech then dungu dungu dungu dungu …"`) or a single character repeated dozens of times (`"好好好好…"`). These loops carry no information for downstream consumers, but the prefix before the loop often does.
 
-The `--clip-repetitions` flag (off by default) on `vad-transcribe-py transcribe` post-processes each transcript line and replaces it with `(indistinguishable speech)` if it is dominated by a repeated unigram or short n-gram.
+The `--clip-repetitions` flag (off by default) on `vad-transcribe-py transcribe` post-processes each transcript line. When it detects a heavily-repeated pattern, it **truncates from where the run begins**, keeps **one copy of the pattern**, and appends `(indistinguishable speech)`. So `"... some real speech then dungu dungu dungu …"` becomes `"... some real speech then dungu (indistinguishable speech)"` — the meaningful prefix survives, the loop does not.
 
-**Detection** — `clip_repetitive_text()` in `vad_transcribe_py/_utils.py` runs two passes per segment:
+**Detection** — `clip_repetitive_text()` in `vad_transcribe_py/_utils.py` mirrors the offline `repetition_analyzer` tool's `truncate_hallucinated_repeats`. For each candidate pattern length `pat_len` in `2..max_pattern_len` (default 30), it walks the string looking for `text[i] == text[i - pat_len]` over a continuous run of at least `pat_len * (min_repeats - 1)` chars (default `min_repeats=10`). The first hit wins, and the output is `text[: run_start + pat_len] + "(indistinguishable speech)"`.
 
-1. **Word-level**: whitespace-tokenize, then check whether any n-gram of size 1–4 appears at least `min_repetitions` times (default 3) AND its occurrences cover ≥ 60% of the words.
-2. **Character-level**: take all non-ASCII non-whitespace characters and apply the same n-gram coverage test. This catches CJK loops as well as other scripts (Gujarati, Thai, Devanagari, etc.) where characters carry meaning without whitespace separation.
+Lines shorter than 100 characters are passed through unchanged — short utterances like "yes yes yes" or "好好好" are plausible real speech, not model hallucination.
 
-A short-line guard (`min_total_tokens`, default 8) skips both passes when the segment has fewer than 8 tokens. Short utterances like "yes yes yes" or "好好好" are plausible real speech and are passed through unchanged even though they are technically repetitive.
-
-If either pass triggers, the segment text is replaced with the placeholder before serialization. Timestamps and the `prompt_retry` flag are preserved so downstream tools can still see *when* the model failed.
-
-The threshold/coverage approach is deliberately analogous to the offline `repetition_analyzer` tool (`min-count`-style threshold, n-gram window) so a transcript that would surface as a repeated-phrase cluster in the analyzer is also caught inline here.
+Timestamps and the `prompt_retry` flag are preserved on the truncated segment so downstream tools can still see *when* the model failed.
 
 ## JSONL output
 

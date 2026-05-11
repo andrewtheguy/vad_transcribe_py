@@ -1123,127 +1123,22 @@ def test_qwen_mlx_no_retry_when_output_differs(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# clip_repetitive_text — n-gram-based repetition clipping
+# clip_repetitive_text — char-level periodic-run truncation
 # ---------------------------------------------------------------------------
 
 
-def test_clip_repetitive_text_english_word_repetition():
-    """Same word repeating many times → placeholder."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    text = "dungu dungu dungu dungu dungu dungu dungu dungu"
-    assert clip_repetitive_text(text) == INDISTINGUISHABLE_PLACEHOLDER
+_FILLER = (
+    "the quick brown fox jumps over the lazy dog and some more words to pad "
+    "this out beyond one hundred characters easily"
+)
 
 
-def test_clip_repetitive_text_real_world_whisper_loop():
-    """A long Whisper loop output (the case from production JSONL) is clipped."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    text = " Kipan san jindin jindu nindu " + "dungu " * 30
-    assert clip_repetitive_text(text.strip()) == INDISTINGUISHABLE_PLACEHOLDER
-
-
-def test_clip_repetitive_text_chinese_single_char():
-    """Single CJK char repeating → placeholder."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    text = "好好好好好好好好好"
-    assert clip_repetitive_text(text) == INDISTINGUISHABLE_PLACEHOLDER
-
-
-def test_clip_repetitive_text_chinese_word_repetition():
-    """Same Chinese 2-char word repeating → placeholder."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    text = "你好你好你好你好你好你好"
-    assert clip_repetitive_text(text) == INDISTINGUISHABLE_PLACEHOLDER
-
-
-def test_clip_repetitive_text_chinese_phrase_repetition():
-    """Repeated Chinese 4-char phrase → placeholder."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    text = "謝謝大家謝謝大家謝謝大家謝謝大家"
-    assert clip_repetitive_text(text) == INDISTINGUISHABLE_PLACEHOLDER
-
-
-def test_clip_repetitive_text_other_script_single_char():
-    """Non-CJK Unicode (e.g. Gujarati) single-char repetition → placeholder."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    # The literal pattern from production JSONL.
-    text = "૨૨૨ ૨૨ ૨૨ ૨૨ ૨ ૨ ૨ ૨ ૨ ૨ ૨ ૨ ૨ ૨ ૨"
-    assert clip_repetitive_text(text) == INDISTINGUISHABLE_PLACEHOLDER
-
-
-def test_clip_repetitive_text_word_ngram_repetition():
-    """Repeating multi-word phrase → placeholder."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    text = "thank you for watching thank you for watching thank you for watching"
-    assert clip_repetitive_text(text) == INDISTINGUISHABLE_PLACEHOLDER
-
-
-def test_clip_repetitive_text_normal_english_unchanged():
-    """Ordinary sentence stays as-is."""
+def test_clip_repetitive_text_short_text_unchanged():
+    """Lines below 100 chars are passed through verbatim (real-speech guard)."""
     from vad_transcribe_py._utils import clip_repetitive_text
 
-    text = "This is a perfectly normal sentence with a variety of words."
-    assert clip_repetitive_text(text) == text
-
-
-def test_clip_repetitive_text_normal_chinese_unchanged():
-    """Ordinary Chinese sentence stays as-is."""
-    from vad_transcribe_py._utils import clip_repetitive_text
-
-    text = "今天天氣很好我去公園散步看見很多花"
-    assert clip_repetitive_text(text) == text
-
-
-def test_clip_repetitive_text_below_threshold_unchanged():
-    """Two repetitions of the same word do not meet the default threshold of 3."""
-    from vad_transcribe_py._utils import clip_repetitive_text
-
-    text = "hello hello"
-    assert clip_repetitive_text(text) == text
-
-
-def test_clip_repetitive_text_custom_threshold_clips_lower_counts():
-    """Lowering both min_repetitions and min_total_tokens makes a 2x repetition trigger the clip."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    text = "hello hello"
-    assert clip_repetitive_text(text, min_repetitions=2, min_total_tokens=2) == INDISTINGUISHABLE_PLACEHOLDER
-
-
-def test_clip_repetitive_text_short_word_repetition_unchanged():
-    """3-word repetition like 'yes yes yes' is plausible real speech — NOT clipped."""
-    from vad_transcribe_py._utils import clip_repetitive_text
-
-    assert clip_repetitive_text("yes yes yes") == "yes yes yes"
-
-
-def test_clip_repetitive_text_short_chinese_repetition_unchanged():
-    """3-char Chinese repetition like '好好好' is plausible real speech — NOT clipped."""
-    from vad_transcribe_py._utils import clip_repetitive_text
-
-    assert clip_repetitive_text("好好好") == "好好好"
-
-
-def test_clip_repetitive_text_at_min_total_tokens_boundary():
-    """Exactly the default min_total_tokens (8) is enough to trigger clipping."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    # 8 identical words → at the threshold; 7 is below.
-    assert clip_repetitive_text("yes " * 8) == INDISTINGUISHABLE_PLACEHOLDER
-    assert clip_repetitive_text("yes " * 7).strip() == ("yes " * 7).strip()
-
-
-def test_clip_repetitive_text_short_line_overridable_via_min_total_tokens():
-    """Caller can opt into clipping shorter lines by lowering min_total_tokens."""
-    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
-
-    assert clip_repetitive_text("yes yes yes", min_total_tokens=3) == INDISTINGUISHABLE_PLACEHOLDER
+    assert clip_repetitive_text("short") == "short"
+    assert clip_repetitive_text("a" * 99) == "a" * 99
 
 
 def test_clip_repetitive_text_empty_string_unchanged():
@@ -1253,10 +1148,69 @@ def test_clip_repetitive_text_empty_string_unchanged():
     assert clip_repetitive_text("") == ""
 
 
-def test_clip_repetitive_text_word_with_long_distinct_prefix_unchanged():
-    """Distinct prefix that dilutes repetition coverage below 60% stays as-is."""
+def test_clip_repetitive_text_no_repeats_unchanged():
+    """A long line with no periodic run stays as-is."""
     from vad_transcribe_py._utils import clip_repetitive_text
 
-    text = "alpha beta gamma delta epsilon zeta eta theta iota dungu dungu dungu"
-    # Coverage of "dungu" = 3/12 = 25%, below the 60% threshold.
+    assert clip_repetitive_text(_FILLER) == _FILLER
+
+
+def test_clip_repetitive_text_simple_repeat_truncated_after_first_copy():
+    """The repetitive tail is replaced; the meaningful prefix + one copy survives."""
+    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
+
+    text = _FILLER + " " + "ab" * 15
+    assert clip_repetitive_text(text) == _FILLER + " " + "ab" + INDISTINGUISHABLE_PLACEHOLDER
+
+
+def test_clip_repetitive_text_repeat_at_start():
+    """Whole-line repetition collapses to one pattern copy + placeholder."""
+    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
+
+    assert clip_repetitive_text("ab" * 60) == "ab" + INDISTINGUISHABLE_PLACEHOLDER
+
+
+def test_clip_repetitive_text_longer_pattern():
+    """Multi-char patterns are detected the same way."""
+    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
+
+    text = _FILLER + " " + "hello" * 12
+    assert clip_repetitive_text(text) == _FILLER + " " + "hello" + INDISTINGUISHABLE_PLACEHOLDER
+
+
+def test_clip_repetitive_text_just_below_min_repeats():
+    """9 repeats with default min_repeats=10 is not enough to trigger truncation."""
+    from vad_transcribe_py._utils import clip_repetitive_text
+
+    text = _FILLER + " " + "ab" * 9 + " end"
     assert clip_repetitive_text(text) == text
+
+
+def test_clip_repetitive_text_respects_min_repeats_override():
+    """Lowering min_repeats lets shorter runs trigger truncation."""
+    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
+
+    assert clip_repetitive_text("ab" * 60, min_repeats=5) == "ab" + INDISTINGUISHABLE_PLACEHOLDER
+
+
+def test_clip_repetitive_text_real_world_whisper_loop():
+    """Production case: noise prefix + dungu loop → prefix + first ' dungu' + placeholder.
+
+    The period-6 alignment locks onto the recurring ``" dungu"`` (leading space),
+    so the kept first copy carries the leading space and the placeholder follows
+    immediately with no separating space.
+    """
+    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
+
+    prefix = "Kipan san jindin jindu nindu padded out past one hundred chars of plain ASR text"
+    text = prefix + " " + "dungu " * 30
+    assert clip_repetitive_text(text) == prefix + " dungu" + INDISTINGUISHABLE_PLACEHOLDER
+
+
+def test_clip_repetitive_text_chinese_single_char_loop():
+    """Single CJK char repeating → keep one pair + placeholder."""
+    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
+
+    # 100+ chars of "好" — long enough to pass the short-line guard.
+    text = "好" * 120
+    assert clip_repetitive_text(text) == "好好" + INDISTINGUISHABLE_PLACEHOLDER

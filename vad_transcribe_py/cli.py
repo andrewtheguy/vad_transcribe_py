@@ -265,8 +265,10 @@ def write_jsonl_segment(
 ) -> None:
     """Write a single transcription segment as JSONL to the output file.
 
-    When ``clip_repetitions`` is True, heavily repetitive text is replaced with
-    an ``(indistinguishable speech)`` placeholder before serialization.
+    When ``clip_repetitions`` is True, the tail of a heavily-repetitive transcript
+    line is truncated after the first copy of the repeating pattern and replaced
+    with an ``(indistinguishable speech)`` placeholder. The meaningful prefix is
+    preserved.
     """
     text = clip_repetitive_text(segment.text) if clip_repetitions else segment.text
     line = json.dumps({
@@ -700,9 +702,12 @@ def main():
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
     parser_transcribe.add_argument('--clip-repetitions', action='store_true',
-                                   help='Replace heavily-repetitive transcript text '
-                                        '(e.g. "yeah yeah yeah ..." or repeating CJK characters) '
-                                        'with "(indistinguishable speech)" before writing JSONL. '
+                                   help='Truncate heavily-repetitive transcript text. '
+                                        'When a char-level pattern repeats ≥10 times in a row '
+                                        '(e.g. "dungu dungu dungu …" or "好好好…"), the looped '
+                                        'tail is replaced with "(indistinguishable speech)" '
+                                        'after the first copy of the pattern. '
+                                        'Lines under 100 chars are passed through unchanged. '
                                         'Off by default.')
 
     # SPLIT subcommand

@@ -502,22 +502,24 @@ class TestJsonlOutput:
 
         assert record["prompt_retry"] is True
 
-    def test_write_jsonl_segment_clip_repetitions_replaces_repetitive_text(self):
+    def test_write_jsonl_segment_clip_repetitions_truncates_repetitive_tail(self):
         from io import StringIO
 
         from vad_transcribe_py._types import TranscribedSegment
         from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER
         from vad_transcribe_py.cli import write_jsonl_segment
 
+        # Pattern "dungu " * 30 = 180 chars, well past the 100-char short-line guard.
         buf = StringIO()
         write_jsonl_segment(
-            TranscribedSegment(text="dungu " * 10, start=0.0, end=1.0),
+            TranscribedSegment(text="dungu " * 30, start=0.0, end=1.0),
             buf,
             clip_repetitions=True,
         )
         record = json.loads(buf.getvalue().strip())
 
-        assert record["text"] == INDISTINGUISHABLE_PLACEHOLDER
+        # Truncation keeps one copy of the repeating pattern, not the whole line.
+        assert record["text"] == "dungu " + INDISTINGUISHABLE_PLACEHOLDER
 
     def test_write_jsonl_segment_clip_repetitions_off_keeps_original(self):
         from io import StringIO
@@ -525,7 +527,7 @@ class TestJsonlOutput:
         from vad_transcribe_py._types import TranscribedSegment
         from vad_transcribe_py.cli import write_jsonl_segment
 
-        original = "dungu " * 10
+        original = "dungu " * 30
         buf = StringIO()
         write_jsonl_segment(
             TranscribedSegment(text=original, start=0.0, end=1.0),
