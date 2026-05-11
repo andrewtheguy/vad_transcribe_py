@@ -13,6 +13,7 @@ _NEAR_DUPLICATE_THRESHOLD = 0.9
 
 INDISTINGUISHABLE_PLACEHOLDER = "(indistinguishable speech)"
 _CLIP_MIN_TEXT_LEN = 100
+_CLIP_MIN_PATTERN_LEN = 2
 
 
 def format_timestamp(seconds: float) -> str:
@@ -82,24 +83,38 @@ def clip_repetitive_text(
 ) -> str:
     """Truncate consecutively repeating patterns caused by ASR hallucination.
 
-    Scans for a char-level periodic run: for each candidate ``pat_len`` in
-    ``2..max_pattern_len``, walks the string looking for
+    Scans for a char-level periodic run: for each feasible candidate
+    ``pat_len`` in ``2..max_pattern_len``, walks the string looking for
     ``text[i] == text[i - pat_len]`` over a continuous run of at least
     ``pat_len * (min_repeats - 1)`` chars. When found, returns the prefix up to
     and including the first copy of the pattern, followed by
     ``(indistinguishable speech)``.
 
+    With the default ``max_pattern_len=30``, this is linear in the text length
+    with a small constant factor and no substring allocations. Candidate scans
+    stop as soon as the remaining suffix cannot satisfy ``min_repeats``.
+
     Short inputs (< ``_CLIP_MIN_TEXT_LEN`` chars) are passed through unchanged —
     short utterances like "yes yes yes" or "好好好" are plausible real speech,
     not model hallucination.
     """
+    if min_repeats < 2:
+        raise ValueError(f"min_repeats must be at least 2, got {min_repeats}")
+
     n = len(text)
     if n < _CLIP_MIN_TEXT_LEN:
         return text
-    for pat_len in range(2, min(max_pattern_len + 1, n // min_repeats + 1)):
+
+    max_feasible_pattern_len = min(max_pattern_len, n // min_repeats)
+    if max_feasible_pattern_len < _CLIP_MIN_PATTERN_LEN:
+        return text
+
+    for pat_len in range(_CLIP_MIN_PATTERN_LEN, max_feasible_pattern_len + 1):
         run = 0
         threshold = pat_len * (min_repeats - 1)
         for i in range(pat_len, n):
+            if n - i < threshold - run:
+                break
             if text[i] == text[i - pat_len]:
                 run += 1
                 if run >= threshold:

@@ -1193,6 +1193,14 @@ def test_clip_repetitive_text_respects_min_repeats_override():
     assert clip_repetitive_text("ab" * 60, min_repeats=5) == "ab" + INDISTINGUISHABLE_PLACEHOLDER
 
 
+def test_clip_repetitive_text_rejects_invalid_min_repeats():
+    """min_repeats below two cannot define a repeated run."""
+    from vad_transcribe_py._utils import clip_repetitive_text
+
+    with pytest.raises(ValueError, match="min_repeats must be at least 2"):
+        clip_repetitive_text("ab" * 60, min_repeats=1)
+
+
 def test_clip_repetitive_text_real_world_whisper_loop():
     """Production case: noise prefix + dungu loop → prefix + first ' dungu' + placeholder.
 

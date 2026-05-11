@@ -270,7 +270,12 @@ def write_jsonl_segment(
     with an ``(indistinguishable speech)`` placeholder. The meaningful prefix is
     preserved.
     """
-    text = clip_repetitive_text(segment.text) if clip_repetitions else segment.text
+    text = segment.text
+    repetition_clipped = False
+    if clip_repetitions:
+        text = clip_repetitive_text(segment.text)
+        repetition_clipped = text != segment.text
+
     line = json.dumps({
         "type": "transcript",
         "id": str(uuid.uuid7()),
@@ -280,6 +285,7 @@ def write_jsonl_segment(
         "end_ms": round(segment.end * 1000),
         "end_formatted": format_timestamp(segment.end),
         "prompt_retry": segment.prompt_retry,
+        "repetition_clipped": repetition_clipped,
     }, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()
