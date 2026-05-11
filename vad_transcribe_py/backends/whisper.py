@@ -83,6 +83,7 @@ class WhisperBackend(TranscriberBase):
         self._sub_timestamps = sub_timestamps
         self._prompt_ids: Any = None
         self._prior_line: str = ""
+        self._prior_last_chunk: str = ""
         self._processor: Any = None
         self._requested_device = device
         self._device: str = "cpu"
@@ -159,15 +160,52 @@ class WhisperBackend(TranscriberBase):
         )
 
         prompt_retry = False
+        last_chunk_text = ""
         if self._sub_timestamps:
+            chunks = list(result["chunks"])
+            repeat_index: int | None = None
+            for i, chunk in enumerate(chunks):
+                predecessor = chunks[i - 1]["text"] if i >= 1 else self._prior_last_chunk
+                if predecessor and is_near_duplicate(chunk["text"], predecessor):
+                    repeat_index = i
+                    break
+
+            if repeat_index is not None and (repeat_index >= 1 or used_prompt):
+                trim_start_sec = chunks[repeat_index]["timestamp"][0]
+                if trim_start_sec is not None:
+                    trim_start_samples = int(trim_start_sec * TARGET_SAMPLE_RATE)
+                    trimmed = audio[trim_start_samples:]
+                    logger.info("Retrying from %.2fs (sub-segment repetition)", trim_start_sec)
+                    generate_kwargs.pop("prompt_ids", None)
+                    retry_result = self.pipe(
+                        trimmed.copy(),
+                        return_timestamps=True,
+                        generate_kwargs=generate_kwargs,
+                    )
+                    new_chunks = [
+                        {
+                            "text": c["text"],
+                            "timestamp": (
+                                c["timestamp"][0] + trim_start_sec,
+                                (c["timestamp"][1] + trim_start_sec) if c["timestamp"][1] is not None else None,
+                            ),
+                        }
+                        for c in retry_result["chunks"]
+                    ]
+                    chunks = chunks[:repeat_index] + new_chunks
+                    prompt_retry = True
+
             segments = [
                 self._make_segment(
                     chunk["text"],
                     start_offset + chunk["timestamp"][0],
                     start_offset + (chunk["timestamp"][1] if chunk["timestamp"][1] is not None else len(audio) / TARGET_SAMPLE_RATE),
+                    prompt_retry=(prompt_retry and repeat_index is not None and idx >= repeat_index),
                 )
-                for chunk in result["chunks"]
+                for idx, chunk in enumerate(chunks)
             ]
+            if chunks:
+                last_chunk_text = chunks[-1]["text"].strip()
         else:
             text = result["text"]
             if used_prompt and is_near_duplicate(text, self._prior_line):
@@ -181,6 +219,7 @@ class WhisperBackend(TranscriberBase):
                 text = result["text"]
                 prompt_retry = True
             segments = [self._make_segment(text, start_offset, start_offset + len(audio) / TARGET_SAMPLE_RATE, prompt_retry=prompt_retry)]
+            last_chunk_text = text.strip()
 
         # Update prompt with this segment's output for next-segment conditioning
         if self._condition and segments:
@@ -191,5 +230,6 @@ class WhisperBackend(TranscriberBase):
             else:
                 self._prompt_ids = None
             self._prior_line = output_text.strip()
+            self._prior_last_chunk = last_chunk_text
 
         return segments

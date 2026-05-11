@@ -797,25 +797,205 @@ def test_whisper_no_retry_when_output_differs_from_prior():
     assert segments[0].prompt_retry is False
 
 
-def test_whisper_sub_timestamps_path_does_not_retry():
-    """sub_timestamps=True keeps existing behavior — no retry, no prompt_retry flag."""
+def _whisper_subts_backend(prior_last_chunk: str, prompt_set: bool) -> WhisperBackend:
+    """Build a stubbed sub_timestamps=True whisper backend with prior-call state."""
     backend = WhisperBackend(language="en", model="large-v3-turbo", sub_timestamps=True)
-    backend._prior_line = "hello world"
-    backend._prompt_ids = "prompt-tensor"
+    backend._prior_last_chunk = prior_last_chunk
+    backend._prior_line = prior_last_chunk  # consistent with single-chunk-prior case
+    backend._prompt_ids = "prompt-tensor" if prompt_set else None
     backend._processor = _StubProcessor()
-    calls: list[dict[str, Any]] = []
+    return backend
+
+
+def _staged_pipe(staged_results, calls):
+    """Return a fake pipe whose successive calls return the staged dicts in order."""
+    it = iter(staged_results)
 
     def fake_pipe(audio, *, return_timestamps, generate_kwargs):
-        calls.append({"return_timestamps": return_timestamps})
-        return {"chunks": [{"text": "hello world", "timestamp": (0.0, 1.0)}]}
+        calls.append({
+            "audio_len": len(audio),
+            "return_timestamps": return_timestamps,
+            "generate_kwargs": dict(generate_kwargs),
+        })
+        return next(it)
 
-    backend.pipe = fake_pipe
+    return fake_pipe
 
-    segments = backend.transcribe(np.zeros(16000, dtype=np.float32))
+
+def test_whisper_subts_mid_segment_repetition_retries_without_prompt():
+    """chunk[i] near-duplicates chunk[i-1] → trim from chunk[i].start, retry without prompt_ids.
+
+    No initial prompt is set; mid-segment duplicates trigger a retry regardless.
+    """
+    backend = _whisper_subts_backend(prior_last_chunk="", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "hello", "timestamp": (0.0, 2.0)},
+                {"text": "abcdefg", "timestamp": (2.0, 5.0)},
+                {"text": "abcdefg", "timestamp": (5.0, 8.0)},
+            ]},
+            {"chunks": [
+                {"text": "fresh tail", "timestamp": (0.0, 3.0)},
+            ]},
+        ],
+        calls,
+    )
+
+    audio = np.zeros(int(8.0 * 16000), dtype=np.float32)
+    segments = backend.transcribe(audio)
+
+    assert len(calls) == 2
+    assert calls[1]["audio_len"] == len(audio) - int(5.0 * 16000)  # trimmed at 5.0s
+    assert "prompt_ids" not in calls[1]["generate_kwargs"]
+    assert [s.text for s in segments] == ["hello", "abcdefg", "fresh tail"]
+    assert [s.prompt_retry for s in segments] == [False, False, True]
+    # Retried chunk's timestamps were re-based by +5.0s.
+    assert segments[2].start == 5.0
+    assert segments[2].end == 8.0
+
+
+def test_whisper_subts_mid_segment_repetition_drops_prompt_ids_when_set():
+    """Mid-segment retry also clears prompt_ids when one was passed in."""
+    backend = _whisper_subts_backend(prior_last_chunk="", prompt_set=True)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "abc", "timestamp": (0.0, 2.0)},
+                {"text": "abc", "timestamp": (2.0, 4.0)},
+            ]},
+            {"chunks": [{"text": "different", "timestamp": (0.0, 2.0)}]},
+        ],
+        calls,
+    )
+
+    backend.transcribe(np.zeros(int(4.0 * 16000), dtype=np.float32))
+
+    assert len(calls) == 2
+    assert "prompt_ids" in calls[0]["generate_kwargs"]
+    assert "prompt_ids" not in calls[1]["generate_kwargs"]
+
+
+def test_whisper_subts_cross_vad_repetition_with_prompt_triggers_retry():
+    """chunk[0] near-duplicates _prior_last_chunk → retry whole call without prompt_ids."""
+    backend = _whisper_subts_backend(prior_last_chunk="hello world", prompt_set=True)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "hello world", "timestamp": (0.0, 3.0)},
+                {"text": "more text", "timestamp": (3.0, 6.0)},
+            ]},
+            {"chunks": [
+                {"text": "actual transcription", "timestamp": (0.0, 6.0)},
+            ]},
+        ],
+        calls,
+    )
+
+    audio = np.zeros(int(6.0 * 16000), dtype=np.float32)
+    segments = backend.transcribe(audio)
+
+    assert len(calls) == 2
+    assert calls[1]["audio_len"] == len(audio)  # trim at 0.0 = whole audio
+    assert "prompt_ids" not in calls[1]["generate_kwargs"]
+    assert [s.text for s in segments] == ["actual transcription"]
+    assert all(s.prompt_retry for s in segments)
+
+
+def test_whisper_subts_cross_vad_repetition_skipped_without_prompt():
+    """chunk[0] near-duplicates _prior_last_chunk but no prompt was used → no retry."""
+    backend = _whisper_subts_backend(prior_last_chunk="hello world", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "hello world", "timestamp": (0.0, 3.0)},
+                {"text": "more text", "timestamp": (3.0, 6.0)},
+            ]},
+        ],
+        calls,
+    )
+
+    segments = backend.transcribe(np.zeros(int(6.0 * 16000), dtype=np.float32))
 
     assert len(calls) == 1
-    assert calls[0]["return_timestamps"] is True
-    assert all(seg.prompt_retry is False for seg in segments)
+    assert all(not s.prompt_retry for s in segments)
+
+
+def test_whisper_subts_no_repetition_no_retry():
+    """All chunks distinct from each other and from prior_last_chunk → single call."""
+    backend = _whisper_subts_backend(prior_last_chunk="prior text", prompt_set=True)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "alpha", "timestamp": (0.0, 2.0)},
+                {"text": "beta", "timestamp": (2.0, 4.0)},
+                {"text": "gamma", "timestamp": (4.0, 6.0)},
+            ]},
+        ],
+        calls,
+    )
+
+    segments = backend.transcribe(np.zeros(int(6.0 * 16000), dtype=np.float32))
+
+    assert len(calls) == 1
+    assert [s.text for s in segments] == ["alpha", "beta", "gamma"]
+    assert all(not s.prompt_retry for s in segments)
+
+
+def test_whisper_subts_retry_offsets_timestamps_with_start_offset():
+    """Retried-chunk start/end = start_offset + trim_start_sec + chunk_timestamp_in_trimmed_call."""
+    backend = _whisper_subts_backend(prior_last_chunk="", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "intro", "timestamp": (0.0, 3.0)},
+                {"text": "loop", "timestamp": (3.0, 5.0)},
+                {"text": "loop", "timestamp": (5.0, 7.0)},
+            ]},
+            # Trimmed audio starts at 5.0s; retried chunk's local timestamps are (1.0, 4.0).
+            {"chunks": [{"text": "rescued", "timestamp": (1.0, 4.0)}]},
+        ],
+        calls,
+    )
+
+    segments = backend.transcribe(np.zeros(int(7.0 * 16000), dtype=np.float32), start_offset=10.0)
+
+    # First two chunks: just the start_offset added.
+    assert segments[0].start == 10.0
+    assert segments[0].end == 13.0
+    assert segments[1].start == 13.0
+    assert segments[1].end == 15.0
+    # Retried chunk: start_offset + trim_start_sec + local_ts.
+    assert segments[2].text == "rescued"
+    assert segments[2].start == 10.0 + 5.0 + 1.0
+    assert segments[2].end == 10.0 + 5.0 + 4.0
+    assert segments[2].prompt_retry is True
+
+
+def test_whisper_subts_prior_last_chunk_updated_after_retry():
+    """After a retried call, _prior_last_chunk reflects the final (retried) chunk's text."""
+    backend = _whisper_subts_backend(prior_last_chunk="", prompt_set=False)
+    calls: list[dict[str, Any]] = []
+    backend.pipe = _staged_pipe(
+        [
+            {"chunks": [
+                {"text": "alpha", "timestamp": (0.0, 2.0)},
+                {"text": "alpha", "timestamp": (2.0, 4.0)},
+            ]},
+            {"chunks": [{"text": "post-retry tail", "timestamp": (0.0, 2.0)}]},
+        ],
+        calls,
+    )
+
+    backend.transcribe(np.zeros(int(4.0 * 16000), dtype=np.float32))
+
+    assert backend._prior_last_chunk == "post-retry tail"
 
 
 def _install_stub_qwencandle(monkeypatch, side_effect):
