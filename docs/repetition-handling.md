@@ -45,6 +45,23 @@ When a duplicate is found, the audio is trimmed to start at `chunks[i].timestamp
 - `i == 0` (cross-VAD): retry **only if** an initial prompt was used. With no prompt to remove, retrying with identical audio and args would produce the same result.
 - `i ≥ 1` (mid-VAD): **always retry**, even without an initial prompt. The audio trim itself is a meaningful change in input — removing the looping audio gives the model a chance to produce a non-repeating output.
 
+## Clipping single-line repetitions (opt-in)
+
+Even after the per-call retry, a few segments can slip through with degenerate output the model couldn't recover from — a single word looping for the entire VAD window (`"dungu dungu dungu …"`) or a single character repeated dozens of times (`"好好好好…"`, `"૨૨૨…"`). These add no information for downstream consumers and are usually preferable to mark as unintelligible.
+
+The `--clip-repetitions` flag (off by default) on `vad-transcribe-py transcribe` post-processes each transcript line and replaces it with `(indistinguishable speech)` if it is dominated by a repeated unigram or short n-gram.
+
+**Detection** — `clip_repetitive_text()` in `vad_transcribe_py/_utils.py` runs two passes per segment:
+
+1. **Word-level**: whitespace-tokenize, then check whether any n-gram of size 1–4 appears at least `min_repetitions` times (default 3) AND its occurrences cover ≥ 60% of the words.
+2. **Character-level**: take all non-ASCII non-whitespace characters and apply the same n-gram coverage test. This catches CJK loops as well as other scripts (Gujarati, Thai, Devanagari, etc.) where characters carry meaning without whitespace separation.
+
+A short-line guard (`min_total_tokens`, default 8) skips both passes when the segment has fewer than 8 tokens. Short utterances like "yes yes yes" or "好好好" are plausible real speech and are passed through unchanged even though they are technically repetitive.
+
+If either pass triggers, the segment text is replaced with the placeholder before serialization. Timestamps and the `prompt_retry` flag are preserved so downstream tools can still see *when* the model failed.
+
+The threshold/coverage approach is deliberately analogous to the offline `repetition_analyzer` tool (`min-count`-style threshold, n-gram window) so a transcript that would surface as a repeated-phrase cluster in the analyzer is also caught inline here.
+
 ## JSONL output
 
 Every transcript line in the JSONL output carries a `prompt_retry` boolean indicating whether that segment came from the retry path:

@@ -502,6 +502,40 @@ class TestJsonlOutput:
 
         assert record["prompt_retry"] is True
 
+    def test_write_jsonl_segment_clip_repetitions_replaces_repetitive_text(self):
+        from io import StringIO
+
+        from vad_transcribe_py._types import TranscribedSegment
+        from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER
+        from vad_transcribe_py.cli import write_jsonl_segment
+
+        buf = StringIO()
+        write_jsonl_segment(
+            TranscribedSegment(text="dungu " * 10, start=0.0, end=1.0),
+            buf,
+            clip_repetitions=True,
+        )
+        record = json.loads(buf.getvalue().strip())
+
+        assert record["text"] == INDISTINGUISHABLE_PLACEHOLDER
+
+    def test_write_jsonl_segment_clip_repetitions_off_keeps_original(self):
+        from io import StringIO
+
+        from vad_transcribe_py._types import TranscribedSegment
+        from vad_transcribe_py.cli import write_jsonl_segment
+
+        original = "dungu " * 10
+        buf = StringIO()
+        write_jsonl_segment(
+            TranscribedSegment(text=original, start=0.0, end=1.0),
+            buf,
+        )
+        record = json.loads(buf.getvalue().strip())
+
+        # Default off → text is preserved verbatim.
+        assert record["text"] == original
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

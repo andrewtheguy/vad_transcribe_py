@@ -21,6 +21,7 @@ from vad_transcribe_py.audio_transcriber import (
     TranscribedSegment,
     AudioTranscriber,
 )
+from vad_transcribe_py._utils import clip_repetitive_text
 from vad_transcribe_py.vad_processor import (
     SpeechDetector,
     AudioSegment,
@@ -257,14 +258,23 @@ def save_audio_segment(
     return output_path
 
 
-def write_jsonl_segment(segment: TranscribedSegment, output_file: IO[str]) -> None:
-    """Write a single transcription segment as JSONL to the output file."""
+def write_jsonl_segment(
+    segment: TranscribedSegment,
+    output_file: IO[str],
+    clip_repetitions: bool = False,
+) -> None:
+    """Write a single transcription segment as JSONL to the output file.
+
+    When ``clip_repetitions`` is True, heavily repetitive text is replaced with
+    an ``(indistinguishable speech)`` placeholder before serialization.
+    """
+    text = clip_repetitive_text(segment.text) if clip_repetitions else segment.text
     line = json.dumps({
         "type": "transcript",
         "id": str(uuid.uuid7()),
         "start_ms": round(segment.start * 1000),
         "start_formatted": format_timestamp(segment.start),
-        "text": segment.text,
+        "text": text,
         "end_ms": round(segment.end * 1000),
         "end_formatted": format_timestamp(segment.end),
         "prompt_retry": segment.prompt_retry,
@@ -307,6 +317,7 @@ def stream_transcribe_with_vad(
     min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
     look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
     hard_limit_seconds: float | None = None,
+    clip_repetitions: bool = False,
 ) -> int:
     """
     Stream audio through VAD and transcribe each segment immediately.
@@ -338,7 +349,7 @@ def stream_transcribe_with_vad(
 
         transcribed = transcriber.transcribe(segment.audio, segment.start)
         for ts in transcribed:
-            write_jsonl_segment(ts, output_file)
+            write_jsonl_segment(ts, output_file, clip_repetitions=clip_repetitions)
 
         segment_end_time = segment.start + segment.duration_seconds
         write_jsonl_boundary("segment_end", segment_end_time, output_file)
@@ -389,6 +400,7 @@ def stream_transcribe_stdin_with_vad(
     min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
     look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
     hard_limit_seconds: float | None = None,
+    clip_repetitions: bool = False,
 ) -> int:
     """
     Stream WAV audio from stdin through VAD and transcribe each segment immediately.
@@ -420,7 +432,7 @@ def stream_transcribe_stdin_with_vad(
 
         transcribed = transcriber.transcribe(segment.audio, segment.start)
         for ts in transcribed:
-            write_jsonl_segment(ts, output_file)
+            write_jsonl_segment(ts, output_file, clip_repetitions=clip_repetitions)
 
         segment_end_time = segment.start + segment.duration_seconds
         write_jsonl_boundary("segment_end", segment_end_time, output_file)
@@ -687,6 +699,11 @@ def main():
                                         'The nvidia-whisper backend runs server-side and ignores this flag.')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
+    parser_transcribe.add_argument('--clip-repetitions', action='store_true',
+                                   help='Replace heavily-repetitive transcript text '
+                                        '(e.g. "yeah yeah yeah ..." or repeating CJK characters) '
+                                        'with "(indistinguishable speech)" before writing JSONL. '
+                                        'Off by default.')
 
     # SPLIT subcommand
     parser_split = subparsers.add_parser('split', help='Split audio by VAD into Opus segments')
@@ -736,6 +753,7 @@ def main():
                         transcriber,
                         hard_limit_seconds=transcriber.hard_limit_seconds,
                         soft_limit_seconds=transcriber.soft_limit_seconds,
+                        clip_repetitions=args.clip_repetitions,
                     )
                     logger.info("Transcribed %d segments from stdin", segment_count)
                 else:
@@ -766,6 +784,7 @@ def main():
                             audio_source, transcriber, output_file,
                             hard_limit_seconds=transcriber.hard_limit_seconds,
                             soft_limit_seconds=transcriber.soft_limit_seconds,
+                            clip_repetitions=args.clip_repetitions,
                         )
 
                         if args.output:
