@@ -1858,7 +1858,7 @@ wheels = [
 
 [[package]]
 name = "vad-transcribe-py"
-version = "0.2.42"
+version = "0.2.43"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
