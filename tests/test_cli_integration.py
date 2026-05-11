@@ -541,6 +541,28 @@ class TestJsonlOutput:
         assert record["text"] == "dungu " + INDISTINGUISHABLE_PLACEHOLDER
         assert record["repetition_patterns_clipped"] == ["dungu "]
 
+    def test_write_jsonl_segment_clip_repetitions_preserves_suffix_after_repeat(self):
+        from io import StringIO
+
+        from vad_transcribe_py._types import TranscribedSegment
+        from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER
+        from vad_transcribe_py.cli import write_jsonl_segment
+
+        suffix = "actual speech resumes"
+        buf = StringIO()
+        write_jsonl_segment(
+            TranscribedSegment(text=("dungu " * 30) + suffix, start=0.0, end=1.0),
+            buf,
+            clip_repetitions=True,
+        )
+        record = json.loads(buf.getvalue().strip())
+
+        assert (
+            record["text"]
+            == "dungu " + INDISTINGUISHABLE_PLACEHOLDER + suffix
+        )
+        assert record["repetition_patterns_clipped"] == ["dungu "]
+
     def test_write_jsonl_segment_clip_repetitions_off_keeps_original(self):
         from io import StringIO
 

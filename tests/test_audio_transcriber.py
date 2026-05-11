@@ -1184,6 +1184,37 @@ def test_clip_repetitive_text_with_patterns_no_clip_returns_empty_patterns():
     assert clip_repetitive_text_with_patterns(_FILLER) == (_FILLER, [])
 
 
+def test_clip_repetitive_text_preserves_non_repeated_suffix_after_repeat():
+    """Only the repetitive run is replaced; later non-repeated text survives."""
+    from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text
+
+    suffix = " final words after the loop"
+    text = _FILLER + " " + "ab" * 15 + suffix
+
+    assert (
+        clip_repetitive_text(text)
+        == _FILLER + " " + "ab" + INDISTINGUISHABLE_PLACEHOLDER + suffix
+    )
+
+
+def test_clip_repetitive_text_with_patterns_preserves_suffix_after_repeat():
+    """Pattern metadata is reported while non-repeated suffix text is kept."""
+    from vad_transcribe_py._utils import (
+        INDISTINGUISHABLE_PLACEHOLDER,
+        clip_repetitive_text_with_patterns,
+    )
+
+    suffix = " actual speech resumes"
+    text = _FILLER + " " + "hello" * 12 + suffix
+    clipped_text, patterns = clip_repetitive_text_with_patterns(text)
+
+    assert (
+        clipped_text
+        == _FILLER + " " + "hello" + INDISTINGUISHABLE_PLACEHOLDER + suffix
+    )
+    assert patterns == ["hello"]
+
+
 def test_clip_repetitive_text_repeat_at_start():
     """Whole-line repetition collapses to one pattern copy + placeholder."""
     from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text

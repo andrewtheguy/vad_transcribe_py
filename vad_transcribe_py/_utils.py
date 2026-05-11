@@ -100,9 +100,9 @@ def clip_repetitive_text_with_patterns(
     Scans for a char-level periodic run: for each feasible candidate
     ``pat_len`` in ``2..max_pattern_len``, walks the string looking for
     ``text[i] == text[i - pat_len]`` over a continuous run of at least
-    ``pat_len * (min_repeats - 1)`` chars. When found, returns the prefix up to
-    and including the first copy of the pattern, followed by
-    ``(indistinguishable speech)``.
+    ``pat_len * (min_repeats - 1)`` chars. When found, replaces the repeated
+    span after the first copy of the pattern with ``(indistinguishable speech)``
+    and preserves any suffix after the repeated span.
 
     With the default ``max_pattern_len=30``, this is linear in the text length
     with a small constant factor and no substring allocations before a match.
@@ -138,8 +138,14 @@ def clip_repetitive_text_with_patterns(
                 run += 1
                 if run >= threshold:
                     start = i - run - pat_len + 1
+                    end = i + 1
+                    while end < n and text[end] == text[end - pat_len]:
+                        end += 1
                     pattern = text[start : start + pat_len]
-                    return text[: start + pat_len] + INDISTINGUISHABLE_PLACEHOLDER, [pattern]
+                    return (
+                        text[: start + pat_len] + INDISTINGUISHABLE_PLACEHOLDER + text[end:],
+                        [pattern],
+                    )
             else:
                 run = 0
     return text, []
