@@ -472,5 +472,36 @@ class TestCLIIntegration:
         assert "Error" in result.stderr or "error" in result.stderr.lower()
 
 
+class TestJsonlOutput:
+    """Unit-level tests for the JSONL writer."""
+
+    def test_write_jsonl_segment_includes_prompt_retry_false(self):
+        from io import StringIO
+
+        from vad_transcribe_py._types import TranscribedSegment
+        from vad_transcribe_py.cli import write_jsonl_segment
+
+        buf = StringIO()
+        write_jsonl_segment(TranscribedSegment(text="hi", start=0.0, end=1.0), buf)
+        record = json.loads(buf.getvalue().strip())
+
+        assert record["prompt_retry"] is False
+
+    def test_write_jsonl_segment_includes_prompt_retry_true(self):
+        from io import StringIO
+
+        from vad_transcribe_py._types import TranscribedSegment
+        from vad_transcribe_py.cli import write_jsonl_segment
+
+        buf = StringIO()
+        write_jsonl_segment(
+            TranscribedSegment(text="hi", start=0.0, end=1.0, prompt_retry=True),
+            buf,
+        )
+        record = json.loads(buf.getvalue().strip())
+
+        assert record["prompt_retry"] is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

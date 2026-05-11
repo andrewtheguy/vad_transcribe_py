@@ -15,6 +15,7 @@ from vad_transcribe_py._utils import (
     TARGET_SAMPLE_RATE,
     ChineseConversion,
     conditioning_context,
+    is_near_duplicate,
 )
 from vad_transcribe_py.vad_processor import (
     WHISPER_HARD_LIMIT_NO_SUB_TIMESTAMPS_SECONDS,
@@ -147,7 +148,8 @@ class WhisperBackend(TranscriberBase):
             # "no_speech_threshold": 0.6,
             # "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
         }
-        if self._prompt_ids is not None:
+        used_prompt = self._prompt_ids is not None
+        if used_prompt:
             generate_kwargs["prompt_ids"] = self._prompt_ids
 
         result = self.pipe(
@@ -156,6 +158,7 @@ class WhisperBackend(TranscriberBase):
             generate_kwargs=generate_kwargs,
         )
 
+        prompt_retry = False
         if self._sub_timestamps:
             segments = [
                 self._make_segment(
@@ -167,7 +170,17 @@ class WhisperBackend(TranscriberBase):
             ]
         else:
             text = result["text"]
-            segments = [self._make_segment(text, start_offset, start_offset + len(audio) / TARGET_SAMPLE_RATE)]
+            if used_prompt and is_near_duplicate(text, self._prior_line):
+                logger.info("Retrying segment without conditioning prompt (near-duplicate of prior)")
+                generate_kwargs.pop("prompt_ids", None)
+                result = self.pipe(
+                    audio.copy(),
+                    return_timestamps=False,
+                    generate_kwargs=generate_kwargs,
+                )
+                text = result["text"]
+                prompt_retry = True
+            segments = [self._make_segment(text, start_offset, start_offset + len(audio) / TARGET_SAMPLE_RATE, prompt_retry=prompt_retry)]
 
         # Update prompt with this segment's output for next-segment conditioning
         if self._condition and segments:
