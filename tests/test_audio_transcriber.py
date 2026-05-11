@@ -1163,6 +1163,27 @@ def test_clip_repetitive_text_simple_repeat_truncated_after_first_copy():
     assert clip_repetitive_text(text) == _FILLER + " " + "ab" + INDISTINGUISHABLE_PLACEHOLDER
 
 
+def test_clip_repetitive_text_with_patterns_returns_detected_pattern():
+    """The metadata helper returns the exact repeat pattern used for clipping."""
+    from vad_transcribe_py._utils import (
+        INDISTINGUISHABLE_PLACEHOLDER,
+        clip_repetitive_text_with_patterns,
+    )
+
+    text = _FILLER + " " + "ab" * 15
+    clipped_text, patterns = clip_repetitive_text_with_patterns(text)
+
+    assert clipped_text == _FILLER + " " + "ab" + INDISTINGUISHABLE_PLACEHOLDER
+    assert patterns == ["ab"]
+
+
+def test_clip_repetitive_text_with_patterns_no_clip_returns_empty_patterns():
+    """When text is unchanged, no clipped patterns are reported."""
+    from vad_transcribe_py._utils import clip_repetitive_text_with_patterns
+
+    assert clip_repetitive_text_with_patterns(_FILLER) == (_FILLER, [])
+
+
 def test_clip_repetitive_text_repeat_at_start():
     """Whole-line repetition collapses to one pattern copy + placeholder."""
     from vad_transcribe_py._utils import INDISTINGUISHABLE_PLACEHOLDER, clip_repetitive_text

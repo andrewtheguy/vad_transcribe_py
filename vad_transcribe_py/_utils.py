@@ -81,6 +81,20 @@ def clip_repetitive_text(
     min_repeats: int = 10,
     max_pattern_len: int = 30,
 ) -> str:
+    """Truncate consecutively repeating patterns caused by ASR hallucination."""
+    return clip_repetitive_text_with_patterns(
+        text,
+        min_repeats=min_repeats,
+        max_pattern_len=max_pattern_len,
+    )[0]
+
+
+def clip_repetitive_text_with_patterns(
+    text: str,
+    *,
+    min_repeats: int = 10,
+    max_pattern_len: int = 30,
+) -> tuple[str, list[str]]:
     """Truncate consecutively repeating patterns caused by ASR hallucination.
 
     Scans for a char-level periodic run: for each feasible candidate
@@ -91,23 +105,28 @@ def clip_repetitive_text(
     ``(indistinguishable speech)``.
 
     With the default ``max_pattern_len=30``, this is linear in the text length
-    with a small constant factor and no substring allocations. Candidate scans
-    stop as soon as the remaining suffix cannot satisfy ``min_repeats``.
+    with a small constant factor and no substring allocations before a match.
+    Candidate scans stop as soon as the remaining suffix cannot satisfy
+    ``min_repeats``.
 
     Short inputs (< ``_CLIP_MIN_TEXT_LEN`` chars) are passed through unchanged —
     short utterances like "yes yes yes" or "好好好" are plausible real speech,
     not model hallucination.
+
+    Returns ``(text, patterns)`` where ``patterns`` is empty when no clipping
+    happened. The current algorithm clips the first repetitive run, so
+    ``patterns`` contains at most one string.
     """
     if min_repeats < 2:
         raise ValueError(f"min_repeats must be at least 2, got {min_repeats}")
 
     n = len(text)
     if n < _CLIP_MIN_TEXT_LEN:
-        return text
+        return text, []
 
     max_feasible_pattern_len = min(max_pattern_len, n // min_repeats)
     if max_feasible_pattern_len < _CLIP_MIN_PATTERN_LEN:
-        return text
+        return text, []
 
     for pat_len in range(_CLIP_MIN_PATTERN_LEN, max_feasible_pattern_len + 1):
         run = 0
@@ -119,10 +138,11 @@ def clip_repetitive_text(
                 run += 1
                 if run >= threshold:
                     start = i - run - pat_len + 1
-                    return text[: start + pat_len] + INDISTINGUISHABLE_PLACEHOLDER
+                    pattern = text[start : start + pat_len]
+                    return text[: start + pat_len] + INDISTINGUISHABLE_PLACEHOLDER, [pattern]
             else:
                 run = 0
-    return text
+    return text, []
 
 
 def process_text(text: str, chinese_conversion: ChineseConversion) -> str:

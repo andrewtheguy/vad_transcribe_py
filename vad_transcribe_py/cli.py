@@ -21,7 +21,7 @@ from vad_transcribe_py.audio_transcriber import (
     TranscribedSegment,
     AudioTranscriber,
 )
-from vad_transcribe_py._utils import clip_repetitive_text
+from vad_transcribe_py._utils import clip_repetitive_text_with_patterns
 from vad_transcribe_py.vad_processor import (
     SpeechDetector,
     AudioSegment,
@@ -271,10 +271,9 @@ def write_jsonl_segment(
     preserved.
     """
     text = segment.text
-    repetition_clipped = False
+    repetition_patterns_clipped: list[str] = []
     if clip_repetitions:
-        text = clip_repetitive_text(segment.text)
-        repetition_clipped = text != segment.text
+        text, repetition_patterns_clipped = clip_repetitive_text_with_patterns(segment.text)
 
     line = json.dumps({
         "type": "transcript",
@@ -285,7 +284,7 @@ def write_jsonl_segment(
         "end_ms": round(segment.end * 1000),
         "end_formatted": format_timestamp(segment.end),
         "prompt_retry": segment.prompt_retry,
-        "repetition_clipped": repetition_clipped,
+        "repetition_patterns_clipped": repetition_patterns_clipped,
     }, ensure_ascii=False)
     output_file.write(line + "\n")
     output_file.flush()

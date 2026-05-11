@@ -55,14 +55,14 @@ The `--clip-repetitions` flag (off by default) on `vad-transcribe-py transcribe`
 
 Lines shorter than 100 characters are passed through unchanged — short utterances like "yes yes yes" or "好好好" are plausible real speech, not model hallucination.
 
-Timestamps and the `prompt_retry` flag are preserved on the truncated segment. The JSONL record also carries `repetition_clipped: true` when the line was actually shortened by `--clip-repetitions`.
+Timestamps and the `prompt_retry` flag are preserved on the truncated segment. The JSONL record also carries `repetition_patterns_clipped`, an array of pattern strings used by `--clip-repetitions` to shorten the repeated tail.
 
 ## JSONL output
 
-Every transcript line in the JSONL output carries booleans for recovery handling: `prompt_retry` indicates whether that segment came from the retry path, and `repetition_clipped` indicates whether `--clip-repetitions` changed the text:
+Every transcript line in the JSONL output carries recovery metadata: `prompt_retry` indicates whether that segment came from the retry path, and `repetition_patterns_clipped` lists repeat patterns used to clip the text. It is empty when no clipping happened. The current clipper stops after the first detected run, so the array contains at most one entry:
 
 ```json
-{"type": "transcript", "id": "…", "start_ms": 5000, "start_formatted": "00:00:05.000", "text": "…", "end_ms": 8000, "end_formatted": "00:00:08.000", "prompt_retry": true, "repetition_clipped": false}
+{"type": "transcript", "id": "…", "start_ms": 5000, "start_formatted": "00:00:05.000", "text": "…", "end_ms": 8000, "end_formatted": "00:00:08.000", "prompt_retry": true, "repetition_patterns_clipped": []}
 ```
 
 In the sub-timestamps path, only chunks at index `≥ repeat_index` (i.e. chunks produced by the retry call) are flagged `true`; chunks before the trim point keep `prompt_retry: false`.

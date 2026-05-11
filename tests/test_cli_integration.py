@@ -486,7 +486,7 @@ class TestJsonlOutput:
         record = json.loads(buf.getvalue().strip())
 
         assert record["prompt_retry"] is False
-        assert record["repetition_clipped"] is False
+        assert record["repetition_patterns_clipped"] == []
 
     def test_write_jsonl_segment_includes_prompt_retry_true(self):
         from io import StringIO
@@ -502,8 +502,9 @@ class TestJsonlOutput:
         record = json.loads(buf.getvalue().strip())
 
         assert record["prompt_retry"] is True
+        assert record["repetition_patterns_clipped"] == []
 
-    def test_write_jsonl_segment_clip_repetitions_unchanged_sets_flag_false(self):
+    def test_write_jsonl_segment_clip_repetitions_unchanged_sets_empty_patterns(self):
         from io import StringIO
 
         from vad_transcribe_py._types import TranscribedSegment
@@ -518,7 +519,7 @@ class TestJsonlOutput:
         record = json.loads(buf.getvalue().strip())
 
         assert record["text"] == "ordinary transcript text"
-        assert record["repetition_clipped"] is False
+        assert record["repetition_patterns_clipped"] == []
 
     def test_write_jsonl_segment_clip_repetitions_truncates_repetitive_tail(self):
         from io import StringIO
@@ -538,7 +539,7 @@ class TestJsonlOutput:
 
         # Truncation keeps one copy of the repeating pattern, not the whole line.
         assert record["text"] == "dungu " + INDISTINGUISHABLE_PLACEHOLDER
-        assert record["repetition_clipped"] is True
+        assert record["repetition_patterns_clipped"] == ["dungu "]
 
     def test_write_jsonl_segment_clip_repetitions_off_keeps_original(self):
         from io import StringIO
@@ -556,7 +557,7 @@ class TestJsonlOutput:
 
         # Default off → text is preserved verbatim.
         assert record["text"] == original
-        assert record["repetition_clipped"] is False
+        assert record["repetition_patterns_clipped"] == []
 
 
 if __name__ == "__main__":
