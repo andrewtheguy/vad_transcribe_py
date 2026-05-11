@@ -45,12 +45,24 @@ When a duplicate is found, the audio is trimmed to start at `chunks[i].timestamp
 - `i == 0` (cross-VAD): retry **only if** an initial prompt was used. With no prompt to remove, retrying with identical audio and args would produce the same result.
 - `i ≥ 1` (mid-VAD): **always retry**, even without an initial prompt. The audio trim itself is a meaningful change in input — removing the looping audio gives the model a chance to produce a non-repeating output.
 
+## Clipping single-line repetitions (opt-in)
+
+Even after the per-call retry, a few segments can slip through with degenerate output the model couldn't recover from — a single word looping for the rest of the VAD window (`"… some real speech then dungu dungu dungu dungu …"`) or a single character repeated dozens of times (`"好好好好…"`). These loops carry no information for downstream consumers, but the prefix before the loop often does.
+
+The `--clip-repetitions` flag (off by default) on `vad-transcribe-py transcribe` post-processes each transcript line. When it detects a heavily-repeated pattern, it replaces only the repeated run after the first copy with `(indistinguishable speech)`. So `"... some real speech then dungu dungu dungu …"` becomes `"... some real speech then dungu (indistinguishable speech)"` — the meaningful prefix survives, the loop does not. If non-repeated text appears after the loop, that suffix is preserved.
+
+**Detection** — `clip_repetitive_text()` in `vad_transcribe_py/_utils.py` mirrors the offline `repetition_analyzer` tool's `truncate_hallucinated_repeats`. For each candidate pattern length `pat_len` in `2..max_pattern_len` (default 30), it walks the string looking for `text[i] == text[i - pat_len]` over a continuous run of at least `pat_len * (min_repeats - 1)` chars (default `min_repeats=10`). The first hit wins, the detected run is extended until the periodic match ends, and the output is `text[: run_start + pat_len] + "(indistinguishable speech)" + text[run_end:]`.
+
+Lines shorter than 100 characters are passed through unchanged — short utterances like "yes yes yes" or "好好好" are plausible real speech, not model hallucination.
+
+Timestamps and the `prompt_retry` flag are preserved on the truncated segment. The JSONL record also carries `repetition_patterns_clipped`, an array of pattern strings used by `--clip-repetitions` to shorten the repeated tail.
+
 ## JSONL output
 
-Every transcript line in the JSONL output carries a `prompt_retry` boolean indicating whether that segment came from the retry path:
+Every transcript line in the JSONL output carries recovery metadata: `prompt_retry` indicates whether that segment came from the retry path, and `repetition_patterns_clipped` lists repeat patterns used to clip the text. It is empty when no clipping happened. The current clipper stops after the first detected run, so the array contains at most one entry:
 
 ```json
-{"type": "transcript", "id": "…", "start_ms": 5000, "start_formatted": "00:00:05.000", "text": "…", "end_ms": 8000, "end_formatted": "00:00:08.000", "prompt_retry": true}
+{"type": "transcript", "id": "…", "start_ms": 5000, "start_formatted": "00:00:05.000", "text": "…", "end_ms": 8000, "end_formatted": "00:00:08.000", "prompt_retry": true, "repetition_patterns_clipped": []}
 ```
 
 In the sub-timestamps path, only chunks at index `≥ repeat_index` (i.e. chunks produced by the retry call) are flagged `true`; chunks before the trim point keep `prompt_retry: false`.

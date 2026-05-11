@@ -209,17 +209,17 @@ Transcription outputs streaming JSONL (one JSON object per line). Each entry has
 ```jsonl
 {"type": "stream_start"}
 {"type": "segment_start", "timestamp": 0.5, "timestamp_formatted": "00:00:00.500"}
-{"type": "transcript", "start": 0.5, "start_formatted": "00:00:00.500", "end": 2.3, "end_formatted": "00:00:02.300", "text": "Hello world"}
+{"type": "transcript", "id": "019b...", "start_ms": 500, "start_formatted": "00:00:00.500", "text": "Hello world", "end_ms": 2300, "end_formatted": "00:00:02.300", "prompt_retry": false, "repetition_patterns_clipped": []}
 {"type": "segment_end", "timestamp": 2.3, "timestamp_formatted": "00:00:02.300"}
 {"type": "segment_start", "timestamp": 3.1, "timestamp_formatted": "00:00:03.100"}
-{"type": "transcript", "start": 3.1, "start_formatted": "00:00:03.100", "end": 5.8, "end_formatted": "00:00:05.800", "text": "This is a test"}
+{"type": "transcript", "id": "019b...", "start_ms": 3100, "start_formatted": "00:00:03.100", "text": "This is a test", "end_ms": 5800, "end_formatted": "00:00:05.800", "prompt_retry": false, "repetition_patterns_clipped": []}
 {"type": "segment_end", "timestamp": 5.8, "timestamp_formatted": "00:00:05.800"}
 {"type": "stream_end"}
 ```
 
 - `stream_start` / `stream_end`: Marks the beginning and end of the transcription stream
 - `segment_start`: Marks the beginning of a VAD-detected speech segment
-- `transcript`: Contains the transcribed text with start/end timestamps
+- `transcript`: Contains the transcribed text with start/end timestamps, `prompt_retry`, and `repetition_patterns_clipped`
 - `segment_end`: Marks the end of a VAD-detected speech segment
 - `*_formatted`: Human-readable timestamps in `hh:mm:ss.ms` format
 

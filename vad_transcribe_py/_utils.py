@@ -11,6 +11,10 @@ ChineseConversion = Literal['none', 'simplified', 'traditional']
 _REPETITION_THRESHOLD = 0.3
 _NEAR_DUPLICATE_THRESHOLD = 0.9
 
+INDISTINGUISHABLE_PLACEHOLDER = "(indistinguishable speech)"
+_CLIP_MIN_TEXT_LEN = 100
+_CLIP_MIN_PATTERN_LEN = 2
+
 
 def format_timestamp(seconds: float) -> str:
     """Format seconds to hh:mm:ss.ms format."""
@@ -69,6 +73,82 @@ def conditioning_context(current: str, prior_line: str) -> str:
     if not stripped or is_repetitive(stripped) or is_near_duplicate(stripped, prior_line):
         return ""
     return stripped
+
+
+def clip_repetitive_text(
+    text: str,
+    *,
+    min_repeats: int = 10,
+    max_pattern_len: int = 30,
+) -> str:
+    """Truncate consecutively repeating patterns caused by ASR hallucination."""
+    return clip_repetitive_text_with_patterns(
+        text,
+        min_repeats=min_repeats,
+        max_pattern_len=max_pattern_len,
+    )[0]
+
+
+def clip_repetitive_text_with_patterns(
+    text: str,
+    *,
+    min_repeats: int = 10,
+    max_pattern_len: int = 30,
+) -> tuple[str, list[str]]:
+    """Truncate consecutively repeating patterns caused by ASR hallucination.
+
+    Scans for a char-level periodic run: for each feasible candidate
+    ``pat_len`` in ``2..max_pattern_len``, walks the string looking for
+    ``text[i] == text[i - pat_len]`` over a continuous run of at least
+    ``pat_len * (min_repeats - 1)`` chars. When found, replaces the repeated
+    span after the first copy of the pattern with ``(indistinguishable speech)``
+    and preserves any suffix after the repeated span.
+
+    With the default ``max_pattern_len=30``, this is linear in the text length
+    with a small constant factor and no substring allocations before a match.
+    Candidate scans stop as soon as the remaining suffix cannot satisfy
+    ``min_repeats``.
+
+    Short inputs (< ``_CLIP_MIN_TEXT_LEN`` chars) are passed through unchanged —
+    short utterances like "yes yes yes" or "好好好" are plausible real speech,
+    not model hallucination.
+
+    Returns ``(text, patterns)`` where ``patterns`` is empty when no clipping
+    happened. The current algorithm clips the first repetitive run, so
+    ``patterns`` contains at most one string.
+    """
+    if min_repeats < 2:
+        raise ValueError(f"min_repeats must be at least 2, got {min_repeats}")
+
+    n = len(text)
+    if n < _CLIP_MIN_TEXT_LEN:
+        return text, []
+
+    max_feasible_pattern_len = min(max_pattern_len, n // min_repeats)
+    if max_feasible_pattern_len < _CLIP_MIN_PATTERN_LEN:
+        return text, []
+
+    for pat_len in range(_CLIP_MIN_PATTERN_LEN, max_feasible_pattern_len + 1):
+        run = 0
+        threshold = pat_len * (min_repeats - 1)
+        for i in range(pat_len, n):
+            if n - i < threshold - run:
+                break
+            if text[i] == text[i - pat_len]:
+                run += 1
+                if run >= threshold:
+                    start = i - run - pat_len + 1
+                    end = i + 1
+                    while end < n and text[end] == text[end - pat_len]:
+                        end += 1
+                    pattern = text[start : start + pat_len]
+                    return (
+                        text[: start + pat_len] + INDISTINGUISHABLE_PLACEHOLDER + text[end:],
+                        [pattern],
+                    )
+            else:
+                run = 0
+    return text, []
 
 
 def process_text(text: str, chinese_conversion: ChineseConversion) -> str:
