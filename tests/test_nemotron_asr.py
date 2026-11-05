@@ -46,14 +46,14 @@ def test_timed_tokens_drops_blanks_and_tracks_frames():
     sequence = [BLANK, BLANK, 5, BLANK, 6, 7, BLANK]
     durations = [1, 1, 0, 1, 0, 0, 1, 1]  # one extra trailing step, as the model emits
     pieces = ["<pad>", "<pad>", "▁Hi", "<pad>", "▁there", ".", "<pad>"]
-    tokens = timed_tokens(sequence, durations, BLANK, pieces)
+    tokens = timed_tokens(sequence, durations, {BLANK}, pieces)
     assert [(t.token_id, t.frame) for t in tokens] == [(5, 2), (6, 3), (7, 3)]
 
 
 def test_split_sentences_on_terminal_punctuation():
     sequence = [1, 2, 3, 4, 5, 6, 7, 8]
     pieces = ["▁Hi", ".", "▁It", "▁is", "▁3", ".", "5", "?"]
-    tokens = timed_tokens(sequence, [0] * len(sequence), BLANK, pieces)
+    tokens = timed_tokens(sequence, [0] * len(sequence), {BLANK}, pieces)
     sentences = split_sentences(tokens)
     assert [[t.piece for t in s] for s in sentences] == [
         ["▁Hi", "."],
@@ -62,7 +62,7 @@ def test_split_sentences_on_terminal_punctuation():
 
 
 def test_split_sentences_keeps_unterminated_tail():
-    tokens = timed_tokens([1, 2, 3], [0, 0, 0], BLANK, ["▁Done", ".", "▁and"])
+    tokens = timed_tokens([1, 2, 3], [0, 0, 0], {BLANK}, ["▁Done", ".", "▁and"])
     assert [[t.piece for t in s] for s in split_sentences(tokens)] == [["▁Done", "."], ["▁and"]]
 
 
@@ -94,13 +94,13 @@ class _StubInputs(dict):
 
 
 class _StubTokenizer:
-    VOCAB = {0: "<pad>", 1: "▁Hello", 2: ".", 3: "▁Bye", 4: "!", 99: "<en-US>"}
+    VOCAB = {0: "<blank>", 1: "▁Hello", 2: ".", 3: "▁Bye", 4: "!", 98: "<pad>", 99: "<en-US>"}
 
     def convert_ids_to_tokens(self, ids):
         return [self.VOCAB[i] for i in ids]
 
     def decode(self, ids, skip_special_tokens=False):
-        pieces = [self.VOCAB[i] for i in ids if not (skip_special_tokens and i in (0, 99))]
+        pieces = [self.VOCAB[i] for i in ids if not (skip_special_tokens and i in (0, 98, 99))]
         return "".join(pieces).replace("▁", " ")
 
 
@@ -193,3 +193,32 @@ def test_nemotron_invalid_language_fails_at_init(monkeypatch):
     with pytest.raises(ValueError, match="Unrecognized language code"):
         NemotronASRBackend(language="xx")
     assert NemotronASRBackend(language="zh")._language_key == "zh-CN"
+
+
+def test_split_sentences_on_non_latin_terminal_marks():
+    pieces = ["▁كيف", "؟", "حسنا", "▁नमस्ते", "।", "ठीक", "你好", "。", "再见", "！", "！"]
+    tokens = timed_tokens(list(range(1, 12)), [0] * 11, {BLANK}, pieces)
+    assert [[t.piece for t in s] for s in split_sentences(tokens)] == [
+        ["▁كيف", "؟"],
+        ["حسنا", "▁नमस्ते", "।"],
+        ["ठीक", "你好", "。"],
+        ["再见", "！", "！"],
+    ]
+
+
+def test_nemotron_drops_model_blank_id_that_differs_from_processor(stub_nemotron):
+    # Real model: processor.blank_token_id (0 here) != config.blank_token_id == pad (98).
+    backend, _ = _make_backend(stub_nemotron, "en")
+
+    class PadBlankModel(_StubModel):
+        config = type("Cfg", (), {"blank_token_id": 98})()
+
+        def generate(self, **_inputs):
+            seq = [98, 98, 1, 2, 98] + [98] * 7 + [3, 4, 98]
+            dur = [1, 1, 0, 0, 1] + [1] * 7 + [0, 0, 1]
+            return type("Out", (), {"sequences": torch.tensor([seq]), "durations": torch.tensor([dur])})()
+
+    backend._model = PadBlankModel()
+    segments = backend.transcribe(np.zeros(16000 * 2, dtype=np.float32))
+    assert [s.text for s in segments] == ["Hello.", "Bye!"]
+    assert segments[1].start == pytest.approx(10 * 0.08)

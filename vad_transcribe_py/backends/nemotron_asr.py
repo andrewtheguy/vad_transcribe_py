@@ -33,7 +33,11 @@ NEMOTRON_ASR_DEFAULT_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 # Encoder frame duration: 10ms mel hop x 8x subsampling.
 NEMOTRON_FRAME_SECONDS = 0.08
 _AUTO_LANGUAGE = "auto"
-_SENTENCE_END_CHARS = (".", "?", "!", "。", "？", "！")
+# ASCII marks close a sentence only before a new word ("3.5", "U.S." stay whole);
+# other scripts' marks (CJK, Arabic, Urdu, Devanagari, Armenian) close unconditionally.
+_ASCII_SENTENCE_END = (".", "?", "!")
+_SCRIPT_SENTENCE_END = ("。", "？", "！", "؟", "۔", "।", "॥", "։")
+_SENTENCE_END_CHARS = _ASCII_SENTENCE_END + _SCRIPT_SENTENCE_END
 
 
 def _detect_device(device: str | None = None) -> str:
@@ -88,7 +92,7 @@ class _TimedToken:
 def timed_tokens(
     sequence: list[int],
     durations: list[int],
-    blank_token_id: int,
+    blank_token_ids: set[int],
     pieces: list[str],
 ) -> list[_TimedToken]:
     """Drop blanks and attach an encoder-frame index to each emitted token.
@@ -99,7 +103,7 @@ def timed_tokens(
     tokens: list[_TimedToken] = []
     frame = 0
     for token_id, duration, piece in zip(sequence, durations[: len(sequence)], pieces, strict=True):
-        if token_id != blank_token_id:
+        if token_id not in blank_token_ids:
             tokens.append(_TimedToken(token_id, piece, frame))
         frame += duration
     return tokens
@@ -108,8 +112,9 @@ def timed_tokens(
 def split_sentences(tokens: list[_TimedToken]) -> list[list[_TimedToken]]:
     """Group tokens into sentences ending at terminal punctuation.
 
-    A sentence closes only when the punctuation token is followed by a new word
+    ASCII punctuation closes a sentence only when followed by a new word
     (SentencePiece ``▁`` prefix) or the end of output, so "3.5" is not split.
+    Other scripts' terminal marks close it unless more terminal punctuation follows.
     """
     sentences: list[list[_TimedToken]] = []
     current: list[_TimedToken] = []
@@ -118,7 +123,12 @@ def split_sentences(tokens: list[_TimedToken]) -> list[list[_TimedToken]]:
         if not token.piece.endswith(_SENTENCE_END_CHARS):
             continue
         nxt = tokens[idx + 1] if idx + 1 < len(tokens) else None
-        if nxt is None or nxt.piece.startswith("▁"):
+        script_mark = token.piece.endswith(_SCRIPT_SENTENCE_END)
+        if (
+            nxt is None
+            or nxt.piece.startswith("▁")
+            or (script_mark and not nxt.piece.startswith(_SENTENCE_END_CHARS))
+        ):
             sentences.append(current)
             current = []
     if current:
@@ -216,10 +226,18 @@ class NemotronASRBackend(TranscriberBase):
 
         sequence: list[int] = output.sequences[0].tolist()
         durations: list[int] = output.durations[0].tolist()
+        # The model emits config.blank_token_id (== pad), which differs from the
+        # processor's blank_token_id; drop all of them.
+        candidates = (
+            self._processor.blank_token_id,
+            getattr(getattr(self._model, "config", None), "blank_token_id", None),
+            getattr(tokenizer, "pad_token_id", None),
+        )
+        blank_ids = {int(c) for c in candidates if c is not None}
         tokens = timed_tokens(
             sequence,
             durations,
-            self._processor.blank_token_id,
+            blank_ids,
             tokenizer.convert_ids_to_tokens(sequence),
         )
 

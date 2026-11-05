@@ -829,6 +829,27 @@ class TestBestPauseSplit:
         assert len(segments) == 1
         assert self._window_ids(segments[0], ws) == list(range(8))
 
+    def test_look_back_never_exceeds_hard_limit(self):
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        segments = []
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=0.0,
+            soft_limit_seconds=0.05,
+            hard_limit_seconds=0.1,
+            look_back_seconds=0.5,
+            on_segment_complete=lambda seg: segments.append(seg),
+        )
+        probs = [0.1] * 20 + [0.9] * 10
+        window = np.full(window_size, 0.1, dtype=np.float32)
+        with patch.object(detector, '_speech_probability', side_effect=probs):
+            for i in range(len(probs)):
+                detector.process_window(window, i * window_size / sample_rate)
+        detector.flush()
+        assert segments
+        assert all(s.duration_seconds <= 0.1 + 1e-9 for s in segments)
+
     def test_natural_silence_still_ends_segment_before_hard_limit(self):
         S, P = 0.9, 0.1
         probs = [S] * 4 + [P] * 3 + [S] * 2

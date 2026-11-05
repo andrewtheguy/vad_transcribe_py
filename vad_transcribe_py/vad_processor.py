@@ -206,6 +206,9 @@ class SpeechDetector:
         timestamp: float,
     ) -> None:
         """Handle transition from no speech to speech, prepending look-back audio."""
+        # Cap look-back so the new segment never starts out over the hard limit.
+        while len(self._look_back_buffer) > self._max_windows - 1:
+            self._look_back_buffer.popleft()
         prepended_duration = len(self._look_back_buffer) * self._window_seconds
         for prev_window, prev_prob in self._look_back_buffer:
             self._windows.append(prev_window)
