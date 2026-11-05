@@ -19,11 +19,10 @@ TARGET_SAMPLE_RATE = 16000
 # VAD default configuration
 DEFAULT_MIN_SPEECH_SECONDS = 3.0
 DEFAULT_SOFT_LIMIT_SECONDS = 60.0
-DEFAULT_HARD_LIMIT_SECONDS = 60 * 60
+DEFAULT_HARD_LIMIT_SECONDS = 120.0
 DEFAULT_SPEECH_THRESHOLD = 0.5
 DEFAULT_MIN_SILENCE_DURATION_MS = 2000
 DEFAULT_LOOK_BACK_SECONDS = 0.5
-ADAPTIVE_MIN_SILENCE_MS = 32  # reduced silence threshold when over soft limit (~one window)
 
 # Whisper backend limits.
 # 60s applies when return_timestamps=True (default): HF's pipeline triggers
@@ -54,6 +53,14 @@ QWEN_ASR_SOFT_LIMIT_SECONDS = 30
 # GLM-ASR backend limits
 GLM_ASR_HARD_LIMIT_SECONDS = 60
 GLM_ASR_SOFT_LIMIT_SECONDS = 30
+
+# Nemotron ASR backend limits.
+# The encoder caps offline input at 5000 positions (80ms frames, ~400s); 300s
+# keeps headroom and peaks at ~4.5GB on MPS in fp16. RNNT decoding does not
+# hallucinate on long input, so segments may run for minutes; a segment that
+# reaches the hard limit is cut at the longest pause after the soft limit.
+NEMOTRON_ASR_HARD_LIMIT_SECONDS = 300
+NEMOTRON_ASR_SOFT_LIMIT_SECONDS = 120
 
 
 class AudioSegment:
@@ -87,11 +94,15 @@ def get_window_size_samples(sample_rate: int = 16000) -> int:
 
 class SpeechDetector:
     """
-    Detects speech segments in audio using Silero VAD with hysteresis-based state machine.
+    Detects speech segments in audio using Silero VAD (WhisperX-style cutting).
 
-    Processes audio in fixed-size windows, applies an adaptive soft limit to
-    encourage earlier segmentation, and enforces a hard limit by force-splitting
-    segments at the sample level.
+    A segment ends naturally after ``min_silence_duration_ms`` of silence. Short
+    pauses are merged into the segment, so it keeps growing across sentences.
+    When a segment reaches ``hard_limit_seconds`` without such a silence, it is
+    cut at the best pause between ``soft_limit_seconds`` and the hard limit:
+    the longest run of non-speech windows (cut in its middle), or, when there
+    is no pause at all, the window with the lowest speech probability. Audio
+    after the cut carries over into the next segment, so nothing is lost.
     """
 
     def __init__(
@@ -121,23 +132,26 @@ class SpeechDetector:
         # Load Silero VAD model
         self.vad_model = load_silero_vad()
 
-        # State machine variables
-        self._prev_has_speech = False
-        self._speech_section: list[float] = []
-        self._has_speech_begin_timestamp: float | None = None
-        self._look_back_buffer: deque[npt.NDArray[np.float32]] = deque()
-        self._look_back_buffer_duration = 0.0
-        self._pending_non_speech_seconds = 0.0
-        self._silence_buffer: list[float] = []
-        self._accumulated_silence_ms = 0.0
-
         # Window configuration
         self._window_size_samples = get_window_size_samples(self.sample_rate)
         self._window_seconds = self._window_size_samples / self.sample_rate
         self.look_back_seconds = max(0.0, look_back_seconds)
 
-        # Hard limit in samples for precise splitting
-        self._hard_max_speech_samples = int(round(self.hard_limit_seconds * self.sample_rate))
+        # Segment length caps, in whole VAD windows
+        self._max_windows = max(1, int(self.hard_limit_seconds * self.sample_rate) // self._window_size_samples)
+        self._min_cut_windows: int | None = (
+            None if self.soft_limit_seconds is None
+            else int(self.soft_limit_seconds * self.sample_rate) // self._window_size_samples
+        )
+
+        # State machine variables
+        self._prev_has_speech = False
+        self._windows: list[npt.NDArray[np.float32]] = []
+        self._probs: list[float] = []
+        self._trailing_silence_windows = 0
+        self._has_speech_begin_timestamp: float | None = None
+        self._look_back_buffer: deque[tuple[npt.NDArray[np.float32], float]] = deque()
+        self._pending_non_speech_seconds = 0.0
 
     def process_window(
         self,
@@ -145,193 +159,150 @@ class SpeechDetector:
         timestamp: float,
     ) -> bool:
         """Process a single audio window through VAD."""
-        has_speech = self._detect_speech(audio_window)
-        seconds = self.current_segment_duration
+        if len(audio_window) != self._window_size_samples:
+            raise ValueError(
+                f"Audio length {len(audio_window)} does not match window size {self._window_size_samples}"
+            )
+        prob = float(self._speech_probability(audio_window))
+        has_speech = prob > self.speech_threshold
 
         if not self._prev_has_speech:
             if has_speech:
-                has_speech = self._handle_speech_start(audio_window, timestamp)
+                self._start_segment(audio_window, prob, timestamp)
             else:
-                self._handle_non_speech(audio_window)
+                self._handle_non_speech(audio_window, prob)
+                self._prev_has_speech = False
+                return False
         else:
-            effective_min_silence_ms = self._get_effective_min_silence_ms(seconds)
-
-            if seconds < self.min_speech_seconds and not has_speech:
+            if self.current_segment_duration < self.min_speech_seconds and not has_speech:
                 has_speech = True
-
+            self._windows.append(np.copy(audio_window))
+            self._probs.append(prob)
             if has_speech:
-                self._flush_silence_buffer()
-                has_speech = self._append_speech_chunk(audio_window)
+                self._trailing_silence_windows = 0
             else:
-                has_speech = self._append_silence_chunk(
-                    audio_window, effective_min_silence_ms
-                )
+                self._trailing_silence_windows += 1
+                silence_ms = self._trailing_silence_windows * self._window_seconds * 1000
+                if silence_ms >= self.min_silence_duration_ms:
+                    self._end_segment()
+                    self._prev_has_speech = False
+                    return False
 
-        self._prev_has_speech = has_speech
-        return has_speech
+        if len(self._windows) >= self._max_windows:
+            self._split_at_best_pause()
 
-    def _get_effective_min_silence_ms(self, current_duration_seconds: float) -> float:
-        if (
-            self.soft_limit_seconds is not None
-            and self.soft_limit_seconds < self.hard_limit_seconds
-            and current_duration_seconds > self.soft_limit_seconds
-            and self.min_silence_duration_ms > 0
-        ):
-            return ADAPTIVE_MIN_SILENCE_MS
-        return self.min_silence_duration_ms
+        self._prev_has_speech = bool(self._windows)
+        return self._prev_has_speech
 
-    def _detect_speech(self, audio: npt.NDArray[np.float32]) -> bool:
-        if len(audio) != self._window_size_samples:
-            raise ValueError(
-                f"Audio length {len(audio)} does not match window size {self._window_size_samples}"
-            )
-
+    def _speech_probability(self, audio: npt.NDArray[np.float32]) -> float:
+        """Silero speech probability for one window."""
         audio_tensor = torch.from_numpy(audio)
-        speech_prob = self.vad_model(audio_tensor, self.sample_rate).item()
-        return speech_prob > self.speech_threshold
+        return self.vad_model(audio_tensor, self.sample_rate).item()
 
-    def _handle_speech_start(
+    def _start_segment(
         self,
         audio_window: npt.NDArray[np.float32],
+        prob: float,
         timestamp: float,
-    ) -> bool:
-        """Handle transition from no speech to speech."""
-        self._has_speech_begin_timestamp = timestamp
-
-        prepended_duration = 0.0
-        if self._look_back_buffer:
-            prepended_duration = self._look_back_buffer_duration
-            for prev_window in self._look_back_buffer:
-                self._speech_section.extend(prev_window)
-            self._look_back_buffer.clear()
-            self._look_back_buffer_duration = 0.0
-            self._pending_non_speech_seconds = 0.0
-
+    ) -> None:
+        """Handle transition from no speech to speech, prepending look-back audio."""
+        # Cap look-back so the new segment never starts out over the hard limit.
+        while len(self._look_back_buffer) > self._max_windows - 1:
+            self._look_back_buffer.popleft()
+        prepended_duration = len(self._look_back_buffer) * self._window_seconds
+        for prev_window, prev_prob in self._look_back_buffer:
+            self._windows.append(prev_window)
+            self._probs.append(prev_prob)
+        self._look_back_buffer.clear()
         if prepended_duration > 0:
-            self._has_speech_begin_timestamp = max(
-                0.0, self._has_speech_begin_timestamp - prepended_duration
-            )
+            self._pending_non_speech_seconds = 0.0
+        self._has_speech_begin_timestamp = max(0.0, timestamp - prepended_duration)
+        self._windows.append(np.copy(audio_window))
+        self._probs.append(prob)
+        self._trailing_silence_windows = 0
 
-        return self._append_speech_chunk(audio_window)
-
-    def _handle_non_speech(self, audio_window: npt.NDArray[np.float32]) -> None:
+    def _handle_non_speech(self, audio_window: npt.NDArray[np.float32], prob: float) -> None:
         """Handle continued non-speech windows."""
         self._pending_non_speech_seconds = self._window_seconds
 
         if self.look_back_seconds <= 0.0:
             self._look_back_buffer.clear()
-            self._look_back_buffer_duration = 0.0
             return
 
-        window_copy = np.copy(audio_window)
-        self._look_back_buffer.append(window_copy)
-        self._look_back_buffer_duration += self._window_seconds
-
-        while self._look_back_buffer and self._look_back_buffer_duration - 1e-9 > self.look_back_seconds:
+        self._look_back_buffer.append((np.copy(audio_window), prob))
+        while self._look_back_buffer and len(self._look_back_buffer) * self._window_seconds - 1e-9 > self.look_back_seconds:
             self._look_back_buffer.popleft()
-            self._look_back_buffer_duration -= self._window_seconds
 
-    def _flush_silence_buffer(self) -> None:
-        """Flush buffered silence back into speech section."""
-        if self._silence_buffer:
-            self._speech_section.extend(self._silence_buffer)
-            self._silence_buffer = []
-        self._accumulated_silence_ms = 0.0
+    def _best_cut_index(self) -> int:
+        """Pick where to cut a full segment: number of windows to emit.
 
-    def _append_speech_chunk(self, audio_chunk: npt.NDArray[np.float32]) -> bool:
-        """Append speech audio, force-emitting segments if the hard cap is reached."""
-        chunk = audio_chunk
+        Searches windows from the soft limit (or the segment midpoint when no
+        soft limit is set) to the end. Prefers the middle of the longest
+        non-speech run; with no non-speech window, cuts after the lowest
+        speech-probability window. Ties go to the later position.
+        """
+        n = len(self._windows)
+        lo = self._min_cut_windows if self._min_cut_windows is not None else n // 2
+        lo = min(max(lo, 1), n - 1) if n > 1 else 0
 
-        while len(chunk) > 0:
-            remaining = self._remaining_hard_cap_samples()
-            take = min(len(chunk), remaining)
-            if take > 0:
-                self._speech_section.extend(chunk[:take])
-                chunk = chunk[take:]
+        best: tuple[int, int] | None = None
+        i = lo
+        while i < n:
+            if self._probs[i] <= self.speech_threshold:
+                j = i
+                while j < n and self._probs[j] <= self.speech_threshold:
+                    j += 1
+                if best is None or j - i >= best[1] - best[0]:
+                    best = (i, j)
+                i = j
+            else:
+                i += 1
+        if best is not None:
+            return max(1, (best[0] + best[1]) // 2)
 
-            if self._remaining_hard_cap_samples() != 0:
-                return True
+        tail = np.asarray(self._probs[lo:], dtype=np.float64)
+        last_min = len(tail) - 1 - int(np.argmin(tail[::-1]))
+        return lo + last_min + 1
 
-            split_ts = self._segment_end_timestamp()
-            self._force_emit_active_segment()
+    def _split_at_best_pause(self) -> None:
+        """Emit the segment up to the best pause; carry the rest into a new segment."""
+        cut = self._best_cut_index()
+        rest_windows, rest_probs = self._windows[cut:], self._probs[cut:]
+        begin = self._has_speech_begin_timestamp if self._has_speech_begin_timestamp is not None else 0.0
 
-            if len(chunk) == 0:
-                return False
-
-            self._has_speech_begin_timestamp = split_ts
-
-        return len(self._speech_section) > 0
-
-    def _append_silence_chunk(
-        self,
-        audio_chunk: npt.NDArray[np.float32],
-        effective_min_silence_ms: float,
-    ) -> bool:
-        """Append silence while in speech, honoring both hard and soft caps."""
-        chunk = audio_chunk
-
-        while len(chunk) > 0:
-            remaining = self._remaining_hard_cap_samples()
-            take = min(len(chunk), remaining)
-
-            if take > 0:
-                self._silence_buffer.extend(chunk[:take])
-                self._accumulated_silence_ms += take / self.sample_rate * 1000
-                chunk = chunk[take:]
-
-            if self._remaining_hard_cap_samples() == 0:
-                self._handle_speech_end()
-                if len(chunk) > 0:
-                    self._handle_non_speech(chunk)
-                return False
-
-            if self._accumulated_silence_ms >= effective_min_silence_ms:
-                self._handle_speech_end()
-                if len(chunk) > 0:
-                    self._handle_non_speech(chunk)
-                return False
-
-        return True
-
-    def _current_segment_samples(self) -> int:
-        return len(self._speech_section) + len(self._silence_buffer)
-
-    def _remaining_hard_cap_samples(self) -> int:
-        return max(0, self._hard_max_speech_samples - self._current_segment_samples())
-
-    def _segment_end_timestamp(self) -> float:
-        start_ts = (
-            self._has_speech_begin_timestamp
-            if self._has_speech_begin_timestamp is not None
-            else 0.0
-        )
-        return start_ts + self._current_segment_samples() / self.sample_rate
-
-    def _force_emit_active_segment(self) -> None:
-        """Force-emit the current segment at the hard limit."""
-        self._silence_buffer = []
-        self._accumulated_silence_ms = 0.0
+        self._windows, self._probs = self._windows[:cut], self._probs[:cut]
         self._emit_segment()
-        self._has_speech_begin_timestamp = None
-        self._look_back_buffer.clear()
-        self._look_back_buffer_duration = 0.0
 
-    def _handle_speech_end(self) -> None:
+        self._trailing_silence_windows = 0
+        if not any(p > self.speech_threshold for p in rest_probs):
+            # Silence-only remainder: treat it as non-speech instead of an active segment.
+            self._has_speech_begin_timestamp = None
+            for window, prob in zip(rest_windows, rest_probs):
+                self._handle_non_speech(window, prob)
+            # _handle_non_speech accounts one window per call; count the whole remainder.
+            self._pending_non_speech_seconds = len(rest_windows) * self._window_seconds
+            return
+
+        self._windows, self._probs = rest_windows, rest_probs
+        self._has_speech_begin_timestamp = begin + cut * self._window_seconds
+        for p in reversed(rest_probs):
+            if p > self.speech_threshold:
+                break
+            self._trailing_silence_windows += 1
+
+    def _end_segment(self) -> None:
         """Handle transition from speech to no speech."""
-        self._speech_section.extend(self._silence_buffer)
-        self._silence_buffer = []
-        self._accumulated_silence_ms = 0.0
         self._emit_segment()
         self._has_speech_begin_timestamp = None
+        self._trailing_silence_windows = 0
         self._look_back_buffer.clear()
-        self._look_back_buffer_duration = 0.0
 
     def _emit_segment(self) -> None:
         """Create AudioSegment and invoke callback."""
-        if not self._speech_section:
+        if not self._windows:
             return
 
-        audio_array = np.asarray(self._speech_section)
+        audio_array = np.concatenate(self._windows).astype(np.float32, copy=False)
         start_ts = self._has_speech_begin_timestamp if self._has_speech_begin_timestamp is not None else 0.0
         duration_seconds = len(audio_array) / self.sample_rate
 
@@ -342,34 +313,26 @@ class SpeechDetector:
         )
 
         self.vad_model.reset_states()
-        self._speech_section = []
+        self._windows = []
+        self._probs = []
 
         if self.on_segment_complete is not None:
             self.on_segment_complete(segment)
 
     def flush(self) -> None:
         """Force completion of any in-progress speech segment. Call at end of stream."""
-        if self._silence_buffer:
-            self._speech_section.extend(self._silence_buffer)
-            self._silence_buffer = []
-            self._accumulated_silence_ms = 0.0
-
-        if len(self._speech_section) > 0:
-            self._emit_segment()
-            self._has_speech_begin_timestamp = None
-            self._look_back_buffer.clear()
-            self._look_back_buffer_duration = 0.0
+        if self._windows:
+            self._end_segment()
 
     def reset(self) -> None:
         """Reset all state (for stream restart or testing)."""
         self._prev_has_speech = False
-        self._speech_section = []
+        self._windows = []
+        self._probs = []
+        self._trailing_silence_windows = 0
         self._has_speech_begin_timestamp = None
         self._look_back_buffer.clear()
-        self._look_back_buffer_duration = 0.0
         self._pending_non_speech_seconds = 0.0
-        self._silence_buffer = []
-        self._accumulated_silence_ms = 0.0
         self.vad_model.reset_states()
 
     @property
@@ -379,8 +342,15 @@ class SpeechDetector:
 
     @property
     def current_segment_duration(self) -> float:
-        """Duration of current speech segment including silence buffer."""
-        return self._current_segment_samples() / self.sample_rate
+        """Duration of current speech segment, including trailing silence."""
+        return len(self._windows) * self._window_seconds
+
+    @property
+    def current_segment_audio(self) -> npt.NDArray[np.float32]:
+        """Audio buffered for the in-progress segment."""
+        if not self._windows:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self._windows)
 
     @property
     def pending_non_speech_duration(self) -> float:
