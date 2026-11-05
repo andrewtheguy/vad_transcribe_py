@@ -850,6 +850,27 @@ class TestBestPauseSplit:
         assert segments
         assert all(s.duration_seconds <= 0.1 + 1e-9 for s in segments)
 
+    def test_silence_only_remainder_counts_full_pending_non_speech(self):
+        sample_rate = 16000
+        window_size = get_window_size_samples(sample_rate)
+        window_seconds = window_size / sample_rate
+        detector = SpeechDetector(
+            sample_rate=sample_rate,
+            min_speech_seconds=window_seconds,
+            soft_limit_seconds=3 * window_seconds,
+            hard_limit_seconds=10 * window_seconds,
+            min_silence_duration_ms=int(8 * window_seconds * 1000),
+            look_back_seconds=0.5,
+        )
+        # pause of 4 windows at the end; cut lands mid-pause, leaving 2 silence windows
+        probs = [0.9] * 6 + [0.1] * 4
+        window = np.full(window_size, 0.1, dtype=np.float32)
+        with patch.object(detector, '_speech_probability', side_effect=probs):
+            for i in range(len(probs)):
+                detector.process_window(window, i * window_seconds)
+        assert not detector.is_in_speech
+        assert detector.consume_non_speech() == pytest.approx(2 * window_seconds)
+
     def test_natural_silence_still_ends_segment_before_hard_limit(self):
         S, P = 0.9, 0.1
         probs = [S] * 4 + [P] * 3 + [S] * 2

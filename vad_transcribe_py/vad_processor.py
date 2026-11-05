@@ -279,6 +279,8 @@ class SpeechDetector:
             self._has_speech_begin_timestamp = None
             for window, prob in zip(rest_windows, rest_probs):
                 self._handle_non_speech(window, prob)
+            # _handle_non_speech accounts one window per call; count the whole remainder.
+            self._pending_non_speech_seconds = len(rest_windows) * self._window_seconds
             return
 
         self._windows, self._probs = rest_windows, rest_probs
