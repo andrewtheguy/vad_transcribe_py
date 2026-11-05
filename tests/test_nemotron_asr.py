@@ -9,12 +9,17 @@ import vad_transcribe_py.audio_transcriber as audio_transcriber
 from vad_transcribe_py.backends.nemotron_asr import (
     NEMOTRON_ASR_DEFAULT_MODEL,
     NemotronASRBackend,
+    choose_cut,
     resolve_language,
+    resume_index,
+    split_long_line,
     split_sentences,
     timed_tokens,
 )
 from vad_transcribe_py.vad_processor import (
+    DEFAULT_MIN_SILENCE_DURATION_MS,
     NEMOTRON_ASR_HARD_LIMIT_SECONDS,
+    NEMOTRON_ASR_MIN_SILENCE_DURATION_MS,
     NEMOTRON_ASR_SOFT_LIMIT_SECONDS,
 )
 
@@ -71,6 +76,8 @@ def test_nemotron_defaults(stub_nemotron):
     assert backend.model == NEMOTRON_ASR_DEFAULT_MODEL
     assert backend.hard_limit_seconds == NEMOTRON_ASR_HARD_LIMIT_SECONDS
     assert backend.soft_limit_seconds == NEMOTRON_ASR_SOFT_LIMIT_SECONDS
+    assert backend.min_silence_duration_ms == NEMOTRON_ASR_MIN_SILENCE_DURATION_MS
+    assert NEMOTRON_ASR_MIN_SILENCE_DURATION_MS > DEFAULT_MIN_SILENCE_DURATION_MS
 
 
 def test_create_transcriber_nemotron(stub_nemotron):
@@ -222,3 +229,167 @@ def test_nemotron_drops_model_blank_id_that_differs_from_processor(stub_nemotron
     segments = backend.transcribe(np.zeros(16000 * 2, dtype=np.float32))
     assert [s.text for s in segments] == ["Hello.", "Bye!"]
     assert segments[1].start == pytest.approx(10 * 0.08)
+
+
+def test_timed_tokens_drops_special_and_retimes_bare_boundary():
+    # "." at 3, then a bare "▁" and a language tag at the same frame, next word at 9.
+    sequence = [5, 6, 1, 99, 7]
+    durations = [3, 0, 0, 6, 0]
+    pieces = ["▁Hi", ".", "▁", "<en-US>", "No"]
+    tokens = timed_tokens(sequence, durations, {BLANK, 99}, pieces)
+    assert [(t.piece, t.frame) for t in tokens] == [("▁Hi", 0), (".", 3), ("▁", 9), ("No", 9)]
+
+
+def _tokens(*events: tuple[int, str]):
+    return timed_tokens(list(range(1, len(events) + 1)), [0] * len(events), set(), [p for _, p in events])
+
+
+def _at(*events: tuple[int, str]):
+    tokens = _tokens(*events)
+    for token, (frame, _) in zip(tokens, events, strict=True):
+        token.frame = frame
+    return tokens
+
+
+def test_choose_cut_prefers_latest_sentence_start_after_a_pause():
+    tokens = _at((10, "▁A"), (11, "."), (30, "▁B"), (31, "."), (33, "▁C"), (34, "."), (40, "▁D"), (41, "."),
+                 (42, "▁E"), (48, "▁F"))
+    # Window 50, margin 5: cuts allowed for sentence starts at frames 25..45.
+    # Sentence starts: B (gap 19), C (gap 2), D (gap 6), E (gap 1). Latest paused is D.
+    keep, cut = choose_cut(tokens, 50, 5)
+    assert tokens[keep].piece == "▁D"
+    assert cut == (34 + 40 + 1) // 2
+
+
+def test_choose_cut_without_pause_takes_longest_gap_sentence_start():
+    tokens = _at((26, "▁A"), (27, "."), (29, "▁B"), (30, "."), (33, "▁C"), (34, "."), (35, "▁D"))
+    keep, _ = choose_cut(tokens, 50, 5)
+    assert tokens[keep].piece == "▁C"
+
+
+def test_choose_cut_ignores_sentence_starts_near_window_end():
+    tokens = _at((10, "▁A"), (20, "▁B"), (30, "▁C"), (40, "▁D"), (47, "."), (49, "▁E"))
+    # The only sentence start (E at 49) is inside the margin; cut at the longest word gap.
+    keep, cut = choose_cut(tokens, 50, 5)
+    assert tokens[keep].piece == "▁D"
+    assert cut == 35
+
+
+def test_choose_cut_silent_tail_keeps_everything():
+    tokens = _at((5, "▁A"), (10, "▁B"))
+    assert choose_cut(tokens, 50, 5) == (2, 30)
+
+
+def test_choose_cut_never_before_window_midpoint():
+    # Long silence before the only sentence start: the gap middle (15) is clamped to 25.
+    tokens = _at((1, "▁A"), (2, "."), (28, "▁B"))
+    assert choose_cut(tokens, 50, 5) == (2, 25)
+
+
+def test_choose_cut_empty_window_cuts_at_margin():
+    assert choose_cut([], 50, 5) == (0, 45)
+
+
+def test_resume_index_matches_jittered_sentence_boundary():
+    # Previous window cut at 20 between "." and "▁Next"; this decode is shifted 2 frames.
+    tokens = _at((14, "▁Aus"), (16, "tin"), (18, "."), (24, "▁Next"), (26, "▁word"))
+    assert tokens[resume_index(tokens, 20)].piece == "▁Next"
+
+
+def test_resume_index_never_splits_a_word():
+    # No sentence boundary in this decode; "tin" lands after the cut.
+    tokens = _at((14, "▁from"), (18, "▁Aus"), (21, "tin"), (30, "▁no"), (32, "▁Demo"))
+    assert tokens[resume_index(tokens, 23)].piece == "▁no"
+    # Closer to the earlier word start: keep the whole word.
+    assert tokens[resume_index(tokens, 19)].piece == "▁Aus"
+
+
+class _TimelineTokenizer:
+    """Vocabulary for a stub model whose audio encodes one token id per frame."""
+
+    def __init__(self, pieces: list[str]):
+        self.vocab = {i + 1: piece for i, piece in enumerate(pieces)}
+        self.vocab[BLANK] = "<blank>"
+
+    def convert_ids_to_tokens(self, ids):
+        return [self.vocab[i] for i in ids]
+
+    def decode(self, ids, skip_special_tokens=False):
+        return "".join(self.vocab[i] for i in ids if i != BLANK).replace("▁", " ")
+
+
+class _TimelineModel:
+    """Emits token ``int(audio[frame start])`` at every frame where it is non-zero."""
+
+    device = "cpu"
+    dtype = torch.float32
+
+    def generate(self, input_features, **_kwargs):
+        sequence: list[int] = []
+        durations: list[int] = []
+        for frame in range(len(input_features) // 1280):
+            token = int(input_features[frame * 1280])
+            if token:
+                sequence.append(token)
+                durations.append(0)
+            sequence.append(BLANK)
+            durations.append(1)
+        return type("Out", (), {"sequences": torch.tensor([sequence]), "durations": torch.tensor([durations])})()
+
+
+def test_nemotron_windowed_decoding_matches_single_pass(stub_nemotron):
+    pieces = "▁One ▁two . ▁Three ▁four ▁five ? ▁Six ▁seven . ▁Eight ▁nine ▁ten ▁eleven ! ▁Twelve".split(" ")
+    audio = np.zeros(1280 * 400, dtype=np.float32)
+    frame = 3
+    for idx, piece in enumerate(pieces):
+        audio[frame * 1280] = idx + 1
+        # Words 4 frames apart; a sentence end is followed by a 12-frame pause.
+        frame += 12 if piece in (".", "?", "!") else 4
+    audio = audio[: (frame + 20) * 1280]
+
+    def run(window_seconds: float) -> list[str]:
+        backend = NemotronASRBackend(language="en", window_seconds=window_seconds)
+        processor = _StubProcessor()
+        processor.tokenizer = _TimelineTokenizer(pieces)  # type: ignore[assignment]
+        backend._processor = processor
+        backend._model = _TimelineModel()
+        return [s.text for s in backend.transcribe(audio)]
+
+    single = run(300.0)
+    assert single == ["One two.", "Three four five?", "Six seven.", "Eight nine ten eleven!", "Twelve"]
+    # 4s windows (50 frames) force several seeks over the ~10s of audio.
+    assert run(4.0) == single
+
+
+def test_split_long_line_at_longest_middle_pause():
+    # Line spans 0..40; longest gap overall is at the edge (B at 4), longest in the middle half is E.
+    tokens = _at((0, "▁A"), (4, "▁B"), (6, "▁C"), (12, "▁D"), (21, "▁E"), (23, "▁F"), (30, "▁G"), (40, "▁H"))
+    lines = split_long_line(tokens, 30)
+    assert [[t.piece for t in line] for line in lines] == [["▁A", "▁B", "▁C", "▁D"], ["▁E", "▁F", "▁G", "▁H"]]
+
+
+def test_split_long_line_keeps_short_lines_and_words_whole():
+    tokens = _at((0, "▁A"), (10, "▁B"), (20, "c"))
+    assert split_long_line(tokens, 30) == [tokens]
+    # "c" continues the word "▁B": the only split is before "▁B".
+    assert [[t.piece for t in line] for line in split_long_line(tokens, 15)] == [["▁A"], ["▁B", "c"]]
+
+
+def test_nemotron_transcribe_splits_unpunctuated_run_on(stub_nemotron):
+    pieces = [f"▁w{i}" for i in range(60)]
+    audio = np.zeros(1280 * 700, dtype=np.float32)
+    frame = 0
+    for idx in range(len(pieces)):
+        audio[frame * 1280] = idx + 1
+        # One-frame gaps, plus a longer pause after every 20 words.
+        frame += 10 if idx % 20 == 19 else 9
+    backend = NemotronASRBackend(language="en")
+    processor = _StubProcessor()
+    processor.tokenizer = _TimelineTokenizer(pieces)  # type: ignore[assignment]
+    backend._processor = processor
+    backend._model = _TimelineModel()
+    segments = backend.transcribe(audio)
+    # 60 words over ~43s without punctuation: one split, at the pause nearest the middle
+    # (w20 and w40 tie); the remaining 28s line is under the 30s limit.
+    assert [s.text.split()[0] for s in segments] == ["w0", "w20"]
+    assert segments[1].start == pytest.approx(181 * 0.08)

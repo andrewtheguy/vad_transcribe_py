@@ -8,7 +8,7 @@
 - [Qwen3-ASR (MLX)](https://huggingface.co/mlx-community/Qwen3-ASR-0.6B-bf16) - Qwen3-ASR via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/Qwen3-ASR-0.6B-bf16` (best accuracy per published WER benchmark)
 - [GLM-ASR](https://huggingface.co/zai-org/GLM-ASR-Nano-2512) - Z.ai GLM-ASR Nano via HuggingFace Transformers. Default model: `zai-org/GLM-ASR-Nano-2512` (1.5B parameters per upstream model card, BF16)
 - [GLM-ASR (MLX)](https://huggingface.co/mlx-community/GLM-ASR-Nano-2512-8bit) - GLM-ASR Nano via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/GLM-ASR-Nano-2512-8bit` (same 1.5B-parameter network as the upstream model, 8-bit MLX quantization, ~2.4 GB on disk)
-- [Nemotron ASR](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) - NVIDIA Nemotron 3.5 ASR (0.6B cache-aware FastConformer RNNT) via HuggingFace Transformers. Default model: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Non-autoregressive, so it handles multi-minute VAD segments without hallucination loops
+- [Nemotron ASR](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) - NVIDIA Nemotron 3.5 ASR (0.6B cache-aware FastConformer RNNT) via HuggingFace Transformers. Default model: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Non-autoregressive, so it handles long VAD segments without hallucination loops. Segments longer than the model's ~400s input cap are decoded Whisper-style in overlapping 300s windows that each end at a sentence boundary, so VAD only has to drop long silences
 - [NVIDIA Whisper](https://build.nvidia.com/openai/whisper-large-v3) - OpenAI whisper-large-v3 hosted by NVIDIA via Riva gRPC (no local GPU required). Optional dep: `uv sync --extra nvidia-whisper`. Requires `NVIDIA_API_KEY` in `.env`.
 
 ## Features
@@ -110,7 +110,7 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr-rs, and qwen-asr-mlx backends; ignored by glm-asr, glm-asr-mlx, and nemotron-asr, which do not support conditioning)
 - `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper and nemotron-asr backends)
 
-VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard — drops to 30s hard with `--no-sub-timestamps`, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s, Nemotron ASR: 120s / 300s). A segment ends at a 2s silence; short pauses are merged in, so segments grow across sentences. If a segment reaches the hard limit, it is cut WhisperX-style at the longest pause between the soft and hard limit (or at the lowest speech-probability point if there is no pause), and the remaining audio carries over into the next segment. Use the `split` command for manual VAD tuning.
+VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard — drops to 30s hard with `--no-sub-timestamps`, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s, Nemotron ASR: 1500s / 1800s). A segment ends at a 2s silence; short pauses are merged in, so segments grow across sentences. If a segment reaches the hard limit, it is cut WhisperX-style at the longest pause between the soft and hard limit (or at the lowest speech-probability point if there is no pause), and the remaining audio carries over into the next segment. Nemotron ASR does not rely on the VAD cut: it splits long segments itself at sentence boundaries (see below). Its segments end only at a 4s silence (quiet speech can score as silence for a couple of seconds), and its 30-minute hard limit only bounds buffered audio and output latency. Use the `split` command for manual VAD tuning.
 
 ### Transcribe Examples
 
@@ -173,6 +173,8 @@ uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr --device 
 ```
 
 **Use Nemotron ASR backend (long segments, sentence-level timestamps from RNNT token durations; fp16 on MPS/CUDA):**
+
+VAD only drops silences of 4s or more. Each speech segment (up to 30 minutes) is decoded in 300s windows: a window keeps the sentences that finish before a pause in its second half, and the next window starts 4s before that cut, so no sentence is split across windows. Output lines are sentences; a sentence longer than 30s (the model sometimes leaves out punctuation) is split at its longest pauses.
 ```bash
 uv run vad-transcribe-py transcribe --file audio.wav --backend nemotron-asr --language en
 ```
@@ -347,7 +349,7 @@ uv run pytest
 
 - File-based transcription only (no real-time/live transcription)
 - Live streams not supported (URLs must have fixed duration)
-- VAD enforces per-backend hard limits on segment duration by cutting at the best pause after the soft limit (60s Whisper / 30s with `--no-sub-timestamps`, 30s NVIDIA Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming, 60s Qwen3-ASR Rust/MLX, 60s GLM-ASR Transformers/MLX, 300s Nemotron ASR — the encoder caps offline input at ~400s)
+- VAD enforces per-backend hard limits on segment duration by cutting at the best pause after the soft limit (60s Whisper / 30s with `--no-sub-timestamps`, 30s NVIDIA Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming, 60s Qwen3-ASR Rust/MLX, 60s GLM-ASR Transformers/MLX, 1800s Nemotron ASR — which decodes long segments in sentence-aligned 300s windows because the encoder caps offline input at ~400s)
 - No database persistence (outputs to JSONL files or Opus segments)
 - No web interface
 

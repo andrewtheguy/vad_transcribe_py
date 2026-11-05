@@ -12,6 +12,7 @@ from vad_transcribe_py._utils import (
     format_timestamp,
     process_text,
 )
+from vad_transcribe_py.vad_processor import DEFAULT_MIN_SILENCE_DURATION_MS
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class AudioTranscriber(Protocol):
     @property
     def soft_limit_seconds(self) -> float | None: ...
 
+    @property
+    def min_silence_duration_ms(self) -> int: ...
+
     def transcribe(self, audio: npt.NDArray[np.float32], start_offset: float = 0.0) -> list[TranscribedSegment]: ...
 
 
@@ -45,6 +49,11 @@ class TranscriberBase:
         self.language = language
         self.chinese_conversion: ChineseConversion = chinese_conversion
         self.num_threads = num_threads
+
+    @property
+    def min_silence_duration_ms(self) -> int:
+        """Silence that ends a VAD segment."""
+        return DEFAULT_MIN_SILENCE_DURATION_MS
 
     def _make_segment(self, text: str, start: float, end: float, prompt_retry: bool = False) -> TranscribedSegment:
         """Format timestamps, print to stderr, process text, and return a TranscribedSegment."""
