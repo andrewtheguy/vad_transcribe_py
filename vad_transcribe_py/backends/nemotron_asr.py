@@ -178,6 +178,8 @@ class NemotronASRBackend(TranscriberBase):
         self._model.to(self._device)
         self._model.eval()
         logger.info("Nemotron ASR model loaded: %s on %s", self.model, self._device)
+        # Fail on an invalid language now, before any audio is streamed.
+        self._get_language_key()
 
     def _get_language_key(self) -> str:
         if self._language_key is None:
@@ -207,8 +209,10 @@ class NemotronASRBackend(TranscriberBase):
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
         tokenizer = self._processor.tokenizer
         if not self._sub_timestamps:
-            text = self._processor.decode(output.sequences, skip_special_tokens=True)[0]
-            return [self._make_segment(text.strip(), start_offset, end_time)]
+            text = self._processor.decode(output.sequences, skip_special_tokens=True)[0].strip()
+            if not text:
+                return []
+            return [self._make_segment(text, start_offset, end_time)]
 
         sequence: list[int] = output.sequences[0].tolist()
         durations: list[int] = output.durations[0].tolist()

@@ -270,9 +270,16 @@ class SpeechDetector:
         self._windows, self._probs = self._windows[:cut], self._probs[:cut]
         self._emit_segment()
 
-        self._windows, self._probs = rest_windows, rest_probs
-        self._has_speech_begin_timestamp = begin + cut * self._window_seconds if rest_windows else None
         self._trailing_silence_windows = 0
+        if not any(p > self.speech_threshold for p in rest_probs):
+            # Silence-only remainder: treat it as non-speech instead of an active segment.
+            self._has_speech_begin_timestamp = None
+            for window, prob in zip(rest_windows, rest_probs):
+                self._handle_non_speech(window, prob)
+            return
+
+        self._windows, self._probs = rest_windows, rest_probs
+        self._has_speech_begin_timestamp = begin + cut * self._window_seconds
         for p in reversed(rest_probs):
             if p > self.speech_threshold:
                 break

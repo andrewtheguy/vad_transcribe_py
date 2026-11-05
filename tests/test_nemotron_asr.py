@@ -1,3 +1,6 @@
+import sys
+from types import ModuleType
+
 import numpy as np
 import pytest
 import torch
@@ -154,3 +157,39 @@ def test_nemotron_transcribe_without_sub_timestamps(stub_nemotron):
     assert len(segments) == 1
     assert segments[0].text == "Hello. Bye!"
     assert (segments[0].start, segments[0].end) == (1.0, 2.0)
+
+
+def test_nemotron_transcribe_without_sub_timestamps_empty_text(stub_nemotron):
+    backend, _ = _make_backend(stub_nemotron, "en", sub_timestamps=False)
+
+    class SilentModel(_StubModel):
+        def generate(self, **_inputs):
+            return type("Out", (), {"sequences": torch.tensor([[0, 0, 99]]), "durations": torch.tensor([[1, 1, 0]])})()
+
+    backend._model = SilentModel()
+    assert backend.transcribe(np.zeros(16000, dtype=np.float32)) == []
+
+
+def test_nemotron_invalid_language_fails_at_init(monkeypatch):
+    class StubModelLoader:
+        @staticmethod
+        def from_pretrained(_model_id, dtype=None):
+            model = _StubModel()
+            model.to = lambda _device: model  # type: ignore[attr-defined]
+            model.eval = lambda: model  # type: ignore[attr-defined]
+            return model
+
+    class StubProcessorLoader:
+        @staticmethod
+        def from_pretrained(_model_id):
+            return _StubProcessor()
+
+    transformers_module = ModuleType("transformers")
+    transformers_module.AutoProcessor = StubProcessorLoader  # type: ignore[attr-defined]
+    transformers_module.AutoModelForRNNT = StubModelLoader  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "transformers", transformers_module)
+    monkeypatch.setattr("vad_transcribe_py.backends.nemotron_asr._detect_device", lambda _device=None: "cpu")
+
+    with pytest.raises(ValueError, match="Unrecognized language code"):
+        NemotronASRBackend(language="xx")
+    assert NemotronASRBackend(language="zh")._language_key == "zh-CN"

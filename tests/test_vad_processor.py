@@ -820,6 +820,15 @@ class TestBestPauseSplit:
             assert nxt.start == pytest.approx(prev.start + prev.duration_seconds)
         assert all(s.duration_seconds <= 10 * wsec + 1e-9 for s in segments)
 
+    def test_silence_only_remainder_is_not_kept_as_segment(self):
+        S, P = 0.9, 0.1
+        # longest pause runs to the end of the full segment, so the remainder after
+        # the mid-pause cut is pure silence; more silence follows
+        probs = [S] * 6 + [P] * 4 + [P] * 6
+        segments, _, ws, _ = self._run(probs, soft_windows=3, hard_windows=10, min_silence_windows=8)
+        assert len(segments) == 1
+        assert self._window_ids(segments[0], ws) == list(range(8))
+
     def test_natural_silence_still_ends_segment_before_hard_limit(self):
         S, P = 0.9, 0.1
         probs = [S] * 4 + [P] * 3 + [S] * 2
