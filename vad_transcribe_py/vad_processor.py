@@ -55,6 +55,14 @@ QWEN_ASR_SOFT_LIMIT_SECONDS = 30
 GLM_ASR_HARD_LIMIT_SECONDS = 60
 GLM_ASR_SOFT_LIMIT_SECONDS = 30
 
+# Nemotron ASR backend limits.
+# The encoder caps offline input at 5000 positions (80ms frames, ~400s); 300s
+# keeps headroom and peaks at ~4.5GB on MPS in fp16. RNNT decoding does not
+# hallucinate on long input, so segments may run for minutes and only the
+# soft limit (2 min) drops the silence threshold to force a cut.
+NEMOTRON_ASR_HARD_LIMIT_SECONDS = 300
+NEMOTRON_ASR_SOFT_LIMIT_SECONDS = 120
+
 
 class AudioSegment:
     """Audio segment with timing information.

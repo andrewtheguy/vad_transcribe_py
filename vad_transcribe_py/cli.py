@@ -669,13 +669,14 @@ def main():
                                         'zai-org/GLM-ASR-Nano-2512 for glm-asr, '
                                         'mlx-community/Qwen3-ASR-0.6B-bf16 for qwen-asr-mlx, '
                                         'mlx-community/GLM-ASR-Nano-2512-8bit for glm-asr-mlx, '
+                                        'nvidia/nemotron-3.5-asr-streaming-0.6b for nemotron-asr, '
                                         'auto-selected for moonshine, '
                                         'ignored for nvidia-whisper). '
-                                        'Local directory paths are accepted by whisper, qwen-asr-rs, and glm-asr. '
+                                        'Local directory paths are accepted by whisper, qwen-asr-rs, glm-asr, and nemotron-asr. '
                                         'GGUF files are accepted only by qwen-asr-rs.')
     parser_transcribe.add_argument('--backend', type=str,
                                    choices=['whisper', 'moonshine', 'qwen-asr-rs', 'qwen-asr-mlx',
-                                            'glm-asr', 'glm-asr-mlx', 'nvidia-whisper'],
+                                            'glm-asr', 'glm-asr-mlx', 'nemotron-asr', 'nvidia-whisper'],
                                    default='whisper',
                                    help='Transcription backend (default: whisper). '
                                         'nvidia-whisper hits the hosted whisper-large-v3 endpoint at '
@@ -696,10 +697,10 @@ def main():
                                         'for consistency.')
     parser_transcribe.add_argument('--no-sub-timestamps', action='store_true',
                                    help='Disable sub-sentence timestamp splitting '
-                                        '(whisper backend only). Returns one segment per '
+                                        '(whisper and nemotron-asr backends). Returns one segment per '
                                         'VAD segment instead of multiple timestamped chunks.')
     parser_transcribe.add_argument('--device', type=str, default=None,
-                                   help='Device for whisper, qwen-asr-rs, and glm-asr backends: '
+                                   help='Device for whisper, qwen-asr-rs, glm-asr, and nemotron-asr backends: '
                                         'cpu, metal/mps, or cuda '
                                         '(default: auto-detect cuda > mps > cpu). '
                                         'The qwen-asr-mlx and glm-asr-mlx backends always use Metal and ignore this flag. '

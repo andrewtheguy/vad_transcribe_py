@@ -8,13 +8,14 @@
 - [Qwen3-ASR (MLX)](https://huggingface.co/mlx-community/Qwen3-ASR-0.6B-bf16) - Qwen3-ASR via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/Qwen3-ASR-0.6B-bf16` (best accuracy per published WER benchmark)
 - [GLM-ASR](https://huggingface.co/zai-org/GLM-ASR-Nano-2512) - Z.ai GLM-ASR Nano via HuggingFace Transformers. Default model: `zai-org/GLM-ASR-Nano-2512` (1.5B parameters per upstream model card, BF16)
 - [GLM-ASR (MLX)](https://huggingface.co/mlx-community/GLM-ASR-Nano-2512-8bit) - GLM-ASR Nano via [mlx-audio](https://github.com/Blaizzy/mlx-audio) on Apple Silicon (Metal). Default model: `mlx-community/GLM-ASR-Nano-2512-8bit` (same 1.5B-parameter network as the upstream model, 8-bit MLX quantization, ~2.4 GB on disk)
+- [Nemotron ASR](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) - NVIDIA Nemotron 3.5 ASR (0.6B cache-aware FastConformer RNNT) via HuggingFace Transformers. Default model: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Non-autoregressive, so it handles multi-minute VAD segments without hallucination loops
 - [NVIDIA Whisper](https://build.nvidia.com/openai/whisper-large-v3) - OpenAI whisper-large-v3 hosted by NVIDIA via Riva gRPC (no local GPU required). Optional dep: `uv sync --extra nvidia-whisper`. Requires `NVIDIA_API_KEY` in `.env`.
 
 ## Features
 
 - **Streaming Audio Processing**: Audio is streamed from ffmpeg - never loads full file into memory
 - **Smart Voice Detection**: Uses Silero VAD to detect speech segments
-- **Flexible Backend Selection**: Choose between Whisper (default), Moonshine, Qwen3-ASR (Rust/MLX), or GLM-ASR (Transformers/MLX) backends
+- **Flexible Backend Selection**: Choose between Whisper (default), Moonshine, Qwen3-ASR (Rust/MLX), GLM-ASR (Transformers/MLX), or Nemotron ASR backends
 - **File Transcription**: Process audio files to JSON transcripts
 - **Split Mode**: Save detected speech segments as Opus files
 - **Multi-language Support**: Supports all languages available in OpenAI Whisper models
@@ -99,17 +100,17 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--stdin`: Read WAV audio (mono, 16kHz) from stdin (mutually exclusive with --file). Accepts 16-bit PCM, 32-bit PCM, or 32-bit float WAV. Always uses VAD, always outputs JSONL to stdout.
 - `--output PATH`: Output path for JSONL transcript (default: stdout)
 - `--language LANG`: Language code for transcription (required for moonshine, optional for other backends which auto-detect when omitted)
-- `--model MODEL`: Model name (auto-selected if omitted). Defaults: `large-v3-turbo` → `openai/whisper-large-v3-turbo` (whisper), `zai-org/GLM-ASR-Nano-2512` (glm-asr), `mlx-community/Qwen3-ASR-0.6B-bf16` (qwen-asr-mlx), `mlx-community/GLM-ASR-Nano-2512-8bit` (glm-asr-mlx); moonshine picks `small-streaming` for English and `base` for Chinese/Spanish.
-    - **Local directory paths** are accepted by **whisper**, **qwen-asr-rs**, and **glm-asr**.
+- `--model MODEL`: Model name (auto-selected if omitted). Defaults: `large-v3-turbo` → `openai/whisper-large-v3-turbo` (whisper), `zai-org/GLM-ASR-Nano-2512` (glm-asr), `mlx-community/Qwen3-ASR-0.6B-bf16` (qwen-asr-mlx), `mlx-community/GLM-ASR-Nano-2512-8bit` (glm-asr-mlx), `nvidia/nemotron-3.5-asr-streaming-0.6b` (nemotron-asr); moonshine picks `small-streaming` for English and `base` for Chinese/Spanish.
+    - **Local directory paths** are accepted by **whisper**, **qwen-asr-rs**, **glm-asr**, and **nemotron-asr**.
     - **GGUF files** are accepted only by **qwen-asr-rs** (qwencandle resolves the format from the path).
-- `--backend {whisper, moonshine, qwen-asr-rs, qwen-asr-mlx, glm-asr, glm-asr-mlx, nvidia-whisper}`: Transcription backend (default: `whisper`). `nvidia-whisper` calls the hosted whisper-large-v3 endpoint at `build.nvidia.com` and requires `NVIDIA_API_KEY` in `.env` (see [NVIDIA Whisper backend](#nvidia-whisper-backend)).
+- `--backend {whisper, moonshine, qwen-asr-rs, qwen-asr-mlx, glm-asr, glm-asr-mlx, nemotron-asr, nvidia-whisper}`: Transcription backend (default: `whisper`). `nvidia-whisper` calls the hosted whisper-large-v3 endpoint at `build.nvidia.com` and requires `NVIDIA_API_KEY` in `.env` (see [NVIDIA Whisper backend](#nvidia-whisper-backend)).
 - `--chinese-conversion {none, simplified, traditional}`: Chinese character conversion for zh/yue languages (default: none)
 - `--threads N`: Number of CPU threads for inference (default: `min(2, cpu_count)` for moonshine, none for other backends). For qwen-asr-rs, sets the `RAYON_NUM_THREADS` environment variable. Ignored by qwen-asr-mlx, glm-asr-mlx, and glm-asr.
-- `--device {cpu, mps, metal, cuda}`: Device for whisper, qwen-asr-rs, and glm-asr backends (default: auto-detect cuda > mps > cpu). Not supported by moonshine. The qwen-asr-mlx and glm-asr-mlx backends always use Metal and ignore this flag.
-- `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr-rs, and qwen-asr-mlx backends; ignored by glm-asr and glm-asr-mlx, which do not support conditioning)
-- `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper backend only)
+- `--device {cpu, mps, metal, cuda}`: Device for whisper, qwen-asr-rs, glm-asr, and nemotron-asr backends (default: auto-detect cuda > mps > cpu). Not supported by moonshine. The qwen-asr-mlx and glm-asr-mlx backends always use Metal and ignore this flag.
+- `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr-rs, and qwen-asr-mlx backends; ignored by glm-asr, glm-asr-mlx, and nemotron-asr, which do not support conditioning)
+- `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper and nemotron-asr backends)
 
-VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard — drops to 30s hard with `--no-sub-timestamps`, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s). Use the `split` command for manual VAD tuning.
+VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard — drops to 30s hard with `--no-sub-timestamps`, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s, Nemotron ASR: 120s / 300s). Use the `split` command for manual VAD tuning.
 
 ### Transcribe Examples
 
@@ -169,6 +170,11 @@ uv run vad-transcribe-py transcribe --file audio.wav --backend qwen-asr-mlx \
 uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr
 uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr --language en
 uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr --device cuda
+```
+
+**Use Nemotron ASR backend (long segments, sentence-level timestamps from RNNT token durations; fp16 on MPS/CUDA):**
+```bash
+uv run vad-transcribe-py transcribe --file audio.wav --backend nemotron-asr --language en
 ```
 
 **Use GLM-ASR (MLX) backend on Apple Silicon (Metal-only, 8-bit quantized by default):**
@@ -288,6 +294,7 @@ Language support varies by backend:
 - **Moonshine**: English (`en`), Chinese (`zh`), Spanish (`es`)
 - **Qwen3-ASR (Rust) / Qwen3-ASR (MLX)**: 30 languages — `zh`, `en`, `yue`, `ar`, `de`, `fr`, `es`, `pt`, `id`, `it`, `ko`, `ru`, `th`, `vi`, `ja`, `tr`, `hi`, `ms`, `nl`, `sv`, `da`, `fi`, `pl`, `cs`, `fil`, `fa`, `el`, `ro`, `hu`, `mk`
 - **GLM-ASR**: Uses the same explicit language-code set as Qwen3-ASR when `--language` is provided; omit `--language` to use the model's default transcription prompt
+- **Nemotron ASR**: Accepts the model's locale keys (`en`, `en-US`, `de-DE`, …) and bare codes such as `zh`/`ja` (mapped to the first matching locale); omit `--language` for automatic detection. Production-quality for ~30 of its 40 locales — see the model card
 
 **Chinese Character Conversion:** For Chinese language codes (`zh` and `yue`), you can optionally convert characters using `--chinese-conversion`:
 - `none` (default): No conversion, output as-is from Whisper
@@ -339,7 +346,7 @@ uv run pytest
 
 - File-based transcription only (no real-time/live transcription)
 - Live streams not supported (URLs must have fixed duration)
-- VAD enforces per-backend hard limits on segment duration via force-split (60s Whisper / 30s with `--no-sub-timestamps`, 30s NVIDIA Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming, 60s Qwen3-ASR Rust/MLX, 60s GLM-ASR Transformers/MLX)
+- VAD enforces per-backend hard limits on segment duration via force-split (60s Whisper / 30s with `--no-sub-timestamps`, 30s NVIDIA Whisper, 60s Moonshine streaming, 9s Moonshine non-streaming, 60s Qwen3-ASR Rust/MLX, 60s GLM-ASR Transformers/MLX, 300s Nemotron ASR — the encoder caps offline input at ~400s)
 - No database persistence (outputs to JSONL files or Opus segments)
 - No web interface
 

@@ -296,6 +296,23 @@ def create_transcriber(
             num_threads=num_threads,
             device=device,
         )
+    elif backend == 'nemotron-asr':
+        from vad_transcribe_py.backends.nemotron_asr import (
+            NEMOTRON_ASR_DEFAULT_MODEL,
+            NemotronASRBackend,
+        )
+
+        if condition is True:
+            raise ValueError("condition=True is not supported by the nemotron-asr backend")
+
+        return NemotronASRBackend(
+            language=language,
+            model=model if model is not None else NEMOTRON_ASR_DEFAULT_MODEL,
+            chinese_conversion=chinese_conversion,
+            num_threads=num_threads,
+            device=device,
+            sub_timestamps=sub_timestamps,
+        )
     elif backend == 'nvidia-whisper':
         from vad_transcribe_py.backends.nvidia_whisper import NvidiaWhisperBackend
 
