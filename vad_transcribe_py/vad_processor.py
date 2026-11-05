@@ -55,12 +55,11 @@ GLM_ASR_HARD_LIMIT_SECONDS = 60
 GLM_ASR_SOFT_LIMIT_SECONDS = 30
 
 # Nemotron ASR backend limits.
-# The encoder caps offline input at 5000 positions (80ms frames, ~400s); 300s
-# keeps headroom and peaks at ~4.5GB on MPS in fp16. RNNT decoding does not
-# hallucinate on long input, so segments may run for minutes; a segment that
-# reaches the hard limit is cut at the longest pause after the soft limit.
-NEMOTRON_ASR_HARD_LIMIT_SECONDS = 300
-NEMOTRON_ASR_SOFT_LIMIT_SECONDS = 120
+# The backend decodes long segments in Whisper-style seek windows that always
+# end at a sentence boundary, so VAD only needs to drop long silences. The hard
+# limit just bounds buffered audio (~115MB at 30 min) and output latency.
+NEMOTRON_ASR_HARD_LIMIT_SECONDS = 1800
+NEMOTRON_ASR_SOFT_LIMIT_SECONDS = 1500
 
 
 class AudioSegment:
