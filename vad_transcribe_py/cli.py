@@ -42,7 +42,11 @@ def add_vad_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--min-speech-seconds', type=float, default=DEFAULT_MIN_SPEECH_SECONDS,
                         help=f'Minimum speech duration in seconds (default: {DEFAULT_MIN_SPEECH_SECONDS})')
     parser.add_argument('--soft-limit-seconds', type=float, default=DEFAULT_SOFT_LIMIT_SECONDS,
-                        help=f'Soft limit on speech segment duration in seconds (default: {DEFAULT_SOFT_LIMIT_SECONDS})')
+                        help='Earliest point at which a segment that reaches the hard limit may be cut; '
+                             'the cut goes at the longest pause between soft and hard limit '
+                             f'(default: {DEFAULT_SOFT_LIMIT_SECONDS})')
+    parser.add_argument('--hard-limit-seconds', type=float, default=DEFAULT_HARD_LIMIT_SECONDS,
+                        help=f'Maximum speech segment duration in seconds (default: {DEFAULT_HARD_LIMIT_SECONDS})')
     parser.add_argument('--speech-threshold', type=float, default=DEFAULT_SPEECH_THRESHOLD,
                         help=f'VAD speech detection threshold 0.0-1.0 (default: {DEFAULT_SPEECH_THRESHOLD})')
     parser.add_argument('--min-silence-duration-ms', type=int, default=DEFAULT_MIN_SILENCE_DURATION_MS,
@@ -56,6 +60,7 @@ def get_vad_params(args: argparse.Namespace) -> dict[str, float | int]:
     return {
         "min_speech_seconds": args.min_speech_seconds,
         "soft_limit_seconds": args.soft_limit_seconds,
+        "hard_limit_seconds": args.hard_limit_seconds,
         "speech_threshold": args.speech_threshold,
         "min_silence_duration_ms": args.min_silence_duration_ms,
         "look_back_seconds": args.look_back_seconds,
@@ -334,7 +339,7 @@ def stream_transcribe_with_vad(
         transcriber: Pre-loaded AudioTranscriber instance
         output_file: File object to write JSONL output
         min_speech_seconds: Minimum speech duration in seconds
-        soft_limit_seconds: Soft limit on speech segment duration in seconds
+        soft_limit_seconds: Earliest cut point for a segment that reaches the hard limit
         speech_threshold: VAD speech detection threshold (0.0-1.0)
         min_silence_duration_ms: Minimum silence duration in ms to end segment
         look_back_seconds: Look-back buffer in seconds for segment start
@@ -416,7 +421,7 @@ def stream_transcribe_stdin_with_vad(
     Args:
         transcriber: Pre-loaded AudioTranscriber instance
         min_speech_seconds: Minimum speech duration in seconds
-        soft_limit_seconds: Soft limit on speech segment duration in seconds
+        soft_limit_seconds: Earliest cut point for a segment that reaches the hard limit
         speech_threshold: VAD speech detection threshold (0.0-1.0)
         min_silence_duration_ms: Minimum silence duration in ms to end segment
         look_back_seconds: Look-back buffer in seconds for segment start
@@ -489,6 +494,7 @@ def split_by_vad(
     output_format: str = "opus",
     min_speech_seconds: float = DEFAULT_MIN_SPEECH_SECONDS,
     soft_limit_seconds: float = DEFAULT_SOFT_LIMIT_SECONDS,
+    hard_limit_seconds: float = DEFAULT_HARD_LIMIT_SECONDS,
     speech_threshold: float = DEFAULT_SPEECH_THRESHOLD,
     min_silence_duration_ms: int = DEFAULT_MIN_SILENCE_DURATION_MS,
     look_back_seconds: float = DEFAULT_LOOK_BACK_SECONDS,
@@ -502,7 +508,8 @@ def split_by_vad(
                               If False (default), downsample to 16kHz mono.
         output_format: Output format - "opus" (16kbps) or "wav" (default: opus)
         min_speech_seconds: Minimum speech duration in seconds
-        soft_limit_seconds: Soft limit on speech segment duration in seconds
+        soft_limit_seconds: Earliest cut point for a segment that reaches the hard limit
+        hard_limit_seconds: Maximum speech segment duration in seconds
         speech_threshold: VAD speech detection threshold (0.0-1.0)
         min_silence_duration_ms: Minimum silence duration in ms to end segment
         look_back_seconds: Look-back buffer in seconds for segment start
@@ -566,6 +573,7 @@ def split_by_vad(
             on_segment_complete=on_segment_complete,
             min_speech_seconds=min_speech_seconds,
             soft_limit_seconds=soft_limit_seconds,
+            hard_limit_seconds=hard_limit_seconds,
             speech_threshold=speech_threshold,
             min_silence_duration_ms=min_silence_duration_ms,
             look_back_seconds=look_back_seconds,
@@ -613,6 +621,7 @@ def split_by_vad(
             on_segment_complete=on_segment_complete_default,
             min_speech_seconds=min_speech_seconds,
             soft_limit_seconds=soft_limit_seconds,
+            hard_limit_seconds=hard_limit_seconds,
             speech_threshold=speech_threshold,
             min_silence_duration_ms=min_silence_duration_ms,
             look_back_seconds=look_back_seconds,
@@ -811,6 +820,7 @@ def main():
                     audio_source, args.preserve_sample_rate, args.format,
                     min_speech_seconds=args.min_speech_seconds,
                     soft_limit_seconds=args.soft_limit_seconds,
+                    hard_limit_seconds=args.hard_limit_seconds,
                     speech_threshold=args.speech_threshold,
                     min_silence_duration_ms=args.min_silence_duration_ms,
                     look_back_seconds=args.look_back_seconds,
