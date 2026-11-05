@@ -110,7 +110,7 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr-rs, and qwen-asr-mlx backends; ignored by glm-asr, glm-asr-mlx, and nemotron-asr, which do not support conditioning)
 - `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper and nemotron-asr backends)
 
-VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard — drops to 30s hard with `--no-sub-timestamps`, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s, Nemotron ASR: 1500s / 1800s). A segment ends at a 2s silence; short pauses are merged in, so segments grow across sentences. If a segment reaches the hard limit, it is cut WhisperX-style at the longest pause between the soft and hard limit (or at the lowest speech-probability point if there is no pause), and the remaining audio carries over into the next segment. Nemotron ASR does not rely on the VAD cut: it splits long segments itself at sentence boundaries (see below), and its 30-minute hard limit only bounds buffered audio and output latency. Use the `split` command for manual VAD tuning.
+VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard — drops to 30s hard with `--no-sub-timestamps`, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s, Nemotron ASR: 1500s / 1800s). A segment ends at a 2s silence; short pauses are merged in, so segments grow across sentences. If a segment reaches the hard limit, it is cut WhisperX-style at the longest pause between the soft and hard limit (or at the lowest speech-probability point if there is no pause), and the remaining audio carries over into the next segment. Nemotron ASR does not rely on the VAD cut: it splits long segments itself at sentence boundaries (see below). Its segments end only at a 4s silence (quiet speech can score as silence for a couple of seconds), and its 30-minute hard limit only bounds buffered audio and output latency. Use the `split` command for manual VAD tuning.
 
 ### Transcribe Examples
 
@@ -174,7 +174,7 @@ uv run vad-transcribe-py transcribe --file audio.wav --backend glm-asr --device 
 
 **Use Nemotron ASR backend (long segments, sentence-level timestamps from RNNT token durations; fp16 on MPS/CUDA):**
 
-VAD only drops silences of 2s or more. Each speech segment (up to 30 minutes) is decoded in 300s windows: a window keeps the sentences that finish before a pause in its second half, and the next window starts 4s before that cut, so no sentence is split across windows.
+VAD only drops silences of 4s or more. Each speech segment (up to 30 minutes) is decoded in 300s windows: a window keeps the sentences that finish before a pause in its second half, and the next window starts 4s before that cut, so no sentence is split across windows. Output lines are sentences; a sentence longer than 30s (the model sometimes leaves out punctuation) is split at its longest pauses.
 ```bash
 uv run vad-transcribe-py transcribe --file audio.wav --backend nemotron-asr --language en
 ```

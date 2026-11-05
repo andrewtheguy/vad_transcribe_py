@@ -26,6 +26,7 @@ from vad_transcribe_py._utils import (
 )
 from vad_transcribe_py.vad_processor import (
     NEMOTRON_ASR_HARD_LIMIT_SECONDS,
+    NEMOTRON_ASR_MIN_SILENCE_DURATION_MS,
     NEMOTRON_ASR_SOFT_LIMIT_SECONDS,
 )
 
@@ -46,6 +47,9 @@ NEMOTRON_ASR_OVERLAP_SECONDS = 4.0
 NEMOTRON_ASR_EDGE_MARGIN_SECONDS = 8.0
 # How far a sentence boundary in the next window may sit from the cut to match it.
 _MATCH_TOLERANCE_FRAMES = 6
+# Sentences longer than this (the model sometimes omits punctuation for a whole
+# stretch) are split into lines at the longest pauses.
+NEMOTRON_ASR_MAX_LINE_SECONDS = 30.0
 # Preferred minimum pause at a cut (0.4s): token timing differs by a few frames
 # between two decodes, so a cut inside a real pause is matched unambiguously.
 _MIN_CUT_GAP_FRAMES = 5
@@ -169,10 +173,23 @@ def _sentence_starts(tokens: list[_TimedToken]) -> list[int]:
     return starts
 
 
-def _gap_middle(tokens: list[_TimedToken], idx: int, end_frame: int) -> int:
-    """Frame halfway between tokens[idx - 1] and tokens[idx] (or end_frame)."""
+def _pause(tokens: list[_TimedToken], idx: int, end_frame: int) -> tuple[int, int]:
+    """Frames of the last word token before ``idx`` and of tokens[idx] (or end_frame).
+
+    Punctuation is skipped: the model emits it late, right before the next word,
+    so measuring from it hides the pause.
+    """
+    prev = idx - 1
+    while prev > 0 and not any(ch.isalnum() for ch in tokens[prev].piece):
+        prev -= 1
     nxt = tokens[idx].frame if idx < len(tokens) else end_frame
-    return (tokens[idx - 1].frame + nxt + 1) // 2
+    return tokens[prev].frame, nxt
+
+
+def _gap_middle(tokens: list[_TimedToken], idx: int, end_frame: int) -> int:
+    """Frame halfway through the pause before tokens[idx] (or before end_frame)."""
+    prev, nxt = _pause(tokens, idx, end_frame)
+    return (prev + nxt + 1) // 2
 
 
 def choose_cut(tokens: list[_TimedToken], window_frames: int, margin_frames: int) -> tuple[int, int]:
@@ -188,8 +205,8 @@ def choose_cut(tokens: list[_TimedToken], window_frames: int, margin_frames: int
     lo, hi = window_frames // 2, window_frames - margin_frames
 
     def gap(i: int) -> int:
-        nxt = tokens[i].frame if i < len(tokens) else window_frames
-        return nxt - tokens[i - 1].frame
+        prev, nxt = _pause(tokens, i, window_frames)
+        return nxt - prev
 
     sentence_cuts = [i for i in _sentence_starts(tokens) if lo <= tokens[i].frame <= hi]
     if sentence_cuts:
@@ -211,6 +228,26 @@ def choose_cut(tokens: list[_TimedToken], window_frames: int, margin_frames: int
 def _is_word_start(piece: str) -> bool:
     """SentencePiece word start; non-ASCII tokens (CJK characters) also count."""
     return piece.startswith("▁") or not piece[:1].isascii()
+
+
+def split_long_line(tokens: list[_TimedToken], max_frames: int) -> list[list[_TimedToken]]:
+    """Split a line spanning more than ``max_frames`` at its longest pause, recursively.
+
+    The split goes before a word start in the middle half of the line (anywhere
+    if the middle half has none); ties go to the word start nearest the middle.
+    """
+    if len(tokens) < 2 or tokens[-1].frame - tokens[0].frame <= max_frames:
+        return [tokens]
+    starts = [i for i in range(1, len(tokens)) if _is_word_start(tokens[i].piece)]
+    first, last = tokens[0].frame, tokens[-1].frame
+    quarter = (last - first) / 4
+    middle = [i for i in starts if first + quarter <= tokens[i].frame <= last - quarter]
+    candidates = middle or starts
+    if not candidates:
+        return [tokens]
+    center = (first + last) / 2
+    best = max(candidates, key=lambda i: (tokens[i].frame - tokens[i - 1].frame, -abs(tokens[i].frame - center)))
+    return split_long_line(tokens[:best], max_frames) + split_long_line(tokens[best:], max_frames)
 
 
 def resume_index(tokens: list[_TimedToken], cut: int) -> int:
@@ -288,6 +325,10 @@ class NemotronASRBackend(TranscriberBase):
     @property
     def soft_limit_seconds(self) -> float | None:
         return NEMOTRON_ASR_SOFT_LIMIT_SECONDS
+
+    @property
+    def min_silence_duration_ms(self) -> int:
+        return NEMOTRON_ASR_MIN_SILENCE_DURATION_MS
 
     def _load_model(self) -> None:
         """Load Nemotron ASR via HuggingFace Transformers."""
@@ -388,7 +429,8 @@ class NemotronASRBackend(TranscriberBase):
             return [self._make_segment(text, start_offset, end_time)]
 
         segments: list[TranscribedSegment] = []
-        sentences = split_sentences(tokens)
+        max_frames = int(NEMOTRON_ASR_MAX_LINE_SECONDS / NEMOTRON_FRAME_SECONDS)
+        sentences = [line for s in split_sentences(tokens) for line in split_long_line(s, max_frames)]
         for idx, sentence in enumerate(sentences):
             text = tokenizer.decode([t.token_id for t in sentence], skip_special_tokens=True).strip()
             if not text:

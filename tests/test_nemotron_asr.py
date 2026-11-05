@@ -12,11 +12,14 @@ from vad_transcribe_py.backends.nemotron_asr import (
     choose_cut,
     resolve_language,
     resume_index,
+    split_long_line,
     split_sentences,
     timed_tokens,
 )
 from vad_transcribe_py.vad_processor import (
+    DEFAULT_MIN_SILENCE_DURATION_MS,
     NEMOTRON_ASR_HARD_LIMIT_SECONDS,
+    NEMOTRON_ASR_MIN_SILENCE_DURATION_MS,
     NEMOTRON_ASR_SOFT_LIMIT_SECONDS,
 )
 
@@ -73,6 +76,8 @@ def test_nemotron_defaults(stub_nemotron):
     assert backend.model == NEMOTRON_ASR_DEFAULT_MODEL
     assert backend.hard_limit_seconds == NEMOTRON_ASR_HARD_LIMIT_SECONDS
     assert backend.soft_limit_seconds == NEMOTRON_ASR_SOFT_LIMIT_SECONDS
+    assert backend.min_silence_duration_ms == NEMOTRON_ASR_MIN_SILENCE_DURATION_MS
+    assert NEMOTRON_ASR_MIN_SILENCE_DURATION_MS > DEFAULT_MIN_SILENCE_DURATION_MS
 
 
 def test_create_transcriber_nemotron(stub_nemotron):
@@ -354,3 +359,37 @@ def test_nemotron_windowed_decoding_matches_single_pass(stub_nemotron):
     assert single == ["One two.", "Three four five?", "Six seven.", "Eight nine ten eleven!", "Twelve"]
     # 4s windows (50 frames) force several seeks over the ~10s of audio.
     assert run(4.0) == single
+
+
+def test_split_long_line_at_longest_middle_pause():
+    # Line spans 0..40; longest gap overall is at the edge (B at 4), longest in the middle half is E.
+    tokens = _at((0, "▁A"), (4, "▁B"), (6, "▁C"), (12, "▁D"), (21, "▁E"), (23, "▁F"), (30, "▁G"), (40, "▁H"))
+    lines = split_long_line(tokens, 30)
+    assert [[t.piece for t in line] for line in lines] == [["▁A", "▁B", "▁C", "▁D"], ["▁E", "▁F", "▁G", "▁H"]]
+
+
+def test_split_long_line_keeps_short_lines_and_words_whole():
+    tokens = _at((0, "▁A"), (10, "▁B"), (20, "c"))
+    assert split_long_line(tokens, 30) == [tokens]
+    # "c" continues the word "▁B": the only split is before "▁B".
+    assert [[t.piece for t in line] for line in split_long_line(tokens, 15)] == [["▁A"], ["▁B", "c"]]
+
+
+def test_nemotron_transcribe_splits_unpunctuated_run_on(stub_nemotron):
+    pieces = [f"▁w{i}" for i in range(60)]
+    audio = np.zeros(1280 * 700, dtype=np.float32)
+    frame = 0
+    for idx in range(len(pieces)):
+        audio[frame * 1280] = idx + 1
+        # One-frame gaps, plus a longer pause after every 20 words.
+        frame += 10 if idx % 20 == 19 else 9
+    backend = NemotronASRBackend(language="en")
+    processor = _StubProcessor()
+    processor.tokenizer = _TimelineTokenizer(pieces)  # type: ignore[assignment]
+    backend._processor = processor
+    backend._model = _TimelineModel()
+    segments = backend.transcribe(audio)
+    # 60 words over ~43s without punctuation: one split, at the pause nearest the middle
+    # (w20 and w40 tie); the remaining 28s line is under the 30s limit.
+    assert [s.text.split()[0] for s in segments] == ["w0", "w20"]
+    assert segments[1].start == pytest.approx(181 * 0.08)

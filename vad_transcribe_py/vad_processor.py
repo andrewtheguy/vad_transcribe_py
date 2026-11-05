@@ -60,6 +60,10 @@ GLM_ASR_SOFT_LIMIT_SECONDS = 30
 # limit just bounds buffered audio (~115MB at 30 min) and output latency.
 NEMOTRON_ASR_HARD_LIMIT_SECONDS = 1800
 NEMOTRON_ASR_SOFT_LIMIT_SECONDS = 1500
+# Quiet or low-confidence speech can score as silence for a few seconds; ending
+# a segment there cuts the sentence. Silence in a segment is cheap for Nemotron,
+# so only a 4s silence ends one.
+NEMOTRON_ASR_MIN_SILENCE_DURATION_MS = 4000
 
 
 class AudioSegment:

@@ -773,6 +773,7 @@ def main():
                         transcriber,
                         hard_limit_seconds=transcriber.hard_limit_seconds,
                         soft_limit_seconds=transcriber.soft_limit_seconds,
+                        min_silence_duration_ms=transcriber.min_silence_duration_ms,
                         clip_repetitions=args.clip_repetitions,
                     )
                     logger.info("Transcribed %d segments from stdin", segment_count)
@@ -804,6 +805,7 @@ def main():
                             audio_source, transcriber, output_file,
                             hard_limit_seconds=transcriber.hard_limit_seconds,
                             soft_limit_seconds=transcriber.soft_limit_seconds,
+                            min_silence_duration_ms=transcriber.min_silence_duration_ms,
                             clip_repetitions=args.clip_repetitions,
                         )
 
