@@ -101,12 +101,18 @@ class _StubInputs(dict):
 
 
 class _StubTokenizer:
-    VOCAB = {0: "<blank>", 1: "▁Hello", 2: ".", 3: "▁Bye", 4: "!", 98: "<pad>", 99: "<en-US>"}
+    VOCAB = {
+        0: "<blank>", 1: "▁Hello", 2: ".", 3: "▁Bye", 4: "!", 5: "▁c", 6: "la", 7: "s",
+        98: "<pad>", 99: "<en-US>",
+    }
 
     def convert_ids_to_tokens(self, ids):
         return [self.VOCAB[i] for i in ids]
 
-    def decode(self, ids, skip_special_tokens=False):
+    def decode(self, ids, skip_special_tokens=False, group_tokens=True):
+        # Mirrors ParakeetTokenizer: repeated ids are merged unless group_tokens=False.
+        if group_tokens:
+            ids = [i for n, i in enumerate(ids) if n == 0 or ids[n - 1] != i]
         pieces = [self.VOCAB[i] for i in ids if not (skip_special_tokens and i in (0, 98, 99))]
         return "".join(pieces).replace("▁", " ")
 
@@ -314,7 +320,7 @@ class _TimelineTokenizer:
     def convert_ids_to_tokens(self, ids):
         return [self.vocab[i] for i in ids]
 
-    def decode(self, ids, skip_special_tokens=False):
+    def decode(self, ids, skip_special_tokens=False, group_tokens=True):
         return "".join(self.vocab[i] for i in ids if i != BLANK).replace("▁", " ")
 
 
@@ -393,3 +399,18 @@ def test_nemotron_transcribe_splits_unpunctuated_run_on(stub_nemotron):
     # (w20 and w40 tie); the remaining 28s line is under the 30s limit.
     assert [s.text.split()[0] for s in segments] == ["w0", "w20"]
     assert segments[1].start == pytest.approx(181 * 0.08)
+
+
+@pytest.mark.parametrize("sub_timestamps", [True, False])
+def test_nemotron_keeps_repeated_tokens(stub_nemotron, sub_timestamps):
+    """RNNT can emit the same token twice in a row ("class" = ▁c la s s); both must survive decoding."""
+    backend, _ = _make_backend(stub_nemotron, "en", sub_timestamps=sub_timestamps)
+
+    class RepeatModel(_StubModel):
+        def generate(self, **_inputs):
+            seq = [0, 5, 6, 7, 7, 2, 0]
+            dur = [1, 0, 0, 0, 0, 0, 1]
+            return type("Out", (), {"sequences": torch.tensor([seq]), "durations": torch.tensor([dur])})()
+
+    backend._model = RepeatModel()
+    assert [s.text for s in backend.transcribe(np.zeros(16000, dtype=np.float32))] == ["class."]
