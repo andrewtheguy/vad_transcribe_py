@@ -110,6 +110,16 @@ class _TimedToken:
     frame: int
 
 
+def _decode_text(tokenizer: Any, tokens: list[_TimedToken]) -> str:
+    """Join tokens into text without merging repeated tokens.
+
+    ParakeetTokenizer.decode groups consecutive identical ids by default (a CTC
+    step), which turns "c la s s" into "clas". RNNT output never repeats a token
+    by mistake, so every token is kept.
+    """
+    return tokenizer.decode([t.token_id for t in tokens], skip_special_tokens=True, group_tokens=False).strip()
+
+
 def timed_tokens(
     sequence: list[int],
     durations: list[int],
@@ -423,7 +433,7 @@ class NemotronASRBackend(TranscriberBase):
         end_time = start_offset + len(audio) / TARGET_SAMPLE_RATE
         tokenizer = self._processor.tokenizer
         if not self._sub_timestamps:
-            text = tokenizer.decode([t.token_id for t in tokens], skip_special_tokens=True).strip()
+            text = _decode_text(tokenizer, tokens)
             if not text:
                 return []
             return [self._make_segment(text, start_offset, end_time)]
@@ -432,7 +442,7 @@ class NemotronASRBackend(TranscriberBase):
         max_frames = int(NEMOTRON_ASR_MAX_LINE_SECONDS / NEMOTRON_FRAME_SECONDS)
         sentences = [line for s in split_sentences(tokens) for line in split_long_line(s, max_frames)]
         for idx, sentence in enumerate(sentences):
-            text = tokenizer.decode([t.token_id for t in sentence], skip_special_tokens=True).strip()
+            text = _decode_text(tokenizer, sentence)
             if not text:
                 continue
             start = start_offset if idx == 0 else start_offset + sentence[0].frame * NEMOTRON_FRAME_SECONDS
