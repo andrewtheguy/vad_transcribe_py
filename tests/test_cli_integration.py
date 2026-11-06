@@ -472,6 +472,54 @@ class TestCLIIntegration:
         assert "Error" in result.stderr or "error" in result.stderr.lower()
 
 
+class TestTranscribeSpeechThreshold:
+    """--speech-threshold on the transcribe command reaches the VAD."""
+
+    class _StubTranscriber:
+        hard_limit_seconds = 60.0
+        soft_limit_seconds = 6.0
+        min_silence_duration_ms = 2000
+
+    def _run_main(self, monkeypatch, argv):
+        from vad_transcribe_py import cli
+
+        captured: dict = {}
+
+        def fake_stream(*_args, **kwargs):
+            captured.update(kwargs)
+            return 0
+
+        monkeypatch.setattr(cli, "create_transcriber", lambda *a, **k: self._StubTranscriber())
+        monkeypatch.setattr(cli, "stream_transcribe_with_vad", fake_stream)
+        monkeypatch.setattr(cli, "stream_transcribe_stdin_with_vad", fake_stream)
+        monkeypatch.setattr("sys.argv", ["vad-transcribe-py", "transcribe", *argv])
+        cli.main()
+        return captured
+
+    def test_file_mode_default_threshold(self, monkeypatch, tmp_path):
+        from vad_transcribe_py.vad_processor import DEFAULT_SPEECH_THRESHOLD
+
+        kwargs = self._run_main(monkeypatch, ["--file", str(JFK_SAMPLE), "--output", str(tmp_path / "o.jsonl")])
+        assert kwargs["speech_threshold"] == DEFAULT_SPEECH_THRESHOLD
+
+    def test_file_mode_custom_threshold(self, monkeypatch, tmp_path):
+        kwargs = self._run_main(
+            monkeypatch,
+            ["--file", str(JFK_SAMPLE), "--output", str(tmp_path / "o.jsonl"), "--speech-threshold", "0.1"],
+        )
+        assert kwargs["speech_threshold"] == 0.1
+
+    def test_stdin_mode_custom_threshold(self, monkeypatch):
+        kwargs = self._run_main(monkeypatch, ["--stdin", "--speech-threshold", "0.25"])
+        assert kwargs["speech_threshold"] == 0.25
+
+    @pytest.mark.parametrize("value", ["-0.1", "1.5", "nan", "abc"])
+    def test_rejects_out_of_range(self, monkeypatch, value):
+        with pytest.raises(SystemExit) as exc:
+            self._run_main(monkeypatch, ["--stdin", "--speech-threshold", value])
+        assert exc.value.code == 2
+
+
 class TestJsonlOutput:
     """Unit-level tests for the JSONL writer."""
 
