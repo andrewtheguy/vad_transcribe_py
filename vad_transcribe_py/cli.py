@@ -37,6 +37,14 @@ from vad_transcribe_py.file_lock import acquire_lock, LockError
 logger = logging.getLogger(__name__)
 
 
+def speech_threshold_arg(value: str) -> float:
+    """argparse type for a VAD speech threshold in [0.0, 1.0]."""
+    threshold = float(value)
+    if not 0.0 <= threshold <= 1.0:
+        raise argparse.ArgumentTypeError(f"must be between 0.0 and 1.0, got {value}")
+    return threshold
+
+
 def add_vad_arguments(parser: argparse.ArgumentParser) -> None:
     """Add common VAD arguments to a parser."""
     parser.add_argument('--min-speech-seconds', type=float, default=DEFAULT_MIN_SPEECH_SECONDS,
@@ -47,7 +55,7 @@ def add_vad_arguments(parser: argparse.ArgumentParser) -> None:
                              f'(default: {DEFAULT_SOFT_LIMIT_SECONDS})')
     parser.add_argument('--hard-limit-seconds', type=float, default=DEFAULT_HARD_LIMIT_SECONDS,
                         help=f'Maximum speech segment duration in seconds (default: {DEFAULT_HARD_LIMIT_SECONDS})')
-    parser.add_argument('--speech-threshold', type=float, default=DEFAULT_SPEECH_THRESHOLD,
+    parser.add_argument('--speech-threshold', type=speech_threshold_arg, default=DEFAULT_SPEECH_THRESHOLD,
                         help=f'VAD speech detection threshold 0.0-1.0 (default: {DEFAULT_SPEECH_THRESHOLD})')
     parser.add_argument('--min-silence-duration-ms', type=int, default=DEFAULT_MIN_SILENCE_DURATION_MS,
                         help=f'Minimum silence duration in ms to end segment (default: {DEFAULT_MIN_SILENCE_DURATION_MS})')
@@ -714,6 +722,11 @@ def main():
                                         '(default: auto-detect cuda > mps > cpu). '
                                         'The qwen-asr-mlx and glm-asr-mlx backends always use Metal and ignore this flag. '
                                         'The nvidia-whisper backend runs server-side and ignores this flag.')
+    parser_transcribe.add_argument('--speech-threshold', type=speech_threshold_arg,
+                                   default=DEFAULT_SPEECH_THRESHOLD,
+                                   help='VAD speech detection threshold 0.0-1.0 '
+                                        f'(default: {DEFAULT_SPEECH_THRESHOLD}). Lower it (e.g. 0.1) '
+                                        'for quiet or far-field recordings where VAD finds no speech.')
     parser_transcribe.add_argument('--single-instance', action='store_true',
                                    help='Prevent multiple instances from running simultaneously')
     parser_transcribe.add_argument('--clip-repetitions', action='store_true',
@@ -774,6 +787,7 @@ def main():
                         hard_limit_seconds=transcriber.hard_limit_seconds,
                         soft_limit_seconds=transcriber.soft_limit_seconds,
                         min_silence_duration_ms=transcriber.min_silence_duration_ms,
+                        speech_threshold=args.speech_threshold,
                         clip_repetitions=args.clip_repetitions,
                     )
                     logger.info("Transcribed %d segments from stdin", segment_count)
@@ -806,6 +820,7 @@ def main():
                             hard_limit_seconds=transcriber.hard_limit_seconds,
                             soft_limit_seconds=transcriber.soft_limit_seconds,
                             min_silence_duration_ms=transcriber.min_silence_duration_ms,
+                            speech_threshold=args.speech_threshold,
                             clip_repetitions=args.clip_repetitions,
                         )
 

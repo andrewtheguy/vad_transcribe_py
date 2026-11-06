@@ -109,8 +109,9 @@ vad-transcribe-py transcribe (--file PATH | --stdin) [OPTIONS]
 - `--device {cpu, mps, metal, cuda}`: Device for whisper, qwen-asr-rs, glm-asr, and nemotron-asr backends (default: auto-detect cuda > mps > cpu). Not supported by moonshine. The qwen-asr-mlx and glm-asr-mlx backends always use Metal and ignore this flag.
 - `--no-condition`: Disable conditioning on previous segment output (whisper, qwen-asr-rs, and qwen-asr-mlx backends; ignored by glm-asr, glm-asr-mlx, and nemotron-asr, which do not support conditioning)
 - `--no-sub-timestamps`: Disable sub-sentence timestamp splitting (whisper and nemotron-asr backends)
+- `--speech-threshold FLOAT`: VAD speech detection threshold 0.0-1.0 (default: 0.5). Lower it (e.g. `0.1`) for quiet or far-field recordings, such as a room mic picking up a distant speaker, where VAD otherwise finds no speech segments.
 
-VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard — drops to 30s hard with `--no-sub-timestamps`, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s, Nemotron ASR: 1500s / 1800s). A segment ends at a 2s silence; short pauses are merged in, so segments grow across sentences. If a segment reaches the hard limit, it is cut WhisperX-style at the longest pause between the soft and hard limit (or at the lowest speech-probability point if there is no pause), and the remaining audio carries over into the next segment. Nemotron ASR does not rely on the VAD cut: it splits long segments itself at sentence boundaries (see below). Its segments end only at a 4s silence (quiet speech can score as silence for a couple of seconds), and its 30-minute hard limit only bounds buffered audio and output latency. Use the `split` command for manual VAD tuning.
+VAD soft/hard limits are set automatically per backend (Whisper: 6s soft / 60s hard — drops to 30s hard with `--no-sub-timestamps`, NVIDIA Whisper: 6s / 30s, Moonshine streaming: 6s / 60s, Moonshine non-streaming: 6s / 9s, Qwen3-ASR Rust/MLX: 30s / 60s, GLM-ASR (Transformers/MLX): 30s / 60s, Nemotron ASR: 1500s / 1800s). A segment ends at a 2s silence; short pauses are merged in, so segments grow across sentences. If a segment reaches the hard limit, it is cut WhisperX-style at the longest pause between the soft and hard limit (or at the lowest speech-probability point if there is no pause), and the remaining audio carries over into the next segment. Nemotron ASR does not rely on the VAD cut: it splits long segments itself at sentence boundaries (see below). Its segments end only at a 4s silence (quiet speech can score as silence for a couple of seconds), and its 30-minute hard limit only bounds buffered audio and output latency. Apart from `--speech-threshold`, use the `split` command for manual VAD tuning.
 
 ### Transcribe Examples
 
@@ -122,6 +123,11 @@ uv run vad-transcribe-py transcribe --file audio.wav --language en
 **Transcribe to file:**
 ```bash
 uv run vad-transcribe-py transcribe --file audio.wav --output transcript.jsonl --language en
+```
+
+**Transcribe a quiet or far-field recording (lower the VAD threshold when it finds 0 speech segments):**
+```bash
+uv run vad-transcribe-py transcribe --file room_mic.mov --language en --speech-threshold 0.1
 ```
 
 **Transcribe from stdin (mono 16kHz WAV — always uses VAD, outputs to stdout in JSONL format):**
@@ -248,7 +254,7 @@ vad-transcribe-py split (--file PATH | --url URL) [OPTIONS]
 - `--preserve-sample-rate`: Preserve original sample rate (default: downsample to 16kHz)
 - `--format {opus, wav}`: Output format (default: opus)
 
-**VAD tuning options** (split command only — transcribe uses backend-specific defaults):
+**VAD tuning options** (split command only, except `--speech-threshold`, which transcribe also accepts; transcribe uses backend-specific defaults for the rest):
 - `--min-speech-seconds FLOAT`: Minimum speech duration in seconds (default: 3.0)
 - `--soft-limit-seconds FLOAT`: Earliest point at which a segment that reaches the hard limit may be cut; the cut goes at the longest pause between soft and hard limit (default: 60.0)
 - `--hard-limit-seconds FLOAT`: Maximum speech segment duration in seconds (default: 120.0)
